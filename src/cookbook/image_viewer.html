@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cookbook image</title>
+<style>
+  :root { color-scheme: light dark; font: 14px/1.5 system-ui, sans-serif; }
+  * { box-sizing: border-box; }
+  body { margin: 0; color: light-dark(#242424,#ededed); }
+  [hidden] { display: none !important; }
+  .cookbook-card { margin: 0; overflow: hidden; }
+  .photo-button { position: relative; display: block; width: 100%; padding: 0; border: 0; background: light-dark(#f3f3f1,#202020); color: inherit; font: inherit; cursor: zoom-in; }
+  .photo-button:focus-visible, summary:focus-visible { outline: 2px solid light-dark(#333,#ddd); outline-offset: -3px; }
+  .photo-button img { display: block; width: 100%; height: 240px; object-fit: cover; object-position: center; }
+  .photo-button.expanded { cursor: zoom-out; }
+  .photo-button.expanded img { height: auto; max-height: 640px; object-fit: contain; }
+  .photo-action { position: absolute; right: 10px; bottom: 10px; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 6px; color: #fff; background: #0009; pointer-events: none; }
+  .photo-action svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .collapse-icon, .expanded .expand-icon { display: none; }
+  .expanded .collapse-icon { display: block; }
+  .caption { position: relative; padding: 10px 12px; }
+  h2 { margin: 0; padding-right: 54px; font-size: 14px; line-height: 1.35; font-weight: 600; overflow-wrap: anywhere; }
+  p { margin: 0; overflow-wrap: anywhere; }
+  .description:empty { display: none; }
+  .context { margin-top: 3px; padding-right: 54px; font-size: 11px; line-height: 1.45; color: light-dark(#626262,#aaa); }
+  #context-label:not(:empty)::before { content: ' · '; }
+  #source-details > summary { position: absolute; top: 10px; right: 12px; font-size: 11px; color: light-dark(#626262,#aaa); }
+  details { font-size: 12px; }
+  summary { cursor: pointer; white-space: nowrap; }
+  .source-details { margin-top: 10px; padding-top: 10px; border-top: 1px solid light-dark(#e5e5e5,#363636); color: light-dark(#626262,#aaa); }
+  .source-details p { margin-bottom: 8px; }
+  .identifiers { display: grid; grid-template-columns: 75px minmax(0,1fr); gap: 8px 12px; margin: 12px 0 0; font-size: 11px; }
+  dt { font-weight: 500; }
+  dd { margin: 0; overflow-wrap: anywhere; }
+  #status { padding: 16px; }
+  @media (max-width: 360px) { .photo-button img { height: 200px; } }
+</style>
+</head>
+<body>
+<p id="status" role="status">Loading cookbook photo…</p>
+<figure class="cookbook-card">
+  <button id="photo-button" class="photo-button" type="button" aria-label="View full photo" title="View full photo" aria-expanded="false" hidden>
+    <img id="image" alt="Cookbook photo" hidden>
+    <span class="photo-action" aria-hidden="true">
+      <svg class="expand-icon" viewBox="0 0 20 20"><path d="M7 3H3v4m10-4h4v4M3 13v4h4m10-4v4h-4"/></svg>
+      <svg class="collapse-icon" viewBox="0 0 20 20"><path d="M3 7h4V3m10 4h-4V3M7 17v-4H3m10 4v-4h4"/></svg>
+    </span>
+  </button>
+  <figcaption id="caption" class="caption" hidden>
+    <h2 id="title"></h2>
+    <p class="context"><span id="description" class="description"></span><span id="context-label"></span></p>
+      <details id="source-details">
+        <summary>Source</summary>
+        <div class="source-details">
+          <p id="source-note"></p>
+          <details><summary>Technical identifiers</summary>
+            <dl class="identifiers">
+              <dt>Document</dt><dd id="document-id"></dd>
+              <dt>Publication</dt><dd id="publication-id"></dd>
+              <dt>Source</dt><dd id="source-id"></dd>
+              <dt>Image</dt><dd id="image-id"></dd>
+            </dl>
+          </details>
+        </div>
+      </details>
+  </figcaption>
+</figure>
+<script>
+(() => {
+  const image = document.getElementById('image');
+  const status = document.getElementById('status');
+  const photoButton = document.getElementById('photo-button');
+  let expanded = false;
+  let initialized = false;
+  let lastHeight = 0;
+  let lastData = null;
+  function notify(method, params) {
+    window.parent.postMessage({jsonrpc:'2.0', method, params}, '*');
+  }
+  function resize() {
+    const height = Math.ceil(document.body.getBoundingClientRect().height);
+    if (height === lastHeight) return;
+    lastHeight = height;
+    if (initialized) notify('ui/notifications/size-changed', {height});
+    window.openai?.notifyIntrinsicHeight?.(height);
+  }
+  function setExpanded(value) {
+    expanded = value;
+    photoButton.classList.toggle('expanded', value);
+    photoButton.setAttribute('aria-expanded', String(value));
+    const label = value ? 'Show smaller preview' : 'View full photo';
+    photoButton.setAttribute('aria-label', label);
+    photoButton.setAttribute('title', label);
+    resize();
+  }
+  photoButton.onclick = () => setExpanded(!expanded);
+  window.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && expanded) { setExpanded(false); photoButton.focus(); }
+  });
+  function fail() {
+    image.hidden = true;
+    photoButton.hidden = true;
+    image.removeAttribute('src');
+    document.getElementById('caption').hidden = true;
+    status.hidden = false;
+    status.textContent = 'The image could not be displayed. Please try requesting it again.';
+    resize();
+  }
+  function render(result) {
+    if (!result) return;
+    if (result.isError || result.structuredContent?.error) { fail(); return; }
+    const payload = result._meta?.cookbookImage || result.content?.find(block => block.type === 'image');
+    if (!payload) return;
+    // Accept only bounded inline JPEG bytes, never book-supplied URLs or markup.
+    if (payload.mimeType !== 'image/jpeg' || typeof payload.data !== 'string' ||
+        payload.data.length > 4000000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(payload.data)) { fail(); return; }
+    const metadata = payload.metadata || result.structuredContent || {};
+    const citation = metadata.citation || {};
+    const title = typeof citation.title === 'string' ? citation.title : 'Cookbook image';
+    const caption = typeof metadata.caption === 'string' ? metadata.caption.trim() : '';
+    const context = typeof metadata.recipe_context?.title === 'string' ? metadata.recipe_context.title : '';
+    document.getElementById('title').textContent = caption || context || 'Cookbook photo';
+    document.getElementById('description').textContent = title.replace(/: A Cookbook$/i, '');
+    document.getElementById('context-label').textContent = caption ? 'Ebook caption' : context ? 'Nearby recipe' : '';
+    document.getElementById('source-note').textContent = caption
+      ? 'Caption supplied by the ebook. Chapter-level image links may return a photo for a different recipe.'
+      : context ? 'The recipe title comes from the surrounding ebook section. It is context, not a verified description of this photo.'
+      : 'The ebook supplies no caption or reliable recipe context for this photo.';
+    for (const [id, value] of [['document-id',metadata.document], ['publication-id',citation.publication_id], ['source-id',citation.source_id], ['image-id',metadata.image_id]]) {
+      document.getElementById(id).textContent = typeof value === 'string' ? value : 'Unavailable';
+    }
+    image.alt = caption || 'Photo from ' + title;
+    if (lastData === payload.data) { resize(); return; }
+    lastData = payload.data;
+    image.onload = () => { image.hidden = false; photoButton.hidden = false; status.hidden = true; document.getElementById('caption').hidden = false; resize(); };
+    image.onerror = fail;
+    image.src = 'data:image/jpeg;base64,' + payload.data;
+  }
+  window.addEventListener('message', event => {
+    if (event.source !== window.parent || event.data?.jsonrpc !== '2.0') return;
+    const message = event.data;
+    if (message.id === 'cookbook-init' && message.result) {
+      initialized = true;
+      notify('ui/notifications/initialized', {});
+      lastHeight = 0;
+      resize();
+    }
+    if (message.method === 'ui/notifications/tool-result') render(message.params);
+    if (message.method === 'ui/notifications/tool-cancelled') fail();
+    if (message.method === 'ping' || message.method === 'ui/resource-teardown') {
+      window.parent.postMessage({jsonrpc:'2.0', id:message.id, result:{}}, '*');
+    }
+  });
+  // Compatibility bridge for ChatGPT hosts that still deliver tool globals.
+  function renderGlobals() {
+    render({structuredContent:window.openai?.toolOutput, _meta:window.openai?.toolResponseMetadata});
+  }
+  window.addEventListener('openai:set_globals', renderGlobals);
+  renderGlobals();
+  window.parent.postMessage({jsonrpc:'2.0', id:'cookbook-init', method:'ui/initialize', params:{
+    protocolVersion:'2026-01-26', appInfo:{name:'Cookbook Image', version:'1.0.0'},
+    appCapabilities:{availableDisplayModes:['inline']}
+  }}, '*');
+  new ResizeObserver(resize).observe(document.body);
+})();
+</script>
+</body>
+</html>

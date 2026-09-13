@@ -1,0 +1,15 @@
+# Local ingestion/test image, separate from the deployed service image.
+# Build only after scripts/ocr_sandbox.py doctor verifies the capped local VM.
+ARG BASE_IMAGE=cookbook-mcp:poc
+FROM ${BASE_IMAGE}
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tesseract-ocr tesseract-ocr-eng fonts-dejavu-core djvulibre-bin \
+    && rm -rf /var/lib/apt/lists/*
+RUN python -m ensurepip && python -m pip install --no-cache-dir uv==0.11.14
+WORKDIR /tmp/ocr-deps
+COPY pyproject.toml uv.lock ./
+RUN uv export --frozen --no-emit-project --format requirements-txt --output-file requirements.txt \
+    && uv pip install --python /app/.venv/bin/python --require-hashes -r requirements.txt
+WORKDIR /app
+USER cookbook
