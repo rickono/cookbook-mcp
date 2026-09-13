@@ -60,3 +60,45 @@ the model can describe the pixels while no image cards appear. Then request the
 supported selected photo and verify exactly one card. Repeat with a natural
 recipe-photo request, and with a request where no candidate matches. Record the
 actual tool calls and visible results, not just the assistant's claims.
+
+## September 13 deployment and client results
+
+Deployed `server.py` and `library.py` as a layer over the existing runtime:
+`registry.fly.io/cookbook-agent@sha256:56b8b9c098d74dffc0ce690464f8eee2fa3f132da6d8772bc2781ece1bda23ab`.
+The existing Machine's configuration differs only in image; environment,
+startup, resources, services, volume, and restart policy are unchanged. Hosted
+module hashes match local source. Health returns OK; anonymous MCP/readiness
+requests return 401. The active publication and manifest remain those recorded
+in [full EPUB publication](full-epub-publication.md).
+
+The 25 focused Python tests and five JavaScript viewer tests pass, as do Ruff F
+checks and formatting. The Linux/amd64 deployment image passes an isolated,
+bounded import check. No OCR, PDF/DjVu ingestion, or book publication was needed.
+
+The existing ChatGPT connection was refreshed to discover all nine tools:
+
+- In the [inspection acceptance chat](https://chatgpt.com/c/6aa6dac1-e4dc-83ea-9cac-1df412030181),
+  the tool-call panel confirms eight `inspect_image` calls for the ambiguous
+  Ottolenghi Simple meat chapter, plus search, candidate listing, and source
+  reading. The assistant could describe uncaptioned pixels and reject several
+  unrelated dishes. The completed turn contained zero image viewers, confirmed
+  by the rendered DOM and screenshot. An explicit viewer request subsequently
+  displayed one shared table photo, with the chicken on the left. A subsequent
+  no-match request about a blue-frosted cake among the inspected candidates
+  returned a negative answer and added no viewer (the total stayed at one).
+- In a fresh [natural photo request](https://chatgpt.com/c/6aa6db7c-8db8-83ea-b344-4ae9c18d326a),
+  the prompt named the tomato salad and book without specifying tools. The
+  observed sequence was resource discovery, `search_library`, `list_images`,
+  `inspect_image`, `get_image`. Exactly one matching salad photo appeared,
+  verified in the rendered page and screenshot.
+
+One chicken follow-up initially received a ChatGPT copyright refusal without a
+tool call. Clarifying that the request was to open the already-supported private
+library viewer succeeded. This model behavior is distinct from candidate-card
+clutter; the natural salad request required no clarification. The existing
+developer connection showed its pre-existing CSP-off override throughout these
+checks; no security setting or template/CSP code was changed. These are desktop
+ChatGPT observations, not a promise about every MCP client or mobile renderer.
+
+Private deployment configuration, rollback, module copies, and acceptance
+metrics are under `~/cookbook-mcp-data/setup/image-selection-20260913/`.

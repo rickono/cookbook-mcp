@@ -1,5 +1,11 @@
 # Hosted trial runtime
 
+Image selection update, September 13: the existing service now exposes
+`list_images` and `inspect_image` before the final `get_image` display. Live
+ChatGPT checks confirm candidate inspection without image cards and a single
+selected-photo viewer. Deployment details and acceptance evidence are in
+[image selection](image-selection.md).
+
 Current status, September 13, 2026: all 58 authorized EPUB records are uploaded to private R2 and active on the existing Fly Machine as publication `d9e2b701b6864ccaa4aabfd6bc04d32a`. Full remote checksum readback, hosted active-manifest/index validation, the exact 58-book inventory, and health pass. Google publisher sign-in, exact authenticated readiness acknowledgement, 293 hosted MCP calls across all 58 books, and successful-publication history verification now pass. The full build preserves the newer image captions/recipe context and resolves all EPUB TOC links; 57 books have searchable text and one is image-only. See [the full publication record](full-epub-publication.md). The full catalog has now passed authenticated transport checks. Earlier two-book ChatGPT visual acceptance and subsequent viewer deployments remain the recorded in-ChatGPT visual checks.
 
 ## Serving and updates
