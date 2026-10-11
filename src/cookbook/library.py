@@ -1,24 +1,203 @@
 """Read-only library queries and bounded authenticated content responses."""
 
 from __future__ import annotations
-from contextlib import contextmanager
+
 import io
 import json
-from pathlib import Path
 import re
 import sqlite3
 import tempfile
 import threading
+from contextlib import contextmanager
+from pathlib import Path
+
 from PIL import Image
+
 from .extract import render_page
 from .storage import IntegrityError, digest_file, verify
 
 
 class Library:
-    def __init__(self, runtime, cache_bytes=512 * 1024**2):
+    def __init__(self, runtime, cache_bytes=512 * 1024**2, search_engine=None):
         self.runtime = runtime
         self.cache_bytes = cache_bytes
         self.asset_lock = threading.Lock()
+        self.search_engine = search_engine
+
+    def model(self, publication_id):
+        from .book_model import MODEL_PATH, BookModel
+
+        pub = self.publication(publication_id)
+        manifest = self.runtime.manifest(pub)
+        if not any(
+            e.path == MODEL_PATH and e.role == "runtime" for e in manifest.files
+        ):
+            raise IntegrityError(
+                "whole-book structure unavailable for this publication"
+            )
+        return BookModel(self.runtime.root / "versions" / pub / MODEL_PATH, pub)
+
+    def get_book_structure(self, publication_id, book_id, offset=0, limit=30):
+        return self.model(publication_id).describe(book_id, offset, limit)
+
+    def read_book_content(
+        self,
+        publication_id,
+        book_id,
+        target_id,
+        cursor=None,
+        byte_budget=16000,
+        node_budget=100,
+    ):
+        return self.model(publication_id).read(
+            book_id, target_id, cursor, byte_budget, node_budget
+        )
+
+    def get_supporting_work(
+        self, publication_id, book_id, recipe_id, depth=4, limit=30
+    ):
+        return self.model(publication_id).supporting_work(
+            book_id, recipe_id, depth, limit
+        )
+
+    def find_book_content(
+        self,
+        query,
+        publication_id=None,
+        book_ids=None,
+        kinds=None,
+        include_candidates=True,
+        limit=25,
+        page=1,
+    ):
+        from .book_model import connection, payload
+
+        allowed_kinds = {
+            "source",
+            "recipe",
+            "recipe_part",
+            "recipe_ingredient",
+            "instruction",
+            "recipe_use",
+            "recipe_choice",
+            "recipe_formulation",
+            "ingredient_allocation",
+            "division",
+            "passage",
+            "reference_entry",
+            "attribution",
+            "attribute_assertion",
+            "pairing_assertion",
+        }
+        if (
+            not isinstance(query, str)
+            or not query.strip()
+            or len(query) > 200
+            or not 1 <= limit <= 50
+            or not 1 <= page <= 100
+            or page > 1
+            and publication_id is None
+        ):
+            raise IntegrityError("invalid whole-book search")
+        if book_ids is not None and (
+            len(book_ids) > 100
+            or any(not re.fullmatch(r"[a-f0-9]{32}", b) for b in book_ids)
+        ):
+            raise IntegrityError("invalid book scope")
+        if kinds is not None and (
+            not kinds
+            or len(kinds) > len(allowed_kinds)
+            or any(k not in allowed_kinds for k in kinds)
+        ):
+            raise IntegrityError("invalid search kinds")
+        model = self.model(publication_id)
+        if self.search_engine is None:
+            raise IntegrityError("search engine unavailable")
+        with connection(model.path) as db:
+            editions = {
+                r["id"]: payload(r) for r in db.execute("select * from editions")
+            }
+            if book_ids is not None and any(i not in editions for i in book_ids):
+                raise IntegrityError("unavailable book scope")
+            if book_ids == []:
+                return {
+                    "publication_id": model.publication_id,
+                    "model_snapshot_id": model.snapshot,
+                    "results": [],
+                    "next_page": None,
+                }
+            manifest = self.runtime.manifest(model.publication_id)
+            self.search_engine.prepare(manifest, model.path.parents[1])
+            found = self.search_engine.search(
+                model.publication_id,
+                query,
+                book_ids,
+                kinds,
+                include_candidates,
+                limit,
+                page,
+            )
+            results = []
+            for group in found.get("grouped_hits", [])[:limit]:
+                hit = group["hits"][0]
+                row = db.execute(
+                    "select * from search_units where id=?", (hit["document"]["id"],)
+                ).fetchone()
+                if (
+                    row is None
+                    or book_ids
+                    and row["edition_id"] not in book_ids
+                    or kinds
+                    and row["kind"] not in kinds
+                    or not include_candidates
+                    and row["state"] == "candidate"
+                ):
+                    raise IntegrityError(
+                        "search hit is outside the requested source scope"
+                    )
+                entity_row = db.execute(
+                    "select payload from entities where id=?", (row["target_id"],)
+                ).fetchone()
+                entity = payload(entity_row) if entity_row else None
+                results.append(
+                    {
+                        "citation": model.citation(
+                            editions[row["edition_id"]], target_id=row["target_id"]
+                        ),
+                        "kind": row["kind"],
+                        "title": row["title"],
+                        "source_state": row["state"],
+                        "main_text_state": entity.get("main_text_state")
+                        if entity
+                        else None,
+                        "supporting_work_state": entity.get("supporting_work_state")
+                        if entity
+                        else None,
+                        "snippet": next(
+                            (
+                                h.get("snippet", "")
+                                for h in hit.get("highlights", [])
+                                if h.get("field") == "text"
+                            ),
+                            "",
+                        )[:500],
+                    }
+                )
+            return {
+                "publication_id": model.publication_id,
+                "model_snapshot_id": model.snapshot,
+                "results": results,
+                "next_page": page + 1 if len(results) == limit and page < 100 else None,
+                "search_cutoff": bool(found.get("search_cutoff")),
+                "retrieval": "literal keywords, typo tolerance, 5:1 title/body weighting; relevance does not establish suitability",
+                "coverage": {
+                    "native_source_books": len(editions),
+                    "books_with_recipe_records": db.execute(
+                        "select count(distinct edition_id) from entities where kind='recipe'"
+                    ).fetchone()[0],
+                    "interpretation": "Partial. Search kinds=['source'] as well when seeking recipes across books without recipe records; empty recipe results are not proof of no suitable recipe.",
+                },
+            }
 
     def publication(self, pub):
         if pub is None:

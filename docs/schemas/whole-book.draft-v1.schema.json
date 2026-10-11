@@ -1,0 +1,3409 @@
+{
+  "$defs": {
+    "AlternativeQuantity": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "alternative",
+          "title": "Kind",
+          "type": "string"
+        },
+        "choices": {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "alternative": "#/$defs/AlternativeQuantity",
+                "equivalent": "#/$defs/EquivalentQuantity",
+                "measured": "#/$defs/MeasuredQuantity",
+                "preparation_fraction": "#/$defs/PreparationFraction",
+                "qualitative": "#/$defs/QualitativeQuantity",
+                "range": "#/$defs/RangeQuantity",
+                "sum": "#/$defs/SumQuantity"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/MeasuredQuantity"
+              },
+              {
+                "$ref": "#/$defs/SumQuantity"
+              },
+              {
+                "$ref": "#/$defs/EquivalentQuantity"
+              },
+              {
+                "$ref": "#/$defs/AlternativeQuantity"
+              },
+              {
+                "$ref": "#/$defs/RangeQuantity"
+              },
+              {
+                "$ref": "#/$defs/QualitativeQuantity"
+              },
+              {
+                "$ref": "#/$defs/PreparationFraction"
+              }
+            ]
+          },
+          "minItems": 2,
+          "title": "Choices",
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind",
+        "choices"
+      ],
+      "title": "AlternativeQuantity",
+      "type": "object"
+    },
+    "AttributeAssertion": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "edition_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Edition Id",
+          "type": "string"
+        },
+        "evidence_span_ids": {
+          "items": {
+            "pattern": "^[a-f0-9]{32}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "state": {
+          "enum": [
+            "candidate",
+            "supported",
+            "unresolved"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "method": {
+          "title": "Method",
+          "type": "string"
+        },
+        "kind": {
+          "const": "attribute_assertion",
+          "title": "Kind",
+          "type": "string"
+        },
+        "subject_entry_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Subject Entry Id",
+          "type": "string"
+        },
+        "attribute_label": {
+          "$ref": "#/$defs/FieldValue_str_"
+        },
+        "attribute_value": {
+          "$ref": "#/$defs/FieldValue_str_"
+        }
+      },
+      "required": [
+        "id",
+        "edition_id",
+        "evidence_span_ids",
+        "state",
+        "method",
+        "kind",
+        "subject_entry_id",
+        "attribute_label",
+        "attribute_value"
+      ],
+      "title": "AttributeAssertion",
+      "type": "object"
+    },
+    "Attribution": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "edition_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Edition Id",
+          "type": "string"
+        },
+        "evidence_span_ids": {
+          "items": {
+            "pattern": "^[a-f0-9]{32}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "state": {
+          "enum": [
+            "candidate",
+            "supported",
+            "unresolved"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "method": {
+          "title": "Method",
+          "type": "string"
+        },
+        "kind": {
+          "const": "attribution",
+          "title": "Kind",
+          "type": "string"
+        },
+        "passage_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Passage Id",
+          "type": "string"
+        },
+        "speaker_label": {
+          "$ref": "#/$defs/FieldValue_str_"
+        },
+        "role_wording": {
+          "$ref": "#/$defs/FieldValue_str_"
+        },
+        "intermediary_wording": {
+          "$ref": "#/$defs/FieldValue_str_"
+        }
+      },
+      "required": [
+        "id",
+        "edition_id",
+        "evidence_span_ids",
+        "state",
+        "method",
+        "kind",
+        "passage_id",
+        "speaker_label",
+        "role_wording",
+        "intermediary_wording"
+      ],
+      "title": "Attribution",
+      "type": "object"
+    },
+    "ContentDivision": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "edition_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Edition Id",
+          "type": "string"
+        },
+        "evidence_span_ids": {
+          "items": {
+            "pattern": "^[a-f0-9]{32}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "state": {
+          "enum": [
+            "candidate",
+            "supported",
+            "unresolved"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "method": {
+          "title": "Method",
+          "type": "string"
+        },
+        "kind": {
+          "const": "division",
+          "title": "Kind",
+          "type": "string"
+        },
+        "division_kind": {
+          "enum": [
+            "part",
+            "chapter",
+            "section",
+            "front_matter",
+            "back_matter",
+            "unresolved"
+          ],
+          "title": "Division Kind",
+          "type": "string"
+        },
+        "parent_division_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-f0-9]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Parent Division Id"
+        },
+        "title": {
+          "$ref": "#/$defs/FieldValue_str_"
+        },
+        "content_span_ids": {
+          "items": {
+            "pattern": "^[a-f0-9]{32}$",
+            "type": "string"
+          },
+          "title": "Content Span Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "edition_id",
+        "evidence_span_ids",
+        "state",
+        "method",
+        "kind",
+        "division_kind",
+        "parent_division_id",
+        "title",
+        "content_span_ids"
+      ],
+      "title": "ContentDivision",
+      "type": "object"
+    },
+    "Coverage": {
+      "additionalProperties": false,
+      "properties": {
+        "resource_inventory_complete": {
+          "title": "Resource Inventory Complete",
+          "type": "boolean"
+        },
+        "reading_occurrences_complete": {
+          "title": "Reading Occurrences Complete",
+          "type": "boolean"
+        },
+        "source_tree_complete": {
+          "title": "Source Tree Complete",
+          "type": "boolean"
+        },
+        "native_body_text_roundtrip": {
+          "title": "Native Body Text Roundtrip",
+          "type": "boolean"
+        },
+        "image_occurrences": {
+          "minimum": 0,
+          "title": "Image Occurrences",
+          "type": "integer"
+        },
+        "readable_image_text_state": {
+          "enum": [
+            "not_assessed",
+            "partial",
+            "reviewed"
+          ],
+          "title": "Readable Image Text State",
+          "type": "string"
+        },
+        "semantic_state": {
+          "enum": [
+            "not_assessed",
+            "partial",
+            "reviewed"
+          ],
+          "title": "Semantic State",
+          "type": "string"
+        },
+        "unresolved_ids": {
+          "items": {
+            "pattern": "^[a-f0-9]{32}$",
+            "type": "string"
+          },
+          "title": "Unresolved Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "resource_inventory_complete",
+        "reading_occurrences_complete",
+        "source_tree_complete",
+        "native_body_text_roundtrip",
+        "image_occurrences",
+        "readable_image_text_state",
+        "semantic_state",
+        "unresolved_ids"
+      ],
+      "title": "Coverage",
+      "type": "object"
+    },
+    "Edition": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "publication_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Publication Id",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "authors": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Authors",
+          "type": "array"
+        },
+        "source_id": {
+          "title": "Source Id",
+          "type": "string"
+        },
+        "source_sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Source Sha256",
+          "type": "string"
+        },
+        "format": {
+          "const": "EPUB",
+          "title": "Format",
+          "type": "string"
+        },
+        "model_version": {
+          "const": "whole-book-draft-v1",
+          "title": "Model Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "publication_id",
+        "title",
+        "authors",
+        "source_id",
+        "source_sha256",
+        "format",
+        "model_version"
+      ],
+      "title": "Edition",
+      "type": "object"
+    },
+    "ElementNode": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "element",
+          "title": "Kind",
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "document_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Document Id",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-f0-9]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Parent Id"
+        },
+        "child_ordinal": {
+          "minimum": 0,
+          "title": "Child Ordinal",
+          "type": "integer"
+        },
+        "preorder": {
+          "minimum": 0,
+          "title": "Preorder",
+          "type": "integer"
+        },
+        "subtree_end": {
+          "minimum": 0,
+          "title": "Subtree End",
+          "type": "integer"
+        },
+        "source_xpath": {
+          "title": "Source Xpath",
+          "type": "string"
+        },
+        "source_tag": {
+          "title": "Source Tag",
+          "type": "string"
+        },
+        "content_kind": {
+          "enum": [
+            "document",
+            "paragraph",
+            "heading",
+            "list",
+            "list_item",
+            "table",
+            "table_section",
+            "table_row",
+            "table_cell",
+            "figure",
+            "image",
+            "caption",
+            "aside",
+            "quotation",
+            "code",
+            "line_break",
+            "link",
+            "emphasis",
+            "math",
+            "non_reading",
+            "container",
+            "unclassified"
+          ],
+          "title": "Content Kind",
+          "type": "string"
+        },
+        "source_attributes": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Source Attributes",
+          "type": "object"
+        },
+        "child_ids": {
+          "items": {
+            "pattern": "^[a-f0-9]{32}$",
+            "type": "string"
+          },
+          "title": "Child Ids",
+          "type": "array"
+        },
+        "heading_level": {
+          "anyOf": [
+            {
+              "maximum": 6,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Heading Level"
+        },
+        "list_kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "ordered",
+                "unordered",
+                "definition"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "List Kind"
+        },
+        "table_row_span": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Table Row Span"
+        },
+        "table_column_span": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Table Column Span"
+        },
+        "asset_resource_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-f0-9]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Asset Resource Id"
+        },
+        "alt_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Alt Text"
+        }
+      },
+      "required": [
+        "kind",
+        "id",
+        "document_id",
+        "parent_id",
+        "child_ordinal",
+        "preorder",
+        "subtree_end",
+        "source_xpath",
+        "source_tag",
+        "content_kind",
+        "source_attributes",
+        "child_ids"
+      ],
+      "title": "ElementNode",
+      "type": "object"
+    },
+    "EquivalentQuantity": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "equivalent",
+          "title": "Kind",
+          "type": "string"
+        },
+        "forms": {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "alternative": "#/$defs/AlternativeQuantity",
+                "equivalent": "#/$defs/EquivalentQuantity",
+                "measured": "#/$defs/MeasuredQuantity",
+                "preparation_fraction": "#/$defs/PreparationFraction",
+                "qualitative": "#/$defs/QualitativeQuantity",
+                "range": "#/$defs/RangeQuantity",
+                "sum": "#/$defs/SumQuantity"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/MeasuredQuantity"
+              },
+              {
+                "$ref": "#/$defs/SumQuantity"
+              },
+              {
+                "$ref": "#/$defs/EquivalentQuantity"
+              },
+              {
+                "$ref": "#/$defs/AlternativeQuantity"
+              },
+              {
+                "$ref": "#/$defs/RangeQuantity"
+              },
+              {
+                "$ref": "#/$defs/QualitativeQuantity"
+              },
+              {
+                "$ref": "#/$defs/PreparationFraction"
+              }
+            ]
+          },
+          "minItems": 2,
+          "title": "Forms",
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind",
+        "forms"
+      ],
+      "title": "EquivalentQuantity",
+      "type": "object"
+    },
+    "FieldValue_Annotated_Union_MeasuredQuantity__SumQuantity__EquivalentQuantity__AlternativeQuantity__RangeQuantity__QualitativeQuantity__PreparationFraction___FieldInfo_annotation_NoneType__required_True__discriminator__kind____": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "else": {
+            "properties": {
+              "value": {
+                "type": "null"
+              },
+              "reason": {
+                "minLength": 1,
+                "type": "string"
+              }
+            }
+          },
+          "if": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "candidate",
+                  "supported"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "evidence_span_ids": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "unparsed",
+            "source_unspecified",
+            "candidate",
+            "supported",
+            "unresolved"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "discriminator": {
+                "mapping": {
+                  "alternative": "#/$defs/AlternativeQuantity",
+                  "equivalent": "#/$defs/EquivalentQuantity",
+                  "measured": "#/$defs/MeasuredQuantity",
+                  "preparation_fraction": "#/$defs/PreparationFraction",
+                  "qualitative": "#/$defs/QualitativeQuantity",
+                  "range": "#/$defs/RangeQuantity",
+                  "sum": "#/$defs/SumQuantity"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/MeasuredQuantity"
+                },
+                {
+                  "$ref": "#/$defs/SumQuantity"
+                },
+                {
+                  "$ref": "#/$defs/EquivalentQuantity"
+                },
+                {
+                  "$ref": "#/$defs/AlternativeQuantity"
+                },
+                {
+                  "$ref": "#/$defs/RangeQuantity"
+                },
+                {
+                  "$ref": "#/$defs/QualitativeQuantity"
+                },
+                {
+                  "$ref": "#/$defs/PreparationFraction"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Value"
+        },
+        "evidence_span_ids": {
+          "items": {
+            "pattern": "^[a-f0-9]{32}$",
+            "type": "string"
+          },
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Reason"
+        }
+      },
+      "required": [
+        "state",
+        "value",
+        "evidence_span_ids",
+        "reason"
+      ],
+      "title": "FieldValue[Annotated[Union[MeasuredQuantity, SumQuantity, EquivalentQuantity, AlternativeQuantity, RangeQuantity, QualitativeQuantity, PreparationFraction], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]]",
+      "type": "object"
+    },
+    "FieldValue_Literal__required____optional____alternative____context____technique_reference___": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "else": {
+            "properties": {
+              "value": {
+                "type": "null"
+              },
+              "reason": {
+                "minLength": 1,
+                "type": "string"
+              }
+            }
+          },
+          "if": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "candidate",
+                  "supported"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "evidence_span_ids": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "unparsed",
+            "source_unspecified",
+            "candidate",
+            "supported",
+            "unresolved"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "enum": [
+                "required",
+                "optional",
+                "alternative",
+                "context",
+                "technique_reference"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Value"
+        },
+        "evidence_span_ids": {
+          "items": {
+            "pattern": "^[a-f0-9]{32}$",
+            "type": "string"
+          },
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Reason"
+        }
+      },
+      "required": [
+        "state",
+        "value",
+        "evidence_span_ids",
+        "reason"
+      ],
+      "title": "FieldValue[Literal['required', 'optional', 'alternative', 'context', 'technique_reference']]",
+      "type": "object"
+    },
+    "FieldValue_Literal__whole____partial____variation___": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "else": {
+            "properties": {
+              "value": {
+                "type": "null"
+              },
+              "reason": {
+                "minLength": 1,
+                "type": "string"
+              }
+            }
+          },
+          "if": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "candidate",
+                  "supported"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "evidence_span_ids": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "unparsed",
+            "source_unspecified",
+            "candidate",
+            "supported",
+            "unresolved"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "enum": [
+                "whole",
+                "partial",
+                "variation"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Value"
+        },
+        "evidence_span_ids": {
+          "items": {
+            "pattern": "^[a-f0-9]{32}$",
+            "type": "string"
+          },
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Reason"
+        }
+      },
+      "required": [
+        "state",
+        "value",
+        "evidence_span_ids",
+        "reason"
+      ],
+      "title": "FieldValue[Literal['whole', 'partial', 'variation']]",
+      "type": "object"
+    },
+    "FieldValue_str_": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "else": {
+            "properties": {
+              "value": {
+                "type": "null"
+              },
+              "reason": {
+                "minLength": 1,
+                "type": "string"
+              }
+            }
+          },
+          "if": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "candidate",
+                  "supported"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "evidence_span_ids": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "unparsed",
+            "source_unspecified",
+            "candidate",
+            "supported",
+            "unresolved"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Value"
+        },
+        "evidence_span_ids": {
+          "items": {
+            "pattern": "^[a-f0-9]{32}$",
+            "type": "string"
+          },
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Reason"
+        }
+      },
+      "required": [
+        "state",
+        "value",
+        "evidence_span_ids",
+        "reason"
+      ],
+      "title": "FieldValue[str]",
+      "type": "object"
+    },
+    "IngredientAllocation": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "edition_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Edition Id",
+          "type": "string"
+        },
+        "evidence_span_ids": {
+          "items": {
+            "pattern": "^[a-f0-9]{32}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "state": {
+          "enum": [
+            "candidate",
+            "supported",
+            "unresolved"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "method": {
+          "title": "Method",
+          "type": "string"
+        },
+        "kind": {
+          "const": "ingredient_allocation",
+          "title": "Kind",
+          "type": "string"
+        },
+        "recipe_ingredient_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Recipe Ingredient Id",
+          "type": "string"
+        },
+        "instruction_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-f0-9]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Instruction Id"
+        },
+        "stage_wording": {
+          "$ref": "#/$defs/FieldValue_str_"
+        },
+        "amount_used": {
+          "$ref": "#/$defs/FieldValue_Annotated_Union_MeasuredQuantity__SumQuantity__EquivalentQuantity__AlternativeQuantity__RangeQuantity__QualitativeQuantity__PreparationFraction___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"
+        }
+      },
+      "required": [
+        "id",
+        "edition_id",
+        "evidence_span_ids",
+        "state",
+        "method",
+        "kind",
+        "recipe_ingredient_id",
+        "instruction_id",
+        "stage_wording",
+        "amount_used"
+      ],
+      "title": "IngredientAllocation",
+      "type": "object"
+    },
+    "Instruction": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "edition_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Edition Id",
+          "type": "string"
+        },
+        "evidence_span_ids": {
+          "items": {
+            "pattern": "^[a-f0-9]{32}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "state": {
+          "enum": [
+            "candidate",
+            "supported",
+            "unresolved"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "method": {
+          "title": "Method",
+          "type": "string"
+        },
+        "kind": {
+          "const": "instruction",
+          "title": "Kind",
+          "type": "string"
+        },
+        "recipe_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Recipe Id",
+          "type": "string"
+        },
+        "part_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-f0-9]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Part Id"
+        },
+        "ordinal": {
+          "minimum": 0,
+          "title": "Ordinal",
+          "type": "integer"
+        },
+        "source_span_ids": {
+          "items": {
+            "pattern": "^[a-f0-9]{32}$",
+            "type": "string"
+          },
+          "title": "Source Span Ids",
+          "type": "array"
+        },
+        "formulation_ids": {
+          "items": {
+            "pattern": "^[a-f0-9]{32}$",
+            "type": "string"
+          },
+          "title": "Formulation Ids",
+          "type": "array"
+        },
+        "formulation_state": {
+          "enum": [
+            "unparsed",
+            "common",
+            "selected",
+            "unresolved"
+          ],
+          "title": "Formulation State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "edition_id",
+        "evidence_span_ids",
+        "state",
+        "method",
+        "kind",
+        "recipe_id",
+        "part_id",
+        "ordinal",
+        "source_span_ids",
+        "formulation_ids",
+        "formulation_state"
+      ],
+      "title": "Instruction",
+      "type": "object"
+    },
+    "LinkTarget": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "resolved_node"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "resource_id": {
+                "type": "string"
+              },
+              "document_id": {
+                "type": "string"
+              },
+              "node_id": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "resolved_resource"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "resource_id": {
+                "type": "string"
+              },
+              "node_id": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "external",
+                  "unresolved"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "reason": {
+                "minLength": 1,
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "external"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "resource_id": {
+                "type": "null"
+              },
+              "document_id": {
+                "type": "null"
+              },
+              "node_id": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "resolved_node",
+            "resolved_resource",
+            "external",
+            "unresolved"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "resource_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-f0-9]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Resource Id"
+        },
+        "document_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-f0-9]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Document Id"
+        },
+        "node_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-f0-9]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Node Id"
+        },
+        "uri": {
+          "title": "Uri",
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Reason"
+        }
+      },
+      "required": [
+        "state",
+        "resource_id",
+        "document_id",
+        "node_id",
+        "uri",
+        "reason"
+      ],
+      "title": "LinkTarget",
+      "type": "object"
+    },
+    "MeasuredQuantity": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "measured",
+          "title": "Kind",
+          "type": "string"
+        },
+        "amount": {
+          "$ref": "#/$defs/Rational"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Unit"
+        },
+        "qualifiers": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Qualifiers",
+          "type": "array"
+        },
+        "basis": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QuantityBasis"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "kind",
+        "amount",
+        "unit",
+        "qualifiers"
+      ],
+      "title": "MeasuredQuantity",
+      "type": "object"
+    },
+    "ModelSnapshot": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "source_publication_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Source Publication Id",
+          "type": "string"
+        },
+        "extractor_version": {
+          "title": "Extractor Version",
+          "type": "string"
+        },
+        "interpretation_version": {
+          "title": "Interpretation Version",
+          "type": "string"
+        },
+        "locator_version": {
+          "const": "source-dom-v1",
+          "title": "Locator Version",
+          "type": "string"
+        },
+        "implementation_sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Implementation Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "source_publication_id",
+        "extractor_version",
+        "interpretation_version",
+        "locator_version",
+        "implementation_sha256"
+      ],
+      "title": "ModelSnapshot",
+      "type": "object"
+    },
+    "NavigationEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "edition_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Edition Id",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-f0-9]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Parent Id"
+        },
+        "ordinal": {
+          "minimum": 0,
+          "title": "Ordinal",
+          "type": "integer"
+        },
+        "kind": {
+          "enum": [
+            "toc",
+            "landmark",
+            "page_list",
+            "ncx",
+            "other"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "source_resource_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Source Resource Id",
+          "type": "string"
+        },
+        "source_xpath": {
+          "title": "Source Xpath",
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/LinkTarget"
+        }
+      },
+      "required": [
+        "id",
+        "edition_id",
+        "parent_id",
+        "ordinal",
+        "kind",
+        "label",
+        "source_resource_id",
+        "source_xpath",
+        "target"
+      ],
+      "title": "NavigationEntry",
+      "type": "object"
+    },
+    "NodePosition": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "else": {
+            "properties": {
+              "offset": {
+                "type": "null"
+              }
+            }
+          },
+          "if": {
+            "properties": {
+              "side": {
+                "const": "text_offset"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "offset": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "offset"
+            ]
+          }
+        }
+      ],
+      "properties": {
+        "node_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "side": {
+          "enum": [
+            "before",
+            "after",
+            "text_offset"
+          ],
+          "title": "Side",
+          "type": "string"
+        },
+        "offset": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Offset"
+        }
+      },
+      "required": [
+        "node_id",
+        "side"
+      ],
+      "title": "NodePosition",
+      "type": "object"
+    },
+    "PairingAssertion": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "edition_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Edition Id",
+          "type": "string"
+        },
+        "evidence_span_ids": {
+          "items": {
+            "pattern": "^[a-f0-9]{32}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "state": {
+          "enum": [
+            "candidate",
+            "supported",
+            "unresolved"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "method": {
+          "title": "Method",
+          "type": "string"
+        },
+        "kind": {
+          "const": "pairing_assertion",
+          "title": "Kind",
+          "type": "string"
+        },
+        "subject_entry_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Subject Entry Id",
+          "type": "string"
+        },
+        "participants": {
+          "items": {
+            "$ref": "#/$defs/FieldValue_str_"
+          },
+          "minItems": 2,
+          "title": "Participants",
+          "type": "array"
+        },
+        "recommendation_wording": {
+          "$ref": "#/$defs/FieldValue_str_"
+        },
+        "attribution_entity_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-f0-9]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Attribution Entity Id"
+        },
+        "ranking_wording": {
+          "$ref": "#/$defs/FieldValue_str_"
+        },
+        "ranking_basis_span_ids": {
+          "items": {
+            "pattern": "^[a-f0-9]{32}$",
+            "type": "string"
+          },
+          "title": "Ranking Basis Span Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "edition_id",
+        "evidence_span_ids",
+        "state",
+        "method",
+        "kind",
+        "subject_entry_id",
+        "participants",
+        "recommendation_wording",
+        "attribution_entity_id",
+        "ranking_wording",
+        "ranking_basis_span_ids"
+      ],
+      "title": "PairingAssertion",
+      "type": "object"
+    },
+    "Passage": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "edition_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Edition Id",
+          "type": "string"
+        },
+        "evidence_span_ids": {
+          "items": {
+            "pattern": "^[a-f0-9]{32}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "state": {
+          "enum": [
+            "candidate",
+            "supported",
+            "unresolved"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "method": {
+          "title": "Method",
+          "type": "string"
+        },
+        "kind": {
+          "const": "passage",
+          "title": "Kind",
+          "type": "string"
+        },
+        "passage_kind": {
+          "enum": [
+            "essay",
+            "technique",
+            "headnote",
+            "sidebar",
+            "note",
+            "glossary",
+            "index",
+            "menu",
+            "quotation",
+            "prose",
+            "troubleshooting",
+            "make_ahead",
+            "unresolved"
+          ],
+          "title": "Passage Kind",
+          "type": "string"
+        },
+        "title": {
+          "$ref": "#/$defs/FieldValue_str_"
+        },
+        "content_span_ids": {
+          "items": {
+            "pattern": "^[a-f0-9]{32}$",
+            "type": "string"
+          },
+          "title": "Content Span Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "edition_id",
+        "evidence_span_ids",
+        "state",
+        "method",
+        "kind",
+        "passage_kind",
+        "title",
+        "content_span_ids"
+      ],
+      "title": "Passage",
+      "type": "object"
+    },
+    "PreparationFraction": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "preparation_fraction",
+          "title": "Kind",
+          "type": "string"
+        },
+        "fraction": {
+          "$ref": "#/$defs/Rational"
+        },
+        "recipe_use_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Recipe Use Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "fraction",
+        "recipe_use_id"
+      ],
+      "title": "PreparationFraction",
+      "type": "object"
+    },
+    "QualitativeQuantity": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "qualitative",
+          "title": "Kind",
+          "type": "string"
+        },
+        "wording": {
+          "title": "Wording",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "wording"
+      ],
+      "title": "QualitativeQuantity",
+      "type": "object"
+    },
+    "QuantityBasis": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "per_serving",
+            "per_item",
+            "per_batch"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "wording": {
+          "title": "Wording",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "wording"
+      ],
+      "title": "QuantityBasis",
+      "type": "object"
+    },
+    "RangeQuantity": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "range",
+          "title": "Kind",
+          "type": "string"
+        },
+        "lower": {
+          "$ref": "#/$defs/MeasuredQuantity"
+        },
+        "upper": {
+          "$ref": "#/$defs/MeasuredQuantity"
+        }
+      },
+      "required": [
+        "kind",
+        "lower",
+        "upper"
+      ],
+      "title": "RangeQuantity",
+      "type": "object"
+    },
+    "Rational": {
+      "additionalProperties": false,
+      "properties": {
+        "numerator": {
+          "minimum": 0,
+          "title": "Numerator",
+          "type": "integer"
+        },
+        "denominator": {
+          "exclusiveMinimum": 0,
+          "title": "Denominator",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "numerator",
+        "denominator"
+      ],
+      "title": "Rational",
+      "type": "object"
+    },
+    "ReadingOccurrence": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "edition_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Edition Id",
+          "type": "string"
+        },
+        "document_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Document Id",
+          "type": "string"
+        },
+        "ordinal": {
+          "minimum": 0,
+          "title": "Ordinal",
+          "type": "integer"
+        },
+        "linear": {
+          "title": "Linear",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "edition_id",
+        "document_id",
+        "ordinal",
+        "linear"
+      ],
+      "title": "ReadingOccurrence",
+      "type": "object"
+    },
+    "Recipe": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "edition_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Edition Id",
+          "type": "string"
+        },
+        "evidence_span_ids": {
+          "items": {
+            "pattern": "^[a-f0-9]{32}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "state": {
+          "enum": [
+            "candidate",
+            "supported",
+            "unresolved"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "method": {
+          "title": "Method",
+          "type": "string"
+        },
+        "kind": {
+          "const": "recipe",
+          "title": "Kind",
+          "type": "string"
+        },
+        "title": {
+          "$ref": "#/$defs/FieldValue_str_"
+        },
+        "content_span_ids": {
+          "items": {
+            "pattern": "^[a-f0-9]{32}$",
+            "type": "string"
+          },
+          "title": "Content Span Ids",
+          "type": "array"
+        },
+        "yield_value": {
+          "$ref": "#/$defs/FieldValue_Annotated_Union_MeasuredQuantity__SumQuantity__EquivalentQuantity__AlternativeQuantity__RangeQuantity__QualitativeQuantity__PreparationFraction___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"
+        },
+        "main_text_state": {
+          "enum": [
+            "unchecked",
+            "bounded",
+            "unresolved"
+          ],
+          "title": "Main Text State",
+          "type": "string"
+        },
+        "parsed_fields_state": {
+          "enum": [
+            "unparsed",
+            "partial",
+            "reviewed"
+          ],
+          "title": "Parsed Fields State",
+          "type": "string"
+        },
+        "supporting_work_state": {
+          "enum": [
+            "unchecked",
+            "partial",
+            "reviewed",
+            "unresolved"
+          ],
+          "title": "Supporting Work State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "edition_id",
+        "evidence_span_ids",
+        "state",
+        "method",
+        "kind",
+        "title",
+        "content_span_ids",
+        "yield_value",
+        "main_text_state",
+        "parsed_fields_state",
+        "supporting_work_state"
+      ],
+      "title": "Recipe",
+      "type": "object"
+    },
+    "RecipeChoice": {
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "properties": {
+            "member_use_ids": {
+              "minItems": 2
+            }
+          }
+        },
+        {
+          "properties": {
+            "other_option_wordings": {
+              "minItems": 2
+            }
+          }
+        },
+        {
+          "properties": {
+            "member_use_ids": {
+              "minItems": 1
+            },
+            "other_option_wordings": {
+              "minItems": 1
+            }
+          }
+        }
+      ],
+      "properties": {
+        "id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "edition_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Edition Id",
+          "type": "string"
+        },
+        "evidence_span_ids": {
+          "items": {
+            "pattern": "^[a-f0-9]{32}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "state": {
+          "enum": [
+            "candidate",
+            "supported",
+            "unresolved"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "method": {
+          "title": "Method",
+          "type": "string"
+        },
+        "kind": {
+          "const": "recipe_choice",
+          "title": "Kind",
+          "type": "string"
+        },
+        "recipe_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Recipe Id",
+          "type": "string"
+        },
+        "choice_kind": {
+          "enum": [
+            "sourcing",
+            "preparation",
+            "variation",
+            "unresolved"
+          ],
+          "title": "Choice Kind",
+          "type": "string"
+        },
+        "member_use_ids": {
+          "items": {
+            "pattern": "^[a-f0-9]{32}$",
+            "type": "string"
+          },
+          "title": "Member Use Ids",
+          "type": "array"
+        },
+        "other_option_wordings": {
+          "items": {
+            "$ref": "#/$defs/FieldValue_str_"
+          },
+          "title": "Other Option Wordings",
+          "type": "array"
+        },
+        "selection_wording": {
+          "$ref": "#/$defs/FieldValue_str_"
+        }
+      },
+      "required": [
+        "id",
+        "edition_id",
+        "evidence_span_ids",
+        "state",
+        "method",
+        "kind",
+        "recipe_id",
+        "choice_kind",
+        "member_use_ids",
+        "other_option_wordings",
+        "selection_wording"
+      ],
+      "title": "RecipeChoice",
+      "type": "object"
+    },
+    "RecipeFormulation": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "edition_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Edition Id",
+          "type": "string"
+        },
+        "evidence_span_ids": {
+          "items": {
+            "pattern": "^[a-f0-9]{32}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "state": {
+          "enum": [
+            "candidate",
+            "supported",
+            "unresolved"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "method": {
+          "title": "Method",
+          "type": "string"
+        },
+        "kind": {
+          "const": "recipe_formulation",
+          "title": "Kind",
+          "type": "string"
+        },
+        "recipe_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Recipe Id",
+          "type": "string"
+        },
+        "label": {
+          "$ref": "#/$defs/FieldValue_str_"
+        },
+        "yield_value": {
+          "$ref": "#/$defs/FieldValue_Annotated_Union_MeasuredQuantity__SumQuantity__EquivalentQuantity__AlternativeQuantity__RangeQuantity__QualitativeQuantity__PreparationFraction___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"
+        },
+        "content_span_ids": {
+          "items": {
+            "pattern": "^[a-f0-9]{32}$",
+            "type": "string"
+          },
+          "title": "Content Span Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "edition_id",
+        "evidence_span_ids",
+        "state",
+        "method",
+        "kind",
+        "recipe_id",
+        "label",
+        "yield_value",
+        "content_span_ids"
+      ],
+      "title": "RecipeFormulation",
+      "type": "object"
+    },
+    "RecipeIngredient": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "edition_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Edition Id",
+          "type": "string"
+        },
+        "evidence_span_ids": {
+          "items": {
+            "pattern": "^[a-f0-9]{32}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "state": {
+          "enum": [
+            "candidate",
+            "supported",
+            "unresolved"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "method": {
+          "title": "Method",
+          "type": "string"
+        },
+        "kind": {
+          "const": "recipe_ingredient",
+          "title": "Kind",
+          "type": "string"
+        },
+        "recipe_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Recipe Id",
+          "type": "string"
+        },
+        "part_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-f0-9]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Part Id"
+        },
+        "ordinal": {
+          "minimum": 0,
+          "title": "Ordinal",
+          "type": "integer"
+        },
+        "source_span_ids": {
+          "items": {
+            "pattern": "^[a-f0-9]{32}$",
+            "type": "string"
+          },
+          "title": "Source Span Ids",
+          "type": "array"
+        },
+        "ingredient_name": {
+          "$ref": "#/$defs/FieldValue_str_"
+        },
+        "quantity": {
+          "$ref": "#/$defs/FieldValue_Annotated_Union_MeasuredQuantity__SumQuantity__EquivalentQuantity__AlternativeQuantity__RangeQuantity__QualitativeQuantity__PreparationFraction___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"
+        },
+        "preparation": {
+          "$ref": "#/$defs/FieldValue_str_"
+        },
+        "recipe_use_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-f0-9]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Recipe Use Id"
+        },
+        "formulation_ids": {
+          "items": {
+            "pattern": "^[a-f0-9]{32}$",
+            "type": "string"
+          },
+          "title": "Formulation Ids",
+          "type": "array"
+        },
+        "formulation_state": {
+          "enum": [
+            "unparsed",
+            "common",
+            "selected",
+            "unresolved"
+          ],
+          "title": "Formulation State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "edition_id",
+        "evidence_span_ids",
+        "state",
+        "method",
+        "kind",
+        "recipe_id",
+        "part_id",
+        "ordinal",
+        "source_span_ids",
+        "ingredient_name",
+        "quantity",
+        "preparation",
+        "recipe_use_id",
+        "formulation_ids",
+        "formulation_state"
+      ],
+      "title": "RecipeIngredient",
+      "type": "object"
+    },
+    "RecipePart": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "edition_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Edition Id",
+          "type": "string"
+        },
+        "evidence_span_ids": {
+          "items": {
+            "pattern": "^[a-f0-9]{32}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "state": {
+          "enum": [
+            "candidate",
+            "supported",
+            "unresolved"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "method": {
+          "title": "Method",
+          "type": "string"
+        },
+        "kind": {
+          "const": "recipe_part",
+          "title": "Kind",
+          "type": "string"
+        },
+        "recipe_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Recipe Id",
+          "type": "string"
+        },
+        "parent_part_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-f0-9]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Parent Part Id"
+        },
+        "part_kind": {
+          "enum": [
+            "preparation",
+            "ingredient_group",
+            "method_group",
+            "equipment",
+            "assembly",
+            "variation",
+            "unresolved"
+          ],
+          "title": "Part Kind",
+          "type": "string"
+        },
+        "label": {
+          "$ref": "#/$defs/FieldValue_str_"
+        },
+        "ordinal": {
+          "minimum": 0,
+          "title": "Ordinal",
+          "type": "integer"
+        },
+        "content_span_ids": {
+          "items": {
+            "pattern": "^[a-f0-9]{32}$",
+            "type": "string"
+          },
+          "title": "Content Span Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "edition_id",
+        "evidence_span_ids",
+        "state",
+        "method",
+        "kind",
+        "recipe_id",
+        "parent_part_id",
+        "part_kind",
+        "label",
+        "ordinal",
+        "content_span_ids"
+      ],
+      "title": "RecipePart",
+      "type": "object"
+    },
+    "RecipeUse": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "edition_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Edition Id",
+          "type": "string"
+        },
+        "evidence_span_ids": {
+          "items": {
+            "pattern": "^[a-f0-9]{32}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "state": {
+          "enum": [
+            "candidate",
+            "supported",
+            "unresolved"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "method": {
+          "title": "Method",
+          "type": "string"
+        },
+        "kind": {
+          "const": "recipe_use",
+          "title": "Kind",
+          "type": "string"
+        },
+        "source_recipe_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Source Recipe Id",
+          "type": "string"
+        },
+        "target_recipe_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-f0-9]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Target Recipe Id"
+        },
+        "source_link_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-f0-9]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Source Link Id"
+        },
+        "source_part_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-f0-9]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Part Id"
+        },
+        "selected_formulation_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-f0-9]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Selected Formulation Id"
+        },
+        "selected_part_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-f0-9]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Selected Part Id"
+        },
+        "classification": {
+          "$ref": "#/$defs/FieldValue_Literal__required____optional____alternative____context____technique_reference___"
+        },
+        "amount_used": {
+          "$ref": "#/$defs/FieldValue_Annotated_Union_MeasuredQuantity__SumQuantity__EquivalentQuantity__AlternativeQuantity__RangeQuantity__QualitativeQuantity__PreparationFraction___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"
+        },
+        "scope": {
+          "$ref": "#/$defs/FieldValue_Literal__whole____partial____variation___"
+        },
+        "scope_wording": {
+          "$ref": "#/$defs/FieldValue_str_"
+        },
+        "modification_wording": {
+          "$ref": "#/$defs/FieldValue_str_"
+        }
+      },
+      "required": [
+        "id",
+        "edition_id",
+        "evidence_span_ids",
+        "state",
+        "method",
+        "kind",
+        "source_recipe_id",
+        "target_recipe_id",
+        "source_link_id",
+        "classification",
+        "amount_used",
+        "scope",
+        "scope_wording",
+        "modification_wording"
+      ],
+      "title": "RecipeUse",
+      "type": "object"
+    },
+    "ReferenceEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "edition_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Edition Id",
+          "type": "string"
+        },
+        "evidence_span_ids": {
+          "items": {
+            "pattern": "^[a-f0-9]{32}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "state": {
+          "enum": [
+            "candidate",
+            "supported",
+            "unresolved"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "method": {
+          "title": "Method",
+          "type": "string"
+        },
+        "kind": {
+          "const": "reference_entry",
+          "title": "Kind",
+          "type": "string"
+        },
+        "entry_kind": {
+          "enum": [
+            "ingredient",
+            "wine",
+            "region",
+            "cuisine",
+            "equipment",
+            "technique",
+            "subject",
+            "unresolved"
+          ],
+          "title": "Entry Kind",
+          "type": "string"
+        },
+        "label": {
+          "$ref": "#/$defs/FieldValue_str_"
+        },
+        "content_span_ids": {
+          "items": {
+            "pattern": "^[a-f0-9]{32}$",
+            "type": "string"
+          },
+          "title": "Content Span Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "edition_id",
+        "evidence_span_ids",
+        "state",
+        "method",
+        "kind",
+        "entry_kind",
+        "label",
+        "content_span_ids"
+      ],
+      "title": "ReferenceEntry",
+      "type": "object"
+    },
+    "Resource": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "edition_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Edition Id",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "media_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Media Type"
+        },
+        "byte_size": {
+          "minimum": 0,
+          "title": "Byte Size",
+          "type": "integer"
+        },
+        "role": {
+          "enum": [
+            "document",
+            "image",
+            "style",
+            "font",
+            "package",
+            "navigation",
+            "other"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "zip_crc32": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Zip Crc32"
+        }
+      },
+      "required": [
+        "id",
+        "edition_id",
+        "path",
+        "media_type",
+        "byte_size",
+        "role",
+        "zip_crc32"
+      ],
+      "title": "Resource",
+      "type": "object"
+    },
+    "SemanticRelation": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "edition_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Edition Id",
+          "type": "string"
+        },
+        "relation": {
+          "enum": [
+            "contained_in",
+            "about",
+            "see_also",
+            "attributed_to",
+            "variation_of",
+            "note_for",
+            "caption_for",
+            "ingredient_used_in_instruction",
+            "geographic_part_of"
+          ],
+          "title": "Relation",
+          "type": "string"
+        },
+        "source_entity_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Source Entity Id",
+          "type": "string"
+        },
+        "target_entity_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-f0-9]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Target Entity Id"
+        },
+        "target_label": {
+          "$ref": "#/$defs/FieldValue_str_"
+        },
+        "evidence_span_ids": {
+          "items": {
+            "pattern": "^[a-f0-9]{32}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "state": {
+          "enum": [
+            "candidate",
+            "supported",
+            "unresolved"
+          ],
+          "title": "State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "edition_id",
+        "relation",
+        "source_entity_id",
+        "target_entity_id",
+        "target_label",
+        "evidence_span_ids",
+        "state"
+      ],
+      "title": "SemanticRelation",
+      "type": "object"
+    },
+    "SourceDocument": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "edition_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Edition Id",
+          "type": "string"
+        },
+        "resource_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Resource Id",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "root_node_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Root Node Id",
+          "type": "string"
+        },
+        "body_text_sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Body Text Sha256",
+          "type": "string"
+        },
+        "parser_diagnostics": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Parser Diagnostics",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "edition_id",
+        "resource_id",
+        "path",
+        "root_node_id",
+        "body_text_sha256",
+        "parser_diagnostics"
+      ],
+      "title": "SourceDocument",
+      "type": "object"
+    },
+    "SourceLink": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "document_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Document Id",
+          "type": "string"
+        },
+        "node_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "relation": {
+          "enum": [
+            "hyperlink",
+            "image_source",
+            "note_link",
+            "other"
+          ],
+          "title": "Relation",
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/LinkTarget"
+        }
+      },
+      "required": [
+        "id",
+        "document_id",
+        "node_id",
+        "relation",
+        "target"
+      ],
+      "title": "SourceLink",
+      "type": "object"
+    },
+    "SourceSpan": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "edition_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Edition Id",
+          "type": "string"
+        },
+        "parts": {
+          "items": {
+            "$ref": "#/$defs/SpanPart"
+          },
+          "minItems": 1,
+          "title": "Parts",
+          "type": "array"
+        },
+        "locator_version": {
+          "const": "source-dom-v1",
+          "title": "Locator Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "edition_id",
+        "parts",
+        "locator_version"
+      ],
+      "title": "SourceSpan",
+      "type": "object"
+    },
+    "SpanPart": {
+      "additionalProperties": false,
+      "properties": {
+        "document_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Document Id",
+          "type": "string"
+        },
+        "reading_occurrence_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-f0-9]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Reading Occurrence Id"
+        },
+        "start": {
+          "$ref": "#/$defs/NodePosition"
+        },
+        "end": {
+          "$ref": "#/$defs/NodePosition"
+        }
+      },
+      "required": [
+        "document_id",
+        "reading_occurrence_id",
+        "start",
+        "end"
+      ],
+      "title": "SpanPart",
+      "type": "object"
+    },
+    "SumQuantity": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "sum",
+          "title": "Kind",
+          "type": "string"
+        },
+        "terms": {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "alternative": "#/$defs/AlternativeQuantity",
+                "equivalent": "#/$defs/EquivalentQuantity",
+                "measured": "#/$defs/MeasuredQuantity",
+                "preparation_fraction": "#/$defs/PreparationFraction",
+                "qualitative": "#/$defs/QualitativeQuantity",
+                "range": "#/$defs/RangeQuantity",
+                "sum": "#/$defs/SumQuantity"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/MeasuredQuantity"
+              },
+              {
+                "$ref": "#/$defs/SumQuantity"
+              },
+              {
+                "$ref": "#/$defs/EquivalentQuantity"
+              },
+              {
+                "$ref": "#/$defs/AlternativeQuantity"
+              },
+              {
+                "$ref": "#/$defs/RangeQuantity"
+              },
+              {
+                "$ref": "#/$defs/QualitativeQuantity"
+              },
+              {
+                "$ref": "#/$defs/PreparationFraction"
+              }
+            ]
+          },
+          "minItems": 2,
+          "title": "Terms",
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind",
+        "terms"
+      ],
+      "title": "SumQuantity",
+      "type": "object"
+    },
+    "TextNode": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "text",
+          "title": "Kind",
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "document_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Document Id",
+          "type": "string"
+        },
+        "parent_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Parent Id",
+          "type": "string"
+        },
+        "child_ordinal": {
+          "minimum": 0,
+          "title": "Child Ordinal",
+          "type": "integer"
+        },
+        "preorder": {
+          "minimum": 0,
+          "title": "Preorder",
+          "type": "integer"
+        },
+        "source_xpath": {
+          "title": "Source Xpath",
+          "type": "string"
+        },
+        "source_slot": {
+          "enum": [
+            "text",
+            "tail"
+          ],
+          "title": "Source Slot",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "id",
+        "document_id",
+        "parent_id",
+        "child_ordinal",
+        "preorder",
+        "source_xpath",
+        "source_slot",
+        "text"
+      ],
+      "title": "TextNode",
+      "type": "object"
+    },
+    "UnresolvedContent": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "edition_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Edition Id",
+          "type": "string"
+        },
+        "scope_id": {
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Scope Id",
+          "type": "string"
+        },
+        "code": {
+          "enum": [
+            "parser_diagnostic",
+            "unresolved_link",
+            "unresolved_asset",
+            "unclassified_content",
+            "image_text_unread",
+            "ambiguous_semantics",
+            "unparsed_field",
+            "incomplete_source_span"
+          ],
+          "title": "Code",
+          "type": "string"
+        },
+        "explanation": {
+          "title": "Explanation",
+          "type": "string"
+        },
+        "evidence_span_ids": {
+          "items": {
+            "pattern": "^[a-f0-9]{32}$",
+            "type": "string"
+          },
+          "title": "Evidence Span Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "edition_id",
+        "scope_id",
+        "code",
+        "explanation",
+        "evidence_span_ids"
+      ],
+      "title": "UnresolvedContent",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "whole-book-draft-v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "model_snapshot": {
+      "$ref": "#/$defs/ModelSnapshot"
+    },
+    "edition": {
+      "$ref": "#/$defs/Edition"
+    },
+    "resources": {
+      "items": {
+        "$ref": "#/$defs/Resource"
+      },
+      "title": "Resources",
+      "type": "array"
+    },
+    "documents": {
+      "items": {
+        "$ref": "#/$defs/SourceDocument"
+      },
+      "title": "Documents",
+      "type": "array"
+    },
+    "reading_order": {
+      "items": {
+        "$ref": "#/$defs/ReadingOccurrence"
+      },
+      "title": "Reading Order",
+      "type": "array"
+    },
+    "nodes": {
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "element": "#/$defs/ElementNode",
+            "text": "#/$defs/TextNode"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/TextNode"
+          },
+          {
+            "$ref": "#/$defs/ElementNode"
+          }
+        ]
+      },
+      "title": "Nodes",
+      "type": "array"
+    },
+    "source_spans": {
+      "items": {
+        "$ref": "#/$defs/SourceSpan"
+      },
+      "title": "Source Spans",
+      "type": "array"
+    },
+    "source_links": {
+      "items": {
+        "$ref": "#/$defs/SourceLink"
+      },
+      "title": "Source Links",
+      "type": "array"
+    },
+    "navigation": {
+      "items": {
+        "$ref": "#/$defs/NavigationEntry"
+      },
+      "title": "Navigation",
+      "type": "array"
+    },
+    "semantic_entities": {
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "attribute_assertion": "#/$defs/AttributeAssertion",
+            "attribution": "#/$defs/Attribution",
+            "division": "#/$defs/ContentDivision",
+            "ingredient_allocation": "#/$defs/IngredientAllocation",
+            "instruction": "#/$defs/Instruction",
+            "pairing_assertion": "#/$defs/PairingAssertion",
+            "passage": "#/$defs/Passage",
+            "recipe": "#/$defs/Recipe",
+            "recipe_choice": "#/$defs/RecipeChoice",
+            "recipe_formulation": "#/$defs/RecipeFormulation",
+            "recipe_ingredient": "#/$defs/RecipeIngredient",
+            "recipe_part": "#/$defs/RecipePart",
+            "recipe_use": "#/$defs/RecipeUse",
+            "reference_entry": "#/$defs/ReferenceEntry"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/ContentDivision"
+          },
+          {
+            "$ref": "#/$defs/Passage"
+          },
+          {
+            "$ref": "#/$defs/ReferenceEntry"
+          },
+          {
+            "$ref": "#/$defs/Recipe"
+          },
+          {
+            "$ref": "#/$defs/RecipePart"
+          },
+          {
+            "$ref": "#/$defs/RecipeIngredient"
+          },
+          {
+            "$ref": "#/$defs/Instruction"
+          },
+          {
+            "$ref": "#/$defs/RecipeUse"
+          },
+          {
+            "$ref": "#/$defs/RecipeChoice"
+          },
+          {
+            "$ref": "#/$defs/RecipeFormulation"
+          },
+          {
+            "$ref": "#/$defs/IngredientAllocation"
+          },
+          {
+            "$ref": "#/$defs/Attribution"
+          },
+          {
+            "$ref": "#/$defs/AttributeAssertion"
+          },
+          {
+            "$ref": "#/$defs/PairingAssertion"
+          }
+        ]
+      },
+      "title": "Semantic Entities",
+      "type": "array"
+    },
+    "semantic_relations": {
+      "items": {
+        "$ref": "#/$defs/SemanticRelation"
+      },
+      "title": "Semantic Relations",
+      "type": "array"
+    },
+    "unresolved_content": {
+      "items": {
+        "$ref": "#/$defs/UnresolvedContent"
+      },
+      "title": "Unresolved Content",
+      "type": "array"
+    },
+    "coverage": {
+      "$ref": "#/$defs/Coverage"
+    }
+  },
+  "required": [
+    "schema_version",
+    "model_snapshot",
+    "edition",
+    "resources",
+    "documents",
+    "reading_order",
+    "nodes",
+    "source_spans",
+    "source_links",
+    "navigation",
+    "semantic_entities",
+    "semantic_relations",
+    "unresolved_content",
+    "coverage"
+  ],
+  "title": "WholeBook",
+  "type": "object"
+}

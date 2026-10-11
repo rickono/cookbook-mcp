@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <title>Cookbook Library</title>
+  <rect width="512" height="512" rx="112" fill="#244D3F"/>
+  <g fill="none" stroke="#FFF4DC" stroke-width="22" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M256 170c-39-28-91-38-148-27v213c56-11 108-1 148 27 40-28 92-38 148-27V143c-57-11-109-1-148 27Z"/>
+    <path d="M256 170v213M150 205c21-1 41 3 61 10M150 256c21-1 41 3 61 10"/>
+    <path d="M333 247v70"/>
+    <ellipse cx="333" cy="213" rx="22" ry="34"/>
+  </g>
+</svg>

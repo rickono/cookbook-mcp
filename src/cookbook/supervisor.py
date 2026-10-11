@@ -54,7 +54,7 @@ def supervise(
     stop,
     *,
     interval=30,
-    startup_grace=300,
+    startup_grace=600,
     failures=3,
     probe=healthy,
 ):
@@ -66,6 +66,7 @@ def supervise(
             started = time.monotonic()
             next_probe = started + interval
             misses = 0
+            seen_healthy = False
             while not stop.wait(min(0.25, interval)):
                 if child.poll() is not None:
                     event("worker_exited")
@@ -77,7 +78,8 @@ def supervise(
                 # Grace suppresses failed probes, but not crash detection.
                 if probe(health_url):
                     misses = 0
-                elif now - started >= startup_grace:
+                    seen_healthy = True
+                elif seen_healthy or now - started >= startup_grace:
                     misses += 1
                 if misses >= failures:
                     event("worker_liveness_failed")
