@@ -54,6 +54,11 @@ def _main():
         type=Path,
         help="Existing source-backed whole-book SQLite interpretations",
     )
+    interpretation = sub.add_parser(
+        "interpret", help="Add candidate recipe structure from native EPUB markup"
+    )
+    interpretation.add_argument("--build", type=Path, required=True)
+    interpretation.add_argument("--output", type=Path, required=True)
     b.add_argument(
         "--force-ocr-books",
         type=int,
@@ -98,6 +103,16 @@ def _main():
     final.add_argument("--ocr-cache", type=Path, required=True)
     final.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
+    if a.command == "interpret":
+        from .book_interpret import interpretation_build
+
+        manifest, report = interpretation_build(a.build, a.output)
+        print(
+            json.dumps(
+                {"publication_id": manifest.publication_id, **report["validation"]}
+            )
+        )
+        return
     if a.command == "structure":
         from .book_build import structure_build
 

@@ -263,8 +263,21 @@ class BookModel:
             }
         ], None
 
-    def read(self, book_id, target_id, cursor=None, byte_budget=16000, node_budget=100):
-        if not 2048 <= byte_budget <= 60000 or not 1 <= node_budget <= 300:
+    def read(
+        self,
+        book_id,
+        target_id,
+        cursor=None,
+        byte_budget=16000,
+        node_budget=100,
+        related_offset=0,
+    ):
+        if (
+            not 2048 <= byte_budget <= 60000
+            or not 1 <= node_budget <= 300
+            or type(related_offset) is not int
+            or related_offset < 0
+        ):
             raise IntegrityError("invalid reading budget")
         with connection(self.path) as db:
             edition = self.edition(db, book_id)
@@ -304,14 +317,17 @@ class BookModel:
             }
             if entity and not cursor:
                 related = db.execute(
-                    "select id,kind,payload from entities where edition_id=? and (json_extract(payload,'$.recipe_id')=? or json_extract(payload,'$.source_recipe_id')=?) order by kind,id limit 17",
-                    (book_id, target_id, target_id),
+                    "select id,kind,payload from entities where edition_id=? and (json_extract(payload,'$.recipe_id')=? or json_extract(payload,'$.source_recipe_id')=?) order by kind,coalesce(json_extract(payload,'$.ordinal'),0),id limit 17 offset ?",
+                    (book_id, target_id, target_id, related_offset),
                 ).fetchall()
                 response["related_records"] = [
                     {"id": r["id"], "kind": r["kind"], "state": payload(r)["state"]}
                     for r in related[:16]
                 ]
                 response["related_records_truncated"] = len(related) > 16
+                response["next_related_offset"] = (
+                    related_offset + 16 if len(related) > 16 else None
+                )
             # Structural/semantic metadata also counts against the byte budget.
             used = len(canonical(response)) + 600
             if used >= byte_budget:
