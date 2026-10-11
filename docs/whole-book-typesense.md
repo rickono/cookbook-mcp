@@ -122,10 +122,11 @@ bounded temporary 4 GiB Machine, which removed itself. The unchanged 1 GiB servi
 Machine independently verified its runtime bytes before installing the receipt.
 Authenticated hosted MCP acknowledgement, all 59 source roots, real keyword/typo
 lookup, supporting work and current/retained legacy reads passed. Linux engine
-peak RSS was 304 MiB. The first cold check reproduced a too-short 60-second engine
+peak RSS was 322 MiB after cold recovery. The first cold check reproduced a too-short 60-second engine
 startup deadline; the corrected timeout and post-startup watchdog behavior both
-have regression checks. Final cold recovery is recorded in the implementation
-ticket before completing rollout.
+have regression checks. The corrected image recovered the same complete index and exact publication in
+230 seconds after cold boot, without further worker restarts; authenticated
+keyword readiness passed again.
 
 The semantic schema remains draft-v1. Validation checks canonical order/text,
 evidence ownership, typed references, selected preparation ownership and relation
