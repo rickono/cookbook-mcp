@@ -240,8 +240,9 @@ def create_app(library, verifier):
         cursor: str | None = None,
         byte_budget: int = 16000,
         node_budget: int = 100,
+        related_offset: int = 0,
     ) -> types.CallToolResult:
-        """Read ordered source nodes for an entity, source span, navigation target or node from a structured publication. Follow next_cursor until null to read the complete selection. Oversized text runs continue with exact source offsets. Related typed record IDs and resolved original link targets can be read using the same book and publication. Inline markup, tables, image positions and original locators are source data. Retained image placement is not an image transcription. Cite publication/model/book/source/target IDs; semantic interpretation remains distinct from the original source."""
+        """Read ordered source nodes for an entity, source span, navigation target or node from a structured publication. Follow next_cursor until null for complete source. Separately follow next_related_offset with related_offset and no cursor for all ingredient/instruction/part/reference IDs in authored ordinal order; read each ID using this tool. Oversized text runs continue with exact source offsets. Inline markup, tables, image positions and original locators are source data. Retained image placement is not an image transcription. Cite publication/model/book/source/target IDs; candidate interpretation is distinct from the original source."""
         return call(
             library.read_book_content,
             publication_id=publication_id,
@@ -250,6 +251,7 @@ def create_app(library, verifier):
             cursor=cursor,
             byte_budget=byte_budget,
             node_budget=node_budget,
+            related_offset=related_offset,
         )
 
     @server.tool(annotations=ann)
