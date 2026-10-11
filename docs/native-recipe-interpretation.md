@@ -89,20 +89,46 @@ reads, auth, cross-book rejection and legacy compatibility.
 The frozen pool has 5 missing anchors among 19 occurrences at allowance 25 with
 literal keywords, and 6 with the original request text. The prior corpus had zero
 misses on both. Diagnostic ranking places the five literal misses at ranks 28,
-62, 62, 76 and 88. Smaller title weights and stricter matching do not fix the
-regression; summed scores or book diversity reduce but do not eliminate it. No
-anchor pinning or relaxed evaluation allowance is applied. This small
-catalog-browsed pool is not held-out recall or owner-fit validation. The expanded
-global index is held for retrieval review because this comparison has regressed.
+62, 62, 76 and 88. No anchor pinning or relaxed evaluation allowance is applied.
+These counts measure visibility of previously tracked recipes in the initial
+results. They do not establish that the newly higher-ranked recipes are worse:
+their request fit has not yet been judged. This small catalog-browsed pool is not
+held-out recall or owner-fit validation. The owner approved publishing the
+expanded coverage while keeping the miss penalty and suitability evaluation
+open. Ranking weights remain unchanged.
 
 The matching release image passes complete Linux validation in 130 seconds on
 a bounded temporary 4 GiB verifier (peak validator RSS about 2.74 GiB); the
 verifier exits successfully and removes itself. The receipt remains private.
 This verifies the artifact, not serving capacity for both old and new indexes.
 
-Publish through the existing immutable checksum-readback and acknowledged
-activation lifecycle. Retain old versions for exact citations and rollback. The
-10 GiB serving volume has about 2.9 GiB available; the new runtime artifacts alone
-need 3.42 GB before indexing. Activation must wait for retrieval acceptance and
-an approved storage increase, while the existing live publication stays active. OCR, Docker and
-model execution remain outside this native pass.
+The owner approved expanding the existing serving volume to 20 GB; filesystem
+and hosted health checks passed. The expanded publication is now active through
+the existing immutable checksum-readback and authenticated acknowledgement
+lifecycle. Hosted verification confirms 7,266 recipe records, all 59 source roots,
+title retrieval in all 55 recipe books without cutoffs, complete source and child
+reads, candidate exclusion, typo retrieval and retained citations. A recipe with
+79 children passes five related-record pages and source reads for every child.
+The hosted frozen pool reproduces the same 5/19 literal and 6/19 full-request
+misses, with no query cutoffs; no evaluation allowance or ranking weights changed.
+
+The initial recovery check exposed an insufficient 180-second engine startup
+deadline. A synthetic delayed-reload check fails before the fix and passes after;
+startup remains bounded and closes a never-ready engine. The 23 focused model and
+hosted checks pass. The engine now has a 600-second startup budget and the watchdog
+a 900-second initial grace; post-startup failure detection remains unchanged.
+The corrected release recovers the exact active publication and complete index
+in 258 seconds, with authenticated keyword readiness and no further worker
+restarts. Engine peak RSS is about 399 MiB on the unchanged 1 GiB serving Machine.
+
+The previous derived search collection was retired after authenticated activation
+to preserve serving memory headroom. A point-in-time index snapshot remains
+private for rollback, alongside all retained immutable publication/source files;
+retained structured and authenticated legacy citations still resolve. Derived
+search collections can be rebuilt from their publications. An initial hosted
+title-query cutoff no longer reproduces after recovery: three unchanged isolated
+requests and the complete 55-book check pass within the existing query budget.
+
+No OCR or model inference ran, and Docker Desktop was not started or reconfigured.
+The remaining image-only book stays pending protected OCR. Suitability and
+independent recall acceptance remain open in issues #15 and #21.

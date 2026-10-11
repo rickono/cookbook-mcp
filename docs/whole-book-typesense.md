@@ -67,8 +67,8 @@ publication. Engine death fails health/readiness so the existing supervisor can
 restart the whole owned process group. Restarting reuses a complete matching index. Lookups for a prepared publication
 do not wait behind another publication's index import.
 Retained publications continue to resolve exact citations.
-Owned-engine startup allows up to 180 seconds for a persisted index reload. The
-supervisor allows up to 600 seconds before the first healthy probe, covering
+Owned-engine startup allows up to 600 seconds for an expanded persisted index reload. The
+supervisor allows up to 900 seconds before the first healthy probe, covering
 engine load and runtime byte checks. After the first healthy probe, three failed
 30-second probes trigger recovery without waiting for startup grace again.
 

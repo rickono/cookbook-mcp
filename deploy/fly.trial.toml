@@ -34,7 +34,7 @@ kill_timeout = 30
   path = "/healthz"
   interval = "30s"
   timeout = "5s"
-  # Fly caps routing-check grace at 1m; the application watchdog retains its 5m grace.
+  # Fly caps routing-check grace at 1m; the application watchdog retains its 15m grace.
   grace_period = "1m"
 
 [[vm]]
