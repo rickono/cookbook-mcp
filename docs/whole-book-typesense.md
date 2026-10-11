@@ -75,7 +75,8 @@ so source restoration does not depend on them.
 
 Synthetic EPUB checks cover duplicate spine occurrences, inline text, oversized
 UTF-8 continuations, scoped IDs/cursors, corrupted artifacts, failed index
-preparation and recipe citations. The selected non-OCR suite passed 59 Python
+preparation and recipe citations. Supporting-work checks cover cycles, depth/size
+budgets and preservation of partial scope. The selected non-OCR suite passed 60 Python
 checks; the recipe viewer passed 11 JavaScript checks. The remotely built Linux
 image passed its owned-engine health check.
 

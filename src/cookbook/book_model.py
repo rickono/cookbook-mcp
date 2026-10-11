@@ -484,7 +484,9 @@ class BookModel:
                     else:
                         queue.append((target, level + 1, (*path, target)))
             return {
-                "citation": self.citation(edition, recipe_id=recipe_id),
+                "citation": self.citation(
+                    edition, target_id=recipe_id, recipe_id=recipe_id
+                ),
                 "uses": output,
                 "choices": choices,
                 "cycles": cycles,

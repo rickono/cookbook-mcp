@@ -212,3 +212,114 @@ def test_recipe_citation_accepts_exact_whole_book_target():
     )
     with pytest.raises(ValueError):
         RecipeCitation(publication_id="p", book_id="b", source_id="s", target_id="t")
+
+
+def test_supporting_work_scope_cycles_and_budgets(structured):
+    _, manifest, _, book, root = structured
+    model = BookModel(root / "whole-books.sqlite", manifest.publication_id)
+    with sqlite3.connect(model.path) as db:
+        span = db.execute("select id from spans limit 1").fetchone()[0]
+        evidence = [span]
+
+        def field(value):
+            return {
+                "state": "candidate",
+                "value": value,
+                "evidence_span_ids": evidence,
+                "reason": None,
+            }
+
+        unparsed = {
+            "state": "unparsed",
+            "value": None,
+            "evidence_span_ids": [],
+            "reason": "Not interpreted",
+        }
+        recipes = [uuid.uuid4().hex for _ in range(4)]
+
+        def insert(record):
+            record["method"] = "synthetic fixture"
+            db.execute(
+                "insert into entities values(?,?,?,?,?)",
+                (record["id"], book, record["kind"], "Synthetic", json.dumps(record)),
+            )
+
+        for recipe_id in recipes:
+            insert(
+                {
+                    "id": recipe_id,
+                    "kind": "recipe",
+                    "edition_id": book,
+                    "state": "candidate",
+                    "evidence_span_ids": evidence,
+                    "title": field("Synthetic beans"),
+                    "content_span_ids": evidence,
+                    "yield_value": unparsed,
+                    "main_text_state": "unchecked",
+                    "parsed_fields_state": "unparsed",
+                    "supporting_work_state": "partial",
+                }
+            )
+
+        def use(source, target, classification="required", scope="whole"):
+            record = {
+                "id": uuid.uuid4().hex,
+                "kind": "recipe_use",
+                "edition_id": book,
+                "state": "candidate",
+                "evidence_span_ids": evidence,
+                "source_recipe_id": source,
+                "target_recipe_id": target,
+                "source_link_id": None,
+                "source_part_id": None,
+                "selected_formulation_id": None,
+                "selected_part_id": None,
+                "classification": field(classification),
+                "scope": field(scope),
+                "scope_wording": field(scope),
+                "modification_wording": unparsed,
+                "amount_used": unparsed,
+            }
+            insert(record)
+            return record["id"]
+
+        a, b, c, d = recipes
+        use(a, b)
+        partial = use(a, c, scope="partial")
+        use(a, d, classification="alternative")
+        use(b, a)
+        hidden = use(c, d)
+        for _ in range(3):
+            insert(
+                {
+                    "id": uuid.uuid4().hex,
+                    "kind": "recipe_choice",
+                    "edition_id": book,
+                    "state": "candidate",
+                    "evidence_span_ids": evidence,
+                    "recipe_id": a,
+                    "choice_kind": "sourcing",
+                    "member_use_ids": [],
+                    "other_option_wordings": [field("Buy"), field("Make")],
+                    "selection_wording": unparsed,
+                }
+            )
+        db.commit()
+    validate_model(model.path, manifest.publication_id)
+    work = model.supporting_work(book, a)
+    assert work["citation"]["target_id"] == a
+    assert work["cycles"] == [[a, b, a]]
+    assert partial in work["unresolved_scope_or_target"]
+    assert hidden not in {u["id"] for u in work["uses"]}
+    assert work["supporting_work_state"] == "partial"
+    depth_limited = model.supporting_work(book, a, depth=0)
+    assert depth_limited["truncated"] and all(
+        u["source_recipe_id"] == a for u in depth_limited["uses"]
+    )
+    limited = model.supporting_work(book, a, limit=1)
+    assert (
+        limited["truncated"]
+        and len(limited["uses"]) <= 1
+        and len(limited["choices"]) == 1
+    )
+    assert len(canonical(limited)) < 26000
