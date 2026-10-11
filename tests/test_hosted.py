@@ -62,7 +62,7 @@ def test_empty_boot_polling_auth_and_outage(published, tmp_path, keys, mint):
             headers={**headers, "Accept": "application/json, text/event-stream"},
             json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
         )
-        assert tools.status_code == 200 and len(tools.json()["result"]["tools"]) == 9
+        assert tools.status_code == 200 and len(tools.json()["result"]["tools"]) == 14
         assert (
             client.post(
                 "/mcp",

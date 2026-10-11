@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager
 import json
 import os
-from pathlib import Path
 import threading
 import time
+from contextlib import asynccontextmanager
+from pathlib import Path
 from urllib.parse import urlsplit
 
 import httpx
@@ -107,13 +107,17 @@ class PublicationUpdater:
             self.thread.join(timeout=1)
 
 
-def create_hosted_app(runtime, verifier, *, poll_seconds=60):
-    app = create_app(Library(runtime), verifier)
+def create_hosted_app(runtime, verifier, *, poll_seconds=60, search_engine=None):
+    if search_engine:
+        runtime.prepare = search_engine.prepare
+    app = create_app(Library(runtime, search_engine=search_engine), verifier)
     original_lifespan = app.router.lifespan_context
     updater = PublicationUpdater(runtime, poll_seconds)
 
     @asynccontextmanager
     async def lifespan(app):
+        if search_engine:
+            await asyncio.to_thread(search_engine.start)
         try:
             await asyncio.to_thread(runtime.resume_cached)
         except Exception:
@@ -124,6 +128,8 @@ def create_hosted_app(runtime, verifier, *, poll_seconds=60):
                 yield
             finally:
                 await asyncio.to_thread(updater.close)
+                if search_engine:
+                    await asyncio.to_thread(search_engine.close)
 
     app.router.lifespan_context = lifespan
     return app
@@ -131,6 +137,7 @@ def create_hosted_app(runtime, verifier, *, poll_seconds=60):
 
 def serve():
     import logging
+
     import uvicorn
 
     logging.getLogger("pypdf").setLevel(logging.CRITICAL)
@@ -145,8 +152,14 @@ def serve():
         else [],
         jwks_url=https_url(os.environ["COOKBOOK_JWKS_URL"]),
     )
+    from .book_search import BookSearch
+
+    search_engine = BookSearch(
+        os.environ.get("COOKBOOK_TYPESENSE_BINARY", "/usr/local/bin/typesense-server"),
+        runtime.root / "typesense",
+    )
     uvicorn.run(
-        create_hosted_app(runtime, verifier),
+        create_hosted_app(runtime, verifier, search_engine=search_engine),
         host="0.0.0.0",
         port=int(os.environ.get("PORT", "8000")),
         access_log=False,

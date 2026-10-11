@@ -1,17 +1,20 @@
 """Immutable publication assembly, verification, CAS activation and independent restore."""
 
 from __future__ import annotations
-from collections import OrderedDict
+
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import shutil
 import tempfile
 import threading
+from collections import OrderedDict
+from pathlib import Path
 from typing import NamedTuple
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
 from .storage import (
     IntegrityError,
     atomic_write,
@@ -110,6 +113,24 @@ def validate_version(pointer, destination):
             != m.publication_id
         ):
             raise IntegrityError("index publication mismatch")
+    from .book_model import MODEL_PATH, REPORT_PATH
+
+    model_files = {e.path for e in m.files if e.path in (MODEL_PATH, REPORT_PATH)}
+    if model_files:
+        if model_files != {MODEL_PATH, REPORT_PATH}:
+            raise IntegrityError("incomplete whole-book artifacts")
+        from .book_build import validate_model
+
+        report = json.loads((destination / REPORT_PATH).read_bytes())
+        if report["publication_id"] != m.publication_id:
+            raise IntegrityError("whole-book report publication mismatch")
+        validated = validate_model(
+            destination / MODEL_PATH,
+            m.publication_id,
+            destination / "runtime/index.sqlite",
+        )
+        if report["validation"] != validated:
+            raise IntegrityError("whole-book validation report differs")
     return m
 
 
@@ -262,6 +283,7 @@ class Runtime:
         if _manifest_capacity < 1:
             raise ValueError("manifest capacity must be positive")
         self.store, self.root = store, root
+        self.prepare = None
         self._manifest_capacity = _manifest_capacity
         self._manifests = OrderedDict()
         # Only metadata lookup/load/eviction uses this lock. It never acquires
@@ -290,6 +312,8 @@ class Runtime:
                 m = validate_version(pointer, destination)
             finally:
                 self._invalidate_manifest(pointer["publication_id"])
+            if self.prepare:
+                self.prepare(m, destination)
             atomic_write(self.root / "active.json", canonical(pointer))
             return m.publication_id
 
@@ -304,7 +328,7 @@ class Runtime:
                 raise IntegrityError("invalid cached publication")
             destination = self.root / "versions" / pointer["publication_id"]
             self._invalidate_manifest(pointer["publication_id"])
-            return validate_version(pointer, destination).publication_id
+            manifest = validate_version(pointer, destination)
         except Exception:
             active = self.root / "active.json"
             if active.exists():
@@ -321,6 +345,10 @@ class Runtime:
             if destination is not None:
                 self._invalidate_manifest(destination.name)
             raise
+        # A derived-index outage must not quarantine valid immutable source artifacts.
+        if self.prepare:
+            self.prepare(manifest, destination)
+        return manifest.publication_id
 
     def recover(self):
         raw, _ = self.store.read_version("control/active.json")

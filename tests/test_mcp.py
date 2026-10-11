@@ -58,7 +58,7 @@ def test_authenticated_official_client(published, keys, mint):
                         assert logo.headers["content-type"] == "image/png"
                         assert logo.content.startswith(b"\x89PNG\r\n\x1a\n")
                         listed = await session.list_tools()
-                        assert len(listed.tools) == 10
+                        assert len(listed.tools) == 14
                         recipe_tool = next(
                             t for t in listed.tools if t.name == "show_recipe"
                         )
