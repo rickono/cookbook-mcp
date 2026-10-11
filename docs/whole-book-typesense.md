@@ -65,6 +65,10 @@ publication. Engine death fails health/readiness so the existing supervisor can
 restart the whole owned process group. Restarting reuses a complete matching index. Lookups for a prepared publication
 do not wait behind another publication's index import.
 Retained publications continue to resolve exact citations.
+Owned-engine startup allows up to 180 seconds for a persisted index reload. The
+supervisor allows up to 600 seconds before the first healthy probe, covering
+engine load and runtime byte checks. After the first healthy probe, three failed
+30-second probes trigger recovery without waiting for startup grace again.
 
 Recovery hashes every runtime artifact on every attempt. A successful full-model
 validation receipt is bound to the manifest hash, validator/type/helper code and
@@ -77,14 +81,15 @@ limit.
 
 Full integrity checking can thrash on a serving Machine smaller than the source
 database and its indexes. For this first publication, preflight the exact release
-image in a bounded, non-serving temporary Linux Machine. It restores and hashes
-the exact manifest's runtime artifacts, performs the complete structural pass,
+validator and library versions in a bounded, non-serving temporary Linux Machine.
+It restores and hashes the exact manifest's runtime artifacts, performs the complete structural pass,
 and exports that image's receipt. Install the receipt on the serving volume only
 after checking its manifest/validator/report identity and rehashing the volume's
 actual artifacts. Normal recovery still rehashes those artifacts independently.
 Remove the verifier and its temporary source copy after it completes. A changed
 validator or library version requires a new full preflight; receipts cannot be
-fabricated from counts or from a different image's result.
+fabricated from counts or from a different validator's result. Engine lifecycle
+changes do not invalidate a model receipt when its validation identity matches.
 
 Roll out the image on the existing Machine without replacing its volume/config,
 then publish the structured artifact. Save the previous image, Machine config and
@@ -97,7 +102,7 @@ so source restoration does not depend on them.
 Synthetic EPUB checks cover duplicate spine occurrences, inline text, oversized
 UTF-8 continuations, scoped IDs/cursors, corrupted artifacts, failed index
 preparation and recipe citations. Supporting-work checks cover cycles, depth/size
-budgets and preservation of partial scope. The selected non-OCR suite passed 63 Python
+budgets and preservation of partial scope. The selected non-OCR suite passed 65 Python
 checks; the recipe viewer passed 11 JavaScript checks. The remotely built Linux
 image passed its owned-engine health check.
 
@@ -111,9 +116,16 @@ literal query terms. This is a migration check on a small catalog-browsed pool,
 not a held-out recall, precision or owner-fit result.
 
 Initial local validation plus indexing took 130 seconds; observed peak engine RSS
-was 341 MiB and its disk index was about 317 MiB. These are Mac measurements, not
-proof of Linux resource use. Hosted activation, health and resource use must be
-checked before considering the rollout complete.
+was 341 MiB and its disk index was about 317 MiB. Hosted immutable checksum readback
+verified 11,593 objects (8.99 GB). A full Linux preflight passed in 119 seconds on a
+bounded temporary 4 GiB Machine, which removed itself. The unchanged 1 GiB serving
+Machine independently verified its runtime bytes before installing the receipt.
+Authenticated hosted MCP acknowledgement, all 59 source roots, real keyword/typo
+lookup, supporting work and current/retained legacy reads passed. Linux engine
+peak RSS was 304 MiB. The first cold check reproduced a too-short 60-second engine
+startup deadline; the corrected timeout and post-startup watchdog behavior both
+have regression checks. Final cold recovery is recorded in the implementation
+ticket before completing rollout.
 
 The semantic schema remains draft-v1. Validation checks canonical order/text,
 evidence ownership, typed references, selected preparation ownership and relation

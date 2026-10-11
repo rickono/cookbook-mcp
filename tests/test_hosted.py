@@ -277,6 +277,34 @@ def test_watchdog_startup_grace(tmp_path):
     assert not thread.is_alive()
 
 
+def test_startup_grace_ends_after_first_healthy_probe(tmp_path):
+    started, script = worker_script(tmp_path)
+    stop = threading.Event()
+    unhealthy = threading.Event()
+    observed_healthy = threading.Event()
+
+    def probe(_):
+        if unhealthy.is_set():
+            return False
+        observed_healthy.set()
+        return True
+
+    thread = threading.Thread(
+        target=supervise,
+        args=([sys.executable, str(script)], "unused", stop),
+        kwargs={"interval": 0.04, "startup_grace": 10, "probe": probe},
+    )
+    thread.start()
+    try:
+        eventually(observed_healthy.is_set)
+        unhealthy.set()
+        eventually(lambda: len(started.read_text().splitlines()) >= 2)
+    finally:
+        stop.set()
+        thread.join(timeout=5)
+    assert not thread.is_alive()
+
+
 def test_ack_total_timeout_includes_slow_response():
     async def slow(request):
         await asyncio.sleep(5)

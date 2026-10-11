@@ -410,3 +410,51 @@ def test_validation_receipt_write_failure_preserves_verified_source(
     active = runtime.active()
     runtime.resume_cached()
     assert runtime.active() == active and not list(runtime.root.glob("invalid-*"))
+
+
+def test_complete_index_reload_can_take_more_than_one_minute(
+    tmp_path, monkeypatch, free_tcp_port, free_tcp_port_factory
+):
+    from urllib.error import URLError
+
+    from cookbook import book_search
+
+    clock = [0.0]
+
+    class Child:
+        exited = False
+
+        def poll(self):
+            return 0 if self.exited else None
+
+        def terminate(self):
+            self.exited = True
+
+        def wait(self, timeout):
+            return 0
+
+    monkeypatch.setattr(book_search.subprocess, "Popen", lambda *a, **k: Child())
+    monkeypatch.setattr(book_search.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        book_search.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds)
+    )
+    engine = book_search.BookSearch(
+        tmp_path / "unused-binary",
+        tmp_path / "engine",
+        port=free_tcp_port,
+        peer_port=free_tcp_port_factory(),
+    )
+
+    def call(method, path, **kwargs):
+        if path == "/health":
+            if clock[0] < 65:
+                raise URLError("complete index still loading")
+            return {"ok": True}
+        return {"version": "30.2"}
+
+    monkeypatch.setattr(engine, "call", call)
+    try:
+        engine.start()
+        assert 65 <= clock[0] < 180 and engine.process is not None
+    finally:
+        engine.close()
