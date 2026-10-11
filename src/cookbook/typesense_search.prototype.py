@@ -502,6 +502,21 @@ def handler_for(trial, html, port):
             try:
                 if u.path == "/":
                     return self.send(html.read_text(),content_type="text/html")
+                if u.path == "/evaluation":
+                    return self.send(html.with_name("typesense_evaluation.prototype.html").read_text(),content_type="text/html")
+                if u.path == "/api/evaluation":
+                    path = trial.output / "evaluation/latest.json"
+                    if not path.exists():
+                        return self.send({"error":"Run typesense_evaluation.prototype.py with a private source-verified case file first."},404)
+                    run = json.loads(path.read_text())
+                    if run["snapshot"] != trial.corpus.snapshot:
+                        raise ValueError("Evaluation snapshot differs from the running catalog")
+                    reviews = path.with_name("source-reviews.json")
+                    run["source_reviews"] = json.loads(reviews.read_text()) if reviews.exists() else {}
+                    if run["source_reviews"].get("cases_sha256") not in (None,run["cases_sha256"]):
+                        run["source_reviews"] = {"method":"Source notes belong to a different frozen case pool and are hidden. Re-audit before attaching them."}
+                    run["owner_judgments"] = {case["id"]:trial.judgments.get(trial.case_key({"query":case["query"],"book_id":case["book_id"]}),{}) for case in run["manifest"]["cases"]}
+                    return self.send(run)
                 if u.path == "/api/state":
                     return self.send({"version":trial.version,"candidates":len(trial.packages),"books":[{"id":i,"title":t} for i,t in trial.books],"snapshot":trial.corpus.snapshot,"mode":"keyword","judgments_path":str(trial.judgments_path)})
                 if u.path == "/api/recipe":
