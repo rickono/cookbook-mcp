@@ -71,7 +71,20 @@ validation receipt is bound to the manifest hash, validator/type/helper code and
 SQLite/Pydantic versions. It reuses structural checking only for identical bytes
 and rules; missing, broken or stale receipts require the full pass. A failed
 receipt write cannot quarantine valid sources. The full pass has one bounded
-128 MiB SQLite cache; ordinary readers retain their smaller request caches.
+128 MiB SQLite cache and reclaimable read-only mappings; ordinary readers retain
+their smaller request caches. Mapped address space does not increase the VM RAM
+limit.
+
+Full integrity checking can thrash on a serving Machine smaller than the source
+database and its indexes. For this first publication, preflight the exact release
+image in a bounded, non-serving temporary Linux Machine. It restores and hashes
+the exact manifest's runtime artifacts, performs the complete structural pass,
+and exports that image's receipt. Install the receipt on the serving volume only
+after checking its manifest/validator/report identity and rehashing the volume's
+actual artifacts. Normal recovery still rehashes those artifacts independently.
+Remove the verifier and its temporary source copy after it completes. A changed
+validator or library version requires a new full preflight; receipts cannot be
+fabricated from counts or from a different image's result.
 
 Roll out the image on the existing Machine without replacing its volume/config,
 then publish the structured artifact. Save the previous image, Machine config and

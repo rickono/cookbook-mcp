@@ -181,6 +181,9 @@ def validate_model(path, publication_id, runtime_index=None):
         # This is one bounded validation connection, not a per-request cache.
         # Repeated parent/span lookups otherwise thrash a large on-volume index.
         db.execute("pragma cache_size=-131072")
+        # Immutable input permits reclaimable read-only mappings. This is virtual
+        # address space; resident pages remain inside the existing VM RAM limit.
+        db.execute("pragma mmap_size=4294967296")
         if db.execute("pragma integrity_check").fetchone()[0] != "ok":
             raise IntegrityError("invalid whole-book database")
         info_row = db.execute("select payload from model_info").fetchone()
