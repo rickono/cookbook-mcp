@@ -93,7 +93,12 @@ misses on both. Diagnostic ranking places the five literal misses at ranks 28,
 regression; summed scores or book diversity reduce but do not eliminate it. No
 anchor pinning or relaxed evaluation allowance is applied. This small
 catalog-browsed pool is not held-out recall or owner-fit validation. The expanded
-global index is not ready to replace the live one under the existing miss gate.
+global index is held for retrieval review because this comparison has regressed.
+
+The matching release image passes complete Linux validation in 130 seconds on
+a bounded temporary 4 GiB verifier (peak validator RSS about 2.74 GiB); the
+verifier exits successfully and removes itself. The receipt remains private.
+This verifies the artifact, not serving capacity for both old and new indexes.
 
 Publish through the existing immutable checksum-readback and acknowledged
 activation lifecycle. Retain old versions for exact citations and rollback. The
