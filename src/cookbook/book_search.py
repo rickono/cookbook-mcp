@@ -93,6 +93,7 @@ class BookSearch:
                 self.process.kill()
                 self.process.wait(timeout=5)
         self.process = None
+        self.prepared.clear()
         if self.log:
             self.log.close()
             self.log = None
@@ -132,6 +133,10 @@ class BookSearch:
         if entry is None:
             return
         name = self.collection(manifest.publication_id)
+        # Published collections are immutable. Queries for a prepared publication
+        # must not wait behind a different publication's potentially long import.
+        if name in self.prepared:
+            return
         with self.lock:
             if name in self.prepared:
                 return

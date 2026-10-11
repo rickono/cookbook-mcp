@@ -62,7 +62,8 @@ Each publication gets a collection bound to its model checksum and exact record
 count. Failed imports are rejected. Activation prepares the collection before
 committing the local active pointer; failed preparation preserves the previous
 publication. Engine death fails health/readiness so the existing supervisor can
-restart the whole owned process group. Restarting reuses a complete matching index.
+restart the whole owned process group. Restarting reuses a complete matching index. Lookups for a prepared publication
+do not wait behind another publication's index import.
 Retained publications continue to resolve exact citations.
 
 Roll out the image on the existing Machine without replacing its volume/config,
@@ -76,7 +77,7 @@ so source restoration does not depend on them.
 Synthetic EPUB checks cover duplicate spine occurrences, inline text, oversized
 UTF-8 continuations, scoped IDs/cursors, corrupted artifacts, failed index
 preparation and recipe citations. Supporting-work checks cover cycles, depth/size
-budgets and preservation of partial scope. The selected non-OCR suite passed 60 Python
+budgets and preservation of partial scope. The selected non-OCR suite passed 61 Python
 checks; the recipe viewer passed 11 JavaScript checks. The remotely built Linux
 image passed its owned-engine health check.
 

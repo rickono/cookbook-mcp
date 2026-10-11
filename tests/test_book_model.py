@@ -323,3 +323,22 @@ def test_supporting_work_scope_cycles_and_budgets(structured):
         and len(limited["choices"]) == 1
     )
     assert len(canonical(limited)) < 26000
+
+
+def test_prepared_lookup_continues_during_another_index_import(structured, tmp_path):
+    import threading
+
+    from cookbook.book_search import BookSearch
+
+    _, manifest, _, _, root = structured
+    engine = BookSearch(tmp_path / "unused-binary", tmp_path / "engine")
+    engine.prepared.add(engine.collection(manifest.publication_id))
+    finished = threading.Event()
+    thread = threading.Thread(
+        target=lambda: (engine.prepare(manifest, root), finished.set())
+    )
+    with engine.lock:  # A different publication is being imported.
+        thread.start()
+        ready = finished.wait(timeout=1)
+    thread.join(timeout=2)
+    assert ready and not thread.is_alive()
