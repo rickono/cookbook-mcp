@@ -342,3 +342,71 @@ def test_prepared_lookup_continues_during_another_index_import(structured, tmp_p
         ready = finished.wait(timeout=1)
     thread.join(timeout=2)
     assert ready and not thread.is_alive()
+
+
+def test_restart_reuses_full_validation_but_always_checks_bytes(
+    structured, tmp_path, monkeypatch
+):
+    from cookbook import book_build
+
+    _, manifest, _, _, root = structured
+    inputs = {
+        k: Path(v) for k, v in json.loads((root / "inputs.json").read_bytes()).items()
+    }
+    store = LocalStore(tmp_path / "store")
+    runtime = Runtime(store, tmp_path / "runtime")
+    calls = []
+    original = book_build.validate_model
+
+    def counted(*args, **kwargs):
+        calls.append(True)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(book_build, "validate_model", counted)
+    publish(store, manifest, inputs, expected_version=None, activate=runtime.activate)
+    assert len(calls) == 1
+    runtime.resume_cached()
+    assert len(calls) == 1
+    version = runtime.root / "versions" / manifest.publication_id
+    (version / ".model-validation.json").write_text("broken receipt")
+    runtime.resume_cached()
+    assert len(calls) == 2
+    from cookbook import publication
+
+    monkeypatch.setattr(publication, "_model_validation_signature", lambda: "new rules")
+    runtime.resume_cached()
+    assert len(calls) == 3
+    model = runtime.root / "versions" / manifest.publication_id / MODEL_PATH
+    with model.open("r+b") as stream:
+        stream.seek(-1, 2)
+        byte = stream.read(1)
+        stream.seek(-1, 2)
+        stream.write(bytes([byte[0] ^ 1]))
+    with pytest.raises(IntegrityError, match="checksum"):
+        runtime.resume_cached()
+    assert len(calls) == 3 and runtime.active() is None
+
+
+def test_validation_receipt_write_failure_preserves_verified_source(
+    structured, tmp_path, monkeypatch
+):
+    from cookbook import publication
+
+    _, manifest, _, _, root = structured
+    inputs = {
+        k: Path(v) for k, v in json.loads((root / "inputs.json").read_bytes()).items()
+    }
+    store = LocalStore(tmp_path / "store")
+    runtime = Runtime(store, tmp_path / "runtime")
+    original = publication.atomic_write
+
+    def unavailable(path, data):
+        if path.name == ".model-validation.json":
+            raise OSError("cache unavailable")
+        return original(path, data)
+
+    monkeypatch.setattr(publication, "atomic_write", unavailable)
+    publish(store, manifest, inputs, expected_version=None, activate=runtime.activate)
+    active = runtime.active()
+    runtime.resume_cached()
+    assert runtime.active() == active and not list(runtime.root.glob("invalid-*"))

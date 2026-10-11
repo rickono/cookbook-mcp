@@ -66,6 +66,13 @@ restart the whole owned process group. Restarting reuses a complete matching ind
 do not wait behind another publication's index import.
 Retained publications continue to resolve exact citations.
 
+Recovery hashes every runtime artifact on every attempt. A successful full-model
+validation receipt is bound to the manifest hash, validator/type/helper code and
+SQLite/Pydantic versions. It reuses structural checking only for identical bytes
+and rules; missing, broken or stale receipts require the full pass. A failed
+receipt write cannot quarantine valid sources. The full pass has one bounded
+128 MiB SQLite cache; ordinary readers retain their smaller request caches.
+
 Roll out the image on the existing Machine without replacing its volume/config,
 then publish the structured artifact. Save the previous image, Machine config and
 active pointer first. Roll back with the previous image and a conditional pointer
@@ -77,7 +84,7 @@ so source restoration does not depend on them.
 Synthetic EPUB checks cover duplicate spine occurrences, inline text, oversized
 UTF-8 continuations, scoped IDs/cursors, corrupted artifacts, failed index
 preparation and recipe citations. Supporting-work checks cover cycles, depth/size
-budgets and preservation of partial scope. The selected non-OCR suite passed 61 Python
+budgets and preservation of partial scope. The selected non-OCR suite passed 63 Python
 checks; the recipe viewer passed 11 JavaScript checks. The remotely built Linux
 image passed its owned-engine health check.
 

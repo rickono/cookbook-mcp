@@ -178,6 +178,9 @@ def index_units(db):
 def validate_model(path, publication_id, runtime_index=None):
     """Check source ownership, ordered trees, typed references, evidence and search targets."""
     with connection(path) as db:
+        # This is one bounded validation connection, not a per-request cache.
+        # Repeated parent/span lookups otherwise thrash a large on-volume index.
+        db.execute("pragma cache_size=-131072")
         if db.execute("pragma integrity_check").fetchone()[0] != "ok":
             raise IntegrityError("invalid whole-book database")
         info_row = db.execute("select payload from model_info").fetchone()

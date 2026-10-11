@@ -86,6 +86,24 @@ def load_manifest(store, pointer):
     return m
 
 
+def _model_validation_signature():
+    import inspect
+    import sqlite3
+
+    import pydantic
+
+    from .book_model import bounds
+
+    # Bind receipts to every validator/type definition and the source-position
+    # helper, plus library versions that determine their behavior.
+    material = b"whole-book-validation-receipt-v1\0"
+    for name in ("book_build.py", "book_types.py"):
+        material += Path(__file__).with_name(name).read_bytes()
+    material += inspect.getsource(bounds).encode()
+    material += (pydantic.__version__ + sqlite3.sqlite_version).encode()
+    return hashlib.sha256(material).hexdigest()
+
+
 def validate_version(pointer, destination):
     """Verify cached runtime state without depending on the object store."""
     raw = (destination / "manifest.json").read_bytes()
@@ -124,13 +142,34 @@ def validate_version(pointer, destination):
         report = json.loads((destination / REPORT_PATH).read_bytes())
         if report["publication_id"] != m.publication_id:
             raise IntegrityError("whole-book report publication mismatch")
-        validated = validate_model(
-            destination / MODEL_PATH,
-            m.publication_id,
-            destination / "runtime/index.sqlite",
-        )
-        if report["validation"] != validated:
-            raise IntegrityError("whole-book validation report differs")
+        receipt_path = destination / ".model-validation.json"
+        identity = {
+            "receipt_version": 1,
+            "manifest_sha256": pointer["manifest_sha256"],
+            "validator_sha256": _model_validation_signature(),
+            "validation": report["validation"],
+        }
+        try:
+            receipt = json.loads(receipt_path.read_bytes())
+        except (OSError, ValueError):
+            receipt = None
+        # All runtime bytes were hashed above, on every call. Only the expensive
+        # structural pass is reused, after an exact-byte/exact-validator match.
+        if receipt != identity:
+            validated = validate_model(
+                destination / MODEL_PATH,
+                m.publication_id,
+                destination / "runtime/index.sqlite",
+            )
+            if report["validation"] != validated:
+                raise IntegrityError("whole-book validation report differs")
+            try:
+                atomic_write(receipt_path, canonical(identity))
+            except OSError:
+                # A cache-write failure must not quarantine verified source data.
+                from .telemetry import event
+
+                event("model_validation_receipt_unavailable")
     return m
 
 
