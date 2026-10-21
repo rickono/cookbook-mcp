@@ -25,6 +25,8 @@ from .storage import IntegrityError, canonical
 VERSION = "scanned-candidate.v1"
 SUMMARY_VERSION = "transcription-summary.v1"
 SUMMARY_PATH = "quality/transcription-summary.json"
+BUILD_REPORT_VERSION = "scanned-build-report.v1"
+BUILD_REPORT = "build-report.json"
 REGISTRY_VERSION = "scanned-registry.v1"
 INVENTORY = "quality/scanned"
 CANDIDATE = "candidate.json"
@@ -593,10 +595,14 @@ def _page_text(page, rows):
     return text
 
 
-def _section_text(section, rows, explicit):
-    """Readable section text with markers; returns (text, ids of rows marked in it)."""
+def _section_segments(section, rows, explicit):
+    """Readable section parts with markers, as [page, text, is_part] segments.
+
+    Returns (segments, ids of rows marked in them). A row with no line to mark gets its
+    own marker segment (is_part False); corrections only ever edit part segments.
+    """
     segments = [
-        [part["source_page"], part["text"]]
+        [part["source_page"], part["text"], True]
         for part in section["parts"]
         if part["kind"] not in NOT_READ
     ]
@@ -612,11 +618,105 @@ def _section_text(section, rows, explicit):
                 (i for i, seg in enumerate(segments) if seg[0] <= row["physical_page"]),
                 default=-1,
             )
-            segments.insert(at + 1, [row["physical_page"], marker(row)])
+            segments.insert(at + 1, [row["physical_page"], marker(row), False])
             hit = True
         if hit:
             marked.append(row["id"])
-    return "\n\n".join(seg[1] for seg in segments), marked
+    return segments, marked
+
+
+# -- corrections ----------------------------------------------------------------------------
+
+_MARKER = re.compile(r"\[unresolved [^\]\n]*\]")
+
+
+def _pattern(text):
+    """Matches ``text`` in served text up to whitespace (the reports' squash())."""
+    return re.compile(r"\s+".join(map(re.escape, squash(text).split(" "))))
+
+
+def _spans(text, needle):
+    """Where ``needle`` occurs in ``text`` after whitespace normalisation.
+
+    An occurrence that touches an unresolved marker does not count: a correction never
+    fills a marker and never edits the raw text a marker stands for.
+    """
+    markers = [m.span() for m in _MARKER.finditer(text)]
+    return [
+        m.span()
+        for m in _pattern(needle).finditer(text)
+        if not any(a < m.end() and m.start() < b for a, b in markers)
+    ]
+
+
+def _edit(text, span, to_text):
+    return text[: span[0]] + squash(to_text) + text[span[1] :]
+
+
+def _apply(row, page_texts, segments, unit_of, page_unit_of):
+    """Apply one ledger row in place; returns (outcome, reason, ids of affected units).
+
+    Exactly one occurrence of ``from_text`` on the cited page, or within the cited
+    section's text from that page, is applied to the page unit and to every section part
+    from that page that holds it. None is stale; more than one is ambiguous.
+    """
+    n, old, new = row["physical_page"], row["from_text"], row["to_text"]
+    if n not in page_texts:
+        return "stale", "the cited page is not in this source", []
+    if _MARKER.search(new):
+        return "ambiguous", "the corrected text would contain an unresolved marker", []
+    parts = [
+        (sid, k)
+        for sid, segs in segments.items()
+        for k, seg in enumerate(segs)
+        if seg[2] and seg[0] == n
+    ]
+    hits = {at: _spans(segments[at[0]][at[1]][1], old) for at in parts}
+    page_hits = _spans(page_texts[n], old)
+    cited = next(
+        (sid for sid, unit in unit_of.items() if unit == row["section_id"]), None
+    )
+    scoped = [at for at in parts if at[0] == cited and hits[at]]
+    if len(page_hits) == 1:
+        targets = [at for at in parts if hits[at]]
+        page_span = page_hits[0]
+    elif cited is not None and sum(len(hits[at]) for at in scoped) == 1:
+        targets = scoped
+        page_span = None
+        if page_hits:
+            # Find the cited part on the page to tell which page occurrence it is.
+            sid, k = scoped[0]
+            window = list(_pattern(segments[sid][k][1]).finditer(page_texts[n]))
+            inside = [
+                s
+                for s in page_hits
+                if len(window) == 1
+                and window[0].start() <= s[0]
+                and s[1] <= window[0].end()
+            ]
+            if len(inside) != 1:
+                return (
+                    "ambiguous",
+                    "the cited section's occurrence cannot be located on the page",
+                    [],
+                )
+            page_span = inside[0]
+    elif not page_hits and not any(hits.values()):
+        return "stale", "from_text no longer occurs on the cited page", []
+    else:
+        return "ambiguous", "from_text occurs more than once on the cited page", []
+    if any(len(hits[at]) != 1 for at in targets):
+        return "ambiguous", "from_text occurs more than once in a section part", []
+    affected = []
+    if page_span is not None:
+        page_texts[n] = _edit(page_texts[n], page_span, new)
+        affected.append(page_unit_of[n])
+    for sid, k in targets:
+        seg = segments[sid][k]
+        seg[1] = _edit(seg[1], hits[(sid, k)][0], new)
+        if unit_of[sid] not in affected:
+            affected.append(unit_of[sid])
+    return "applied", None, affected
 
 
 def _label(c, candidate_sha256):
@@ -635,7 +735,7 @@ def _label(c, candidate_sha256):
 
 def _review_region(r):
     return {
-        "state": "crop_reviewed",
+        "state": "crop_confirmed",
         "physical_page": r["physical_page"],
         "box": check_region(r["box"]),
         "review_id": r["id"],
@@ -656,10 +756,14 @@ def _unresolved_region(u):
 def import_candidate(files, *, source_id, source_sha256, physical_pages, ledger=None):
     """Validate a candidate and turn it into library units, a TOC and a summary entry.
 
-    ``ledger`` is the future correction ledger (#51). It is accepted and nothing from it
-    is applied yet; the summary's correction lists stay empty.
+    ``ledger`` is the correction ledger (cookbook.ledger rows). Rows for this source digest
+    apply in decision order to the served text, after unresolved markers are in place;
+    rows for other sources are ignored. Each outcome is listed by id in the summary, and
+    ambiguous rows are returned as ``owner_queue`` items.
     """
-    del ledger  # reserved: corrections are applied by a later ticket
+    from . import ledger as ledger_rows
+
+    corrections = ledger_rows.for_source(ledger or [], source_sha256)
     v = validate(files, source_sha256=source_sha256, physical_pages=physical_pages)
     c = v["candidate"]
     candidate_sha256 = hashlib.sha256(files[CANDIDATE]).hexdigest()
@@ -672,6 +776,46 @@ def import_candidate(files, *, source_id, source_sha256, physical_pages, ledger=
         reviews_on.setdefault(r["physical_page"], []).append(r)
     covered = {p for s in v["sections"] for p in s["physical_pages"]}
     unit_of = {s["id"]: section_unit_id(source_id, s["id"]) for s in v["sections"]}
+    page_unit_of = {
+        p["physical_page"]: page_unit_id(source_id, p["physical_page"])
+        for p in v["pages"]
+    }
+
+    page_texts = {
+        p["physical_page"]: _page_text(p, rows_on.get(p["physical_page"], []))
+        for p in v["pages"]
+    }
+    segments, marked_in = {}, {}
+    for s in v["sections"]:
+        rows = [u for p in s["physical_pages"] for u in rows_on.get(p, [])]
+        explicit = {u["id"] for u in rows if u["section_id"] == s["id"]}
+        explicit |= {uid for part in s["parts"] for uid in part["unresolved_ids"]}
+        explicit |= {u["id"] for u in rows if u["code"] == "failed_page"}
+        segments[s["id"]], marked_in[s["id"]] = _section_segments(s, rows, explicit)
+
+    outcomes = {"applied": [], "stale": [], "ambiguous": []}
+    applied_to = {}
+    owner_queue = []
+    for row in corrections:
+        outcome, reason, affected = _apply(
+            row, page_texts, segments, unit_of, page_unit_of
+        )
+        outcomes[outcome].append(row["id"])
+        for unit in affected:
+            applied_to.setdefault(unit, []).append(
+                {"id": row["id"], "reviewer": row["reviewer"]}
+            )
+        if outcome == "ambiguous":
+            owner_queue.append(
+                {
+                    "kind": "ambiguous_correction",
+                    "correction_id": row["id"],
+                    "source_id": source_id,
+                    "physical_page": row["physical_page"],
+                    "reason": reason,
+                    "correction": row,
+                }
+            )
 
     units = []
     for page in v["pages"]:
@@ -679,9 +823,9 @@ def import_candidate(files, *, source_id, source_sha256, physical_pages, ledger=
         rows = rows_on.get(n, [])
         units.append(
             {
-                "id": page_unit_id(source_id, n),
+                "id": page_unit_of[n],
                 "title": f"Page {n}",
-                "text": _page_text(page, rows),
+                "text": page_texts[n],
                 "locator": {
                     "kind": "page",
                     "physical_page": n,
@@ -697,7 +841,7 @@ def import_candidate(files, *, source_id, source_sha256, physical_pages, ledger=
                     "label": label,
                     "check_regions": [_review_region(r) for r in reviews_on.get(n, [])]
                     + [_unresolved_region(u) for u in rows],
-                    "corrections": [],
+                    "corrections": applied_to.get(page_unit_of[n], []),
                 },
             }
         )
@@ -705,10 +849,8 @@ def import_candidate(files, *, source_id, source_sha256, physical_pages, ledger=
     for s in v["sections"]:
         pages = s["physical_pages"]
         rows = [u for p in pages for u in rows_on.get(p, [])]
-        explicit = {u["id"] for u in rows if u["section_id"] == s["id"]}
-        explicit |= {uid for part in s["parts"] for uid in part["unresolved_ids"]}
-        explicit |= {u["id"] for u in rows if u["code"] == "failed_page"}
-        text, marked = _section_text(s, rows, explicit)
+        text = "\n\n".join(seg[1] for seg in segments[s["id"]])
+        marked = marked_in[s["id"]]
         marked_rows = [u for u in rows if u["id"] in marked]
         title = s["title"] or f"Untitled {s['kind'].replace('_', ' ')}"
         unit = unit_of[s["id"]]
@@ -747,7 +889,7 @@ def import_candidate(files, *, source_id, source_sha256, physical_pages, ledger=
                         if s["id"] in r["section_ids"]
                     ]
                     + [_unresolved_region(u) for u in marked_rows],
-                    "corrections": [],
+                    "corrections": applied_to.get(unit, []),
                 },
             }
         )
@@ -775,17 +917,61 @@ def import_candidate(files, *, source_id, source_sha256, physical_pages, ledger=
         "sections": c["counts"]["sections"],
         "quantity_reviews": c["counts"]["quantity_reviews"],
         "unresolved": c["counts"]["unresolved"],
-        "corrections": {"applied": [], "stale": [], "ambiguous": []},
+        "corrections": outcomes,
+        "ledger_sha256": hashlib.sha256(ledger_rows.dump(corrections)).hexdigest(),
     }
     return {
         "units": units,
         "toc": toc,
         "summary": summary,
         "candidate_sha256": candidate_sha256,
+        "ledger": corrections,
+        "owner_queue": owner_queue,
+    }
+
+
+def correction_counts(summary):
+    """Applied, stale and ambiguous correction counts from one source's summary entry."""
+    return {
+        k: len(summary["corrections"][k]) for k in ("applied", "stale", "ambiguous")
+    }
+
+
+def build_report(results):
+    """The build report for scanned imports (``import_candidate`` results, any order).
+
+    Totals and per-source correction counts, plus the owner queue of ambiguous corrections.
+    It stays in the build directory; it is not part of the publication.
+    """
+    results = sorted(results, key=lambda r: r["summary"]["source_id"])
+    sources = [
+        {
+            "source_id": r["summary"]["source_id"],
+            "ledger_sha256": r["summary"]["ledger_sha256"],
+            "corrections": correction_counts(r["summary"]),
+            "unresolved": r["summary"]["unresolved"],
+        }
+        for r in results
+    ]
+    return {
+        "version": BUILD_REPORT_VERSION,
+        "corrections": {
+            k: sum(s["corrections"][k] for s in sources)
+            for k in ("applied", "stale", "ambiguous")
+        },
+        "unresolved": sum(s["unresolved"] for s in sources),
+        "sources": sources,
+        "owner_queue": [i for r in results for i in r["owner_queue"]],
     }
 
 
 # -- files on disk --------------------------------------------------------------------------
+
+
+def read_build_report(build: Path):
+    """The scanned build report a build directory holds, or None if it imported none."""
+    path = Path(build) / BUILD_REPORT
+    return json.loads(path.read_bytes()) if path.exists() else None
 
 
 def read_candidate(directory: Path):

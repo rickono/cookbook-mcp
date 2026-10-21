@@ -55,6 +55,11 @@ def _main():
         help="scanned-registry.v1 JSON mapping PDF sha256 to a scanned-candidate.v1 directory",
     )
     b.add_argument(
+        "--ledger",
+        type=Path,
+        help="correction ledger (corrections.jsonl from scripts/triage_reports.py) to apply",
+    )
+    b.add_argument(
         "--legacy-ocr-books",
         type=int,
         nargs="+",
@@ -228,7 +233,8 @@ def _main():
         return
     if a.command == "build":
         from .build import build_snapshot
-        from .scanned import read_registry
+        from .ledger import read as read_ledger
+        from .scanned import read_build_report, read_registry
 
         m, _, stats = build_snapshot(
             a.snapshot,
@@ -239,7 +245,9 @@ def _main():
             force_ocr_ids=a.force_ocr_books,
             legacy_ocr_ids=a.legacy_ocr_books,
             scanned=read_registry(a.scanned_registry) if a.scanned_registry else None,
+            ledger=read_ledger(a.ledger) if a.ledger else None,
         )
+        scanned_report = read_build_report(a.output) or {}
         from .quality import read_report
         from .ocr import write_review_page
 
@@ -255,6 +263,8 @@ def _main():
                 {
                     "publication_id": m.publication_id,
                     "stats": stats,
+                    "corrections": scanned_report.get("corrections"),
+                    "owner_queue": len(scanned_report.get("owner_queue", [])),
                     "pending_ocr_pages": len(pending),
                     "status": "review_required" if pending else "ready_to_publish",
                 }

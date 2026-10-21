@@ -331,3 +331,35 @@ def publish_scanned(tmp_path, data, monkeypatch):
 
 def dump(value):
     return json.dumps(value, ensure_ascii=False)
+
+
+REVIEWER = {"kind": "agent", "id": "blind-reread:claude:claude-haiku-5-5 x3"}
+
+
+def correction(n, from_text, to_text, *, page=1, section_id=None, source=None, **extra):
+    """A correction-ledger row as triage writes it (scripts/triage_reports.py)."""
+    digest = source or pdf_sha256()
+    row = {
+        "id": sha(f"report {n}"),
+        "decided_at": f"2026-10-20T10:00:{n:02d}Z",
+        "report_id": sha(f"report {n}"),
+        "publication_id": "an-earlier-publication",
+        "book_id": "synthetic-book",
+        "source_id": "pdf:" + digest,
+        "source_sha256": digest,
+        "physical_page": page,
+        "section_id": section_id,
+        "region": None,
+        "kind": "quantity",
+        "from_text": from_text,
+        "to_text": to_text,
+        "state": "source_reviewed",
+        "reviewer": dict(REVIEWER),
+        "evidence": {
+            "crop_sha256": sha(f"crop {n}"),
+            "readings_sha256": sha(f"readings {n}"),
+            "votes": {"proposed": 3, "current": 0, "neither": 0},
+        },
+    }
+    row.update(extra)
+    return row

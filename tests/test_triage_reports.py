@@ -99,6 +99,37 @@ def test_blind_majority_corrects(tmp_path):
     }
 
 
+def decided(tmp_path, name, at, **report):
+    d, _ = run(tmp_path, ["2 tbsp salt"] * 3, report=REPORT | report)
+    d["decided_at"] = at
+    (tmp_path / "decisions").mkdir(exist_ok=True)
+    (tmp_path / "decisions" / f"{name}.json").write_text(json.dumps(d))
+    return d
+
+
+def test_ledger_is_in_decision_order_and_binds_to_source_and_page(tmp_path):
+    from cookbook import ledger
+
+    # File names sort against decision time; the ledger must not follow them.
+    decided(tmp_path, "a", "2026-10-20T10:00:02Z", report_id="1" * 64, physical_page=13)
+    decided(tmp_path, "b", "2026-10-20T10:00:01Z", report_id="2" * 64)
+    # The same correction, reported again against a later publication: kept once, earliest.
+    decided(
+        tmp_path, "c", "2026-10-20T10:00:03Z", report_id="3" * 64, publication_id="new"
+    )
+    assert triage.rebuild(tmp_path)["correction"] == 3
+    rows = ledger.read(tmp_path / "corrections.jsonl")
+    assert [(r["id"], r["decided_at"]) for r in rows] == [
+        ("2" * 64, "2026-10-20T10:00:01Z"),
+        ("1" * 64, "2026-10-20T10:00:02Z"),
+    ]
+    assert [(r["source_sha256"], r["physical_page"]) for r in rows] == [
+        ("b" * 64, 12),
+        ("b" * 64, 13),
+    ]
+    assert rows[0]["publication_id"] == "pub"
+
+
 def test_blind_majority_rejects(tmp_path):
     d, _ = run(tmp_path, ["2 tsp salt", "2 tsp salt", "2 tbsp salt"])
     assert d["outcome"] == "rejected" and not triage.unsettled(d)

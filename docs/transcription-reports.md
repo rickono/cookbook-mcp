@@ -21,6 +21,11 @@ the page, each side at least 0.02. The server renders the page larger, up to
 `ZOOM_EDGE` (2400 px), and returns only that box, at most `edge` pixels. Small print
 and fraction glyphs become legible without returning a huge image.
 
+For a scanned section, `read_section` returns `check_regions`: the crop quantity-review
+boxes (`crop_confirmed`) and the unresolved items (`unresolved`) on its pages, each with
+a `physical_page` and a `box` that `get_page` takes unchanged as `region`. The agent
+checks the unresolved ones first instead of guessing a box.
+
 If the zoom shows something different from the library text, the agent tells the
 user what the page shows. It then calls `report_transcription_issue` once, with:
 
@@ -90,10 +95,39 @@ python3 scripts/triage_reports.py --reports-s3 --limit 20  # decide up to 20
 
 ## 3. The next publication applies corrections
 
-`corrections.jsonl` rows carry the source, page, region, `from_text`, `to_text`, the
-reviewer and the evidence (crop hash, readings hash, votes). The library changes
-only when a new publication is built and activated. Earlier publications stay as
-they were.
+`corrections.jsonl` is the correction ledger (`cookbook.ledger`). Each row carries an
+`id` (the report id), `decided_at`, the source digest and id, the physical page, an
+optional section and region, `from_text`, `to_text`, the reviewer and the evidence
+(crop hash, readings hash, votes). Rows are in decision order. A row binds to the
+source digest and page, not to the publication the report was filed against, so a
+report against an older publication still applies. The same correction decided again
+from a later report is kept once, at its first decision.
+
+`cookbook build --scanned-registry registry.json --ledger corrections.jsonl` applies
+the rows for each scanned source, in order, after unresolved markers are in place.
+Matching is whitespace-normalized and case-sensitive, and text touching an
+`[unresolved …]` marker never matches, so a correction cannot fill a marker:
+
+| `from_text` on the cited page | Outcome |
+|---|---|
+| exactly once | applied to the page and to every section part from that page that holds it |
+| more than once, but once in the cited section's text from that page | applied there (section-scoped) |
+| nowhere | stale; nothing changes |
+| more than once otherwise, or `to_text` holds a marker | ambiguous; nothing changes, owner queue |
+
+Chained corrections work because each row sees the text the earlier rows left. Every
+unit a correction changed lists `{id, reviewer}` in `extraction.corrections`.
+
+The source's rows are backed up beside its candidate as
+`quality/scanned/<sha256>/ledger.jsonl`; the transcription summary lists the applied,
+stale and ambiguous ids and the ledger digest. The publish gate re-imports the
+candidate with the stored ledger and requires the same text and outcomes. It refuses
+a stored row for another source digest, and an applied row whose page unit does not
+record it or whose page lies outside the source. `build-report.json` in the build
+directory (`scanned.build_report`, `scanned.read_build_report`) counts applied, stale
+and ambiguous corrections and holds the owner queue of ambiguous ones; it is not
+published. The library changes only when a new publication is built and activated.
+Earlier publications stay as they were.
 
 ## Not done yet
 
@@ -103,12 +137,9 @@ they were.
   Only synthetic candidates have been built so far. A PDF without a registered
   candidate is refused unless it is named in `--legacy-ocr-books`, which keeps the old
   OCR path and its assessments.
-- **Applying corrections** to a scanned publication is the publication build's job.
-  It means mapping a row onto the review revision model (`transcription_review`) for
-  that book's snapshot. That build does not exist yet.
-- **Per-quantity crop boxes.** The imported candidate keeps the quantity-review and
-  unresolved boxes as check regions in the index, but `read_section` does not return
-  them yet, so the agent has to choose a region itself.
+- **Refreshing a publication** when the ledger changes is a separate command; for
+  now the owner rebuilds with `--ledger`. Ambiguous corrections wait in the build
+  report's owner queue; nothing resolves them yet.
 - **Hosting is not configured.** See
   [hosted-runtime.md](hosted-runtime.md#transcription-reports--not-deployed). The
   bucket, its keys, the Fly secrets and the deploy each need the owner's approval.
