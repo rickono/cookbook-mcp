@@ -121,6 +121,9 @@ class Library:
                 )
             if unit is not None:
                 d["extraction"]["label"] = json.loads(unit["label"])
+                # Ledger corrections served in this unit's text: [{id, reviewer}].
+                if corrections := json.loads(unit["corrections"]):
+                    d["extraction"]["corrections"] = corrections
         if section and d["locator"]["kind"] == "page":
             d["page_id"] = section["id"]
         return d

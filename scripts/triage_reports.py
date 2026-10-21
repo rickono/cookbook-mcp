@@ -18,8 +18,12 @@ script settles each one without trusting it:
 
 Decisions are written once per report under --out (outside Git) and never redone.
 corrections.jsonl and owner-queue.jsonl are rebuilt from the decisions on every run;
-the next scanned-book publication applies corrections.jsonl. The library itself is not
-touched here, and nothing is uploaded: reports are only read.
+the next scanned-book publication applies corrections.jsonl (cookbook.ledger rows, in
+decision order). A correction binds to the source digest and physical page, not to the
+publication the report was filed against, so reports against older publications still
+apply; a correction decided again from a later report is kept once, at its first
+decision. The library itself is not touched here, and nothing is uploaded: reports are
+only read.
 
   python3 scripts/triage_reports.py --reports DIR            # a local reports store
   python3 scripts/triage_reports.py --reports-s3             # REPORTS_* env, the Mac's key
@@ -44,6 +48,7 @@ sys.path.insert(0, str(REPO / "src"))
 import pipeline as fp
 import readers as rd
 
+from cookbook import ledger
 from cookbook.reports import list_reports
 
 DATA = Path(os.environ.get("COOKBOOK_DATA", Path.home() / "cookbook-mcp-data"))
@@ -189,6 +194,8 @@ def correction(d):
     r = d["report"]
     readings = json.dumps(d["readings"], ensure_ascii=False).encode()
     return {
+        "id": r["report_id"],
+        "decided_at": d["decided_at"],
         "report_id": r["report_id"],
         "publication_id": r["publication_id"],
         "book_id": r["book_id"],
@@ -210,15 +217,28 @@ def correction(d):
     }
 
 
+def corrections(decisions):
+    """Ledger rows for the correction decisions, in decision order, each correction once."""
+    rows, seen = [], set()
+    for row in sorted(map(correction, decisions), key=ledger.order):
+        if ledger.key(row) not in seen:
+            seen.add(ledger.key(row))
+            rows.append(row)
+    return ledger.check(rows)
+
+
 def rebuild(out):
-    decisions = [
-        json.loads(p.read_text()) for p in sorted((out / "decisions").glob("*.json"))
-    ]
+    decisions = sorted(
+        (json.loads(p.read_text()) for p in (out / "decisions").glob("*.json")),
+        key=lambda d: (d["decided_at"], d["report_id"]),
+    )
     groups = {"correction": [], "rejected": [], "owner_queue": []}
     for d in decisions:
         groups[d["outcome"]].append(d)
+    (out / "corrections.jsonl").write_bytes(
+        ledger.dump(corrections(groups["correction"]))
+    )
     lines = {
-        "corrections.jsonl": [correction(d) for d in groups["correction"]],
         "owner-queue.jsonl": [
             {
                 "report_id": d["report_id"],
