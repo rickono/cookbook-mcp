@@ -144,3 +144,24 @@ def published(tmp_path):
     runtime = Runtime(store, tmp_path / "runtime")
     r = publish(store, m, inputs, expected_version=None, activate=runtime.activate)
     return m, inputs, store, runtime, Library(runtime), r
+
+
+@pytest.fixture
+def manifest_loads(monkeypatch):
+    """Count actual local manifest opens and validation, not cache internals."""
+    counts = {"read": 0, "parse": 0}
+    original_open = Path.open
+    original_parse = Manifest.model_validate_json
+
+    def opened(path, *args, **kwargs):
+        if path.name == "manifest.json" and args and args[0] == "rb":
+            counts["read"] += 1
+        return original_open(path, *args, **kwargs)
+
+    def parsed(raw, *args, **kwargs):
+        counts["parse"] += 1
+        return original_parse(raw, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", opened)
+    monkeypatch.setattr(Manifest, "model_validate_json", parsed)
+    return counts
