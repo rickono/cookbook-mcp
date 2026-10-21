@@ -6,8 +6,12 @@ a recipe, and a flavor-reference entry to remain readable while becoming useful
 query targets. Recipe recognition can improve without re-creating or losing the
 book's prose.
 
-This is a model proposal backed by a private EPUB prototype. It does not change
-the publisher, deployed MCP, existing publication, or current recipe tools.
+This draft originated in a private EPUB prototype. The first native EPUB
+publication and MCP integration now follow this record model; implementation,
+coverage and operating limits are described in
+[Whole-book retrieval through the MCP](whole-book-typesense.md). The historical
+trial below remains evidence for the model, not a claim of complete semantic
+interpretation or production acceptance.
 The machine-readable contract is
 [whole-book.draft-v1.schema.json](schemas/whole-book.draft-v1.schema.json).
 Terminology is in [CONTEXT.md](../CONTEXT.md).

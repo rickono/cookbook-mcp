@@ -100,6 +100,22 @@ def _main():
     b.add_argument("--books", type=int, nargs="+", required=True)
     b.add_argument("--output", type=Path, required=True)
     b.add_argument("--ocr-cache", type=Path, required=True)
+    structure = sub.add_parser(
+        "structure",
+        help="Add native whole-book structure to an existing verified EPUB build",
+    )
+    structure.add_argument("--build", type=Path, required=True)
+    structure.add_argument("--output", type=Path, required=True)
+    structure.add_argument(
+        "--interpretation",
+        type=Path,
+        help="Existing source-backed whole-book SQLite interpretations",
+    )
+    interpretation = sub.add_parser(
+        "interpret", help="Add candidate recipe structure from native EPUB markup"
+    )
+    interpretation.add_argument("--build", type=Path, required=True)
+    interpretation.add_argument("--output", type=Path, required=True)
     b.add_argument(
         "--force-ocr-books",
         type=int,
@@ -137,6 +153,11 @@ def _main():
         type=Path,
         help="Directory for agent transcription reports (a store separate from --store)",
     )
+    s.add_argument(
+        "--typesense-binary",
+        type=Path,
+        help="Run an owned loopback keyword engine for whole-book search",
+    )
     review = sub.add_parser("review-ocr")
     review.add_argument("--ocr-cache", type=Path, required=True)
     review.add_argument("--id", required=True)
@@ -154,6 +175,26 @@ def _main():
     final.add_argument("--ocr-cache", type=Path, required=True)
     final.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
+    if a.command == "interpret":
+        from .book_interpret import interpretation_build
+
+        manifest, report = interpretation_build(a.build, a.output)
+        print(
+            json.dumps(
+                {"publication_id": manifest.publication_id, **report["validation"]}
+            )
+        )
+        return
+    if a.command == "structure":
+        from .book_build import structure_build
+
+        manifest, report = structure_build(a.build, a.output, a.interpretation)
+        print(
+            json.dumps(
+                {"publication_id": manifest.publication_id, **report["validation"]}
+            )
+        )
+        return
     if a.command == "check-publisher-login":
         from .publisher_login import LoginConfig, browser_login
 
@@ -289,25 +330,37 @@ def _main():
 
         store = LocalStore(a.store)
         runtime = Runtime(store, a.runtime)
-        runtime.recover()
-        verifier = JWTVerifier(
-            issuer=a.issuer,
-            audience=f"http://127.0.0.1:{a.port}/mcp",
-            subjects=[a.subject],
-            public_key=a.public_key.read_text(),
-        )
         from .reports import ReportSink
 
         if a.reports and a.reports.resolve() == a.store.resolve():
             raise ValueError("reports store must be separate from the library store")
         reports = ReportSink(LocalStore(a.reports)) if a.reports else None
-        uvicorn.run(
-            create_app(Library(runtime), verifier, reports),
-            host="127.0.0.1",
-            port=a.port,
-            access_log=False,
-            log_level="critical",
-        )
+
+        engine = None
+        try:
+            if a.typesense_binary:
+                from .book_search import BookSearch
+
+                engine = BookSearch(a.typesense_binary, runtime.root / "typesense")
+                engine.start()
+                runtime.prepare = engine.prepare
+            runtime.recover()
+            verifier = JWTVerifier(
+                issuer=a.issuer,
+                audience=f"http://127.0.0.1:{a.port}/mcp",
+                subjects=[a.subject],
+                public_key=a.public_key.read_text(),
+            )
+            uvicorn.run(
+                create_app(Library(runtime, search_engine=engine), verifier, reports),
+                host="127.0.0.1",
+                port=a.port,
+                access_log=False,
+                log_level="critical",
+            )
+        finally:
+            if engine:
+                engine.close()
 
 
 def main():

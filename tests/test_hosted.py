@@ -62,7 +62,7 @@ def test_empty_boot_polling_auth_and_outage(published, tmp_path, keys, mint):
             headers={**headers, "Accept": "application/json, text/event-stream"},
             json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
         )
-        assert tools.status_code == 200 and len(tools.json()["result"]["tools"]) == 11
+        assert tools.status_code == 200 and len(tools.json()["result"]["tools"]) == 15
         assert (
             client.post(
                 "/mcp",
@@ -270,6 +270,34 @@ def test_watchdog_startup_grace(tmp_path):
     try:
         eventually(lambda: len(calls) >= 4)
         assert len(started.read_text().splitlines()) == 1
+        eventually(lambda: len(started.read_text().splitlines()) >= 2)
+    finally:
+        stop.set()
+        thread.join(timeout=5)
+    assert not thread.is_alive()
+
+
+def test_startup_grace_ends_after_first_healthy_probe(tmp_path):
+    started, script = worker_script(tmp_path)
+    stop = threading.Event()
+    unhealthy = threading.Event()
+    observed_healthy = threading.Event()
+
+    def probe(_):
+        if unhealthy.is_set():
+            return False
+        observed_healthy.set()
+        return True
+
+    thread = threading.Thread(
+        target=supervise,
+        args=([sys.executable, str(script)], "unused", stop),
+        kwargs={"interval": 0.04, "startup_grace": 10, "probe": probe},
+    )
+    thread.start()
+    try:
+        eventually(observed_healthy.is_set)
+        unhealthy.set()
         eventually(lambda: len(started.read_text().splitlines()) >= 2)
     finally:
         stop.set()
