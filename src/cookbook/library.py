@@ -76,6 +76,25 @@ class Library:
             return None
         return db.execute(f"select * from {table} where {key}=?", (value,)).fetchone()
 
+    def transcription_counts(self, pub):
+        """Scanned sources, applied corrections and unresolved items in a publication.
+
+        Read from each source's transcription summary, so corrections count once they
+        are recorded there. Byte-identical Calibre records share a source and count once.
+        """
+        counts = {"scanned_books": 0, "applied_corrections": 0, "unresolved_items": 0}
+        with self.db(pub) as db:
+            if not db.execute(
+                "select 1 from sqlite_master where type='table' and name='transcription_sources'"
+            ).fetchone():
+                return counts
+            for (raw,) in db.execute("select summary from transcription_sources"):
+                summary = json.loads(raw)
+                counts["scanned_books"] += 1
+                counts["applied_corrections"] += len(summary["corrections"]["applied"])
+                counts["unresolved_items"] += summary["unresolved"]
+        return counts
+
     def citation(self, pub, book, section=None):
         d = {
             "publication_id": pub,
@@ -263,7 +282,7 @@ class Library:
             ).fetchone()
             if s is None:
                 raise IntegrityError("unavailable identifier")
-            return {
+            result = {
                 "citation": self.citation(pub, b, s),
                 "text": s["text"][offset : offset + limit],
                 "text_offset": offset,
@@ -273,6 +292,11 @@ class Library:
                 "kind": s["kind"],
                 "image_ids": json.loads(s["images"])[:50],
             }
+            # Scanned units only: where to zoom with get_page(region=box); EPUB is unchanged.
+            unit = self.transcription(db, "transcription_units", "section_id", s["id"])
+            if unit is not None:
+                result["check_regions"] = json.loads(unit["check_regions"])
+            return result
 
     def cached(self, pub, logical):
         m = self.runtime.manifest(pub)

@@ -21,6 +21,11 @@ the page, each side at least 0.02. The server renders the page larger, up to
 `ZOOM_EDGE` (2400 px), and returns only that box, at most `edge` pixels. Small print
 and fraction glyphs become legible without returning a huge image.
 
+For a scanned section, `read_section` returns `check_regions`: the crop quantity-review
+boxes (`crop_confirmed`) and the unresolved items (`unresolved`) on its pages, each with
+a `physical_page` and a `box` that `get_page` takes unchanged as `region`. The agent
+checks the unresolved ones first instead of guessing a box.
+
 If the zoom shows something different from the library text, the agent tells the
 user what the page shows. It then calls `report_transcription_issue` once, with:
 
@@ -135,9 +140,6 @@ Earlier publications stay as they were.
 - **Refreshing a publication** when the ledger changes is a separate command; for
   now the owner rebuilds with `--ledger`. Ambiguous corrections wait in the build
   report's owner queue; nothing resolves them yet.
-- **Per-quantity crop boxes.** The imported candidate keeps the quantity-review and
-  unresolved boxes as check regions in the index, but `read_section` does not return
-  them yet, so the agent has to choose a region itself.
 - **Hosting is not configured.** See
   [hosted-runtime.md](hosted-runtime.md#transcription-reports--not-deployed). The
   bucket, its keys, the Fly secrets and the deploy each need the owner's approval.

@@ -735,7 +735,7 @@ def _label(c, candidate_sha256):
 
 def _review_region(r):
     return {
-        "state": "crop_reviewed",
+        "state": "crop_confirmed",
         "physical_page": r["physical_page"],
         "box": check_region(r["box"]),
         "review_id": r["id"],
