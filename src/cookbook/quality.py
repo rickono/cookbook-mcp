@@ -16,6 +16,7 @@ from .storage import (
     check_bytes,
     digest_file,
     has_table,
+    source_id_for,
 )
 
 QUALITY_PATH = "quality/ocr-review.json"
@@ -271,7 +272,7 @@ def check_transcription(manifest, inputs, db):
         if (
             row is None
             or row["format"] != "PDF"
-            or source_id != f"pdf:{sha}"
+            or source_id != source_id_for("PDF", sha)
             or row["sha256"] != sha
         ):
             raise IntegrityError("scanned source mismatch")

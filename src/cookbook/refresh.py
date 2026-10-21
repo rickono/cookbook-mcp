@@ -16,7 +16,7 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
-from . import ledger as ledger_rows
+from . import ledger
 from .build import BUILD_INPUTS, BUILD_INPUTS_VERSION, build_snapshot
 from .publication import load_manifest, publish_build
 from .scanned import (
@@ -90,11 +90,8 @@ def ledger_changed(store, manifest, rows):
     if raw is None:
         return False
     for source in json.loads(raw)["sources"]:
-        rows_for = ledger_rows.for_source(rows, source["source_sha256"])
-        if (
-            hashlib.sha256(ledger_rows.dump(rows_for)).hexdigest()
-            != source["ledger_sha256"]
-        ):
+        rows_for = ledger.for_source(rows, source["source_sha256"])
+        if hashlib.sha256(ledger.dump(rows_for)).hexdigest() != source["ledger_sha256"]:
             return True
     return False
 
@@ -139,7 +136,7 @@ def rebuild(store, manifest, rows, work: Path, *, ocr_cache=None, progress=None)
         scanned=scanned,
         ledger=rows,
     )
-    atomic_write(run / "ledger.jsonl", ledger_rows.dump(rows))
+    atomic_write(run / ledger.FILE, ledger.dump(rows))
     return build
 
 

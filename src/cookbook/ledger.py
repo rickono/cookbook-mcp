@@ -15,7 +15,7 @@ import json
 import re
 from pathlib import Path
 
-from .storage import IntegrityError, canonical
+from .storage import IntegrityError, canonical, source_digest
 
 FILE = "ledger.jsonl"
 KEYS = (
@@ -75,7 +75,7 @@ def _check(row, n):
     sha = row["source_sha256"]
     if not isinstance(sha, str) or not _HEX.fullmatch(sha):
         raise LedgerError(f"{w}.source_sha256: must be a lowercase sha256 hex digest")
-    if not row["source_id"].endswith(":" + sha):
+    if source_digest(row["source_id"]) != sha:
         raise LedgerError(f"{w}.source_id: does not name source_sha256")
     page = row["physical_page"]
     if not isinstance(page, int) or isinstance(page, bool) or page < 1:

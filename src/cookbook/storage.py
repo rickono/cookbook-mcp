@@ -50,6 +50,16 @@ def check_bytes(data: bytes, sha256: str, size: int, message: str) -> bytes:
     return data
 
 
+def source_id_for(fmt: str, sha256: str) -> str:
+    """A source's library id: its format and the sha256 of its bytes, ``pdf:<sha256>``."""
+    return f"{fmt.lower()}:{sha256}"
+
+
+def source_digest(source_id: str) -> str:
+    """The sha256 a source id names."""
+    return source_id.partition(":")[2]
+
+
 def has_table(db, name: str) -> bool:
     """Whether a SQLite database has the table; additive tables are absent in old ones."""
     return (

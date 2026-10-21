@@ -8,8 +8,10 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
-from . import ledger as ledger_rows
 from .extract import VERSION, epub, ident, paged
+from .ledger import FILE as LEDGER_FILE
+from .ledger import check as check_ledger
+from .ledger import dump as dump_ledger
 from .publication import Entry, Manifest
 from .scanned import (
     BUILD_REPORT,
@@ -21,7 +23,13 @@ from .scanned import (
     import_candidate,
     read_candidate,
 )
-from .storage import IntegrityError, atomic_write, canonical, digest_file
+from .storage import (
+    IntegrityError,
+    atomic_write,
+    canonical,
+    digest_file,
+    source_id_for,
+)
 
 BUILD_INPUTS = "quality/build-inputs.json"
 BUILD_INPUTS_VERSION = "build-inputs.v1"
@@ -133,7 +141,7 @@ def build_snapshot(
         raise IntegrityError("build directory must be new")
     force_ocr_ids = set(force_ocr_ids)
     scanned = scanned or {}
-    ledger = ledger_rows.check(ledger or [])
+    ledger = check_ledger(ledger or [])
     if not force_ocr_ids.issubset(approved_ids):
         raise IntegrityError("forced OCR books must be in the approved selection")
     # POC backs up only approved record directories plus catalog metadata; full-library command deferred.
@@ -182,14 +190,14 @@ def build_snapshot(
         if fmt not in ("PDF", "DJVU"):
             raise IntegrityError("forced OCR requires a PDF or DjVu source")
         rel = r["path"] + "/" + name + "." + fmt.lower()
-        forced_sources.add(fmt.lower() + ":" + proof_files[rel]["sha256"])
+        forced_sources.add(source_id_for(fmt, proof_files[rel]["sha256"]))
     imported = {}
     for r in records:
         fmt, name = r["selected_format"]
         if fmt != "PDF":
             continue
         sha = proof_files[r["path"] + "/" + name + ".pdf"]["sha256"]
-        source = "pdf:" + sha
+        source = source_id_for("PDF", sha)
         if sha not in scanned:
             if r["id"] not in force_ocr_ids:
                 raise IntegrityError("PDF book requires a registered scanned candidate")
@@ -208,7 +216,7 @@ def build_snapshot(
                 ledger=ledger,
             )
             imported[source]["files"] = files | {
-                ledger_rows.FILE: ledger_rows.dump(imported[source]["ledger"])
+                LEDGER_FILE: dump_ledger(imported[source]["ledger"])
             }
             imported[source]["calibre_ids"] = []
         imported[source]["calibre_ids"].append(r["id"])
@@ -251,7 +259,7 @@ def build_snapshot(
         rel = r["path"] + "/" + name + "." + fmt.lower()
         p = snapshot / rel
         sha, size = digest_file(p)
-        source = fmt.lower() + ":" + sha
+        source = source_id_for(fmt, sha)
         dest.execute(
             "insert into books values (?,?,?,?,?,?)",
             (

@@ -457,7 +457,7 @@ def test_published_schema_matches_the_validator_and_accepts_the_synthetic_rows()
     defs = schema["$defs"]
     for name, required, optional in [
         ("Candidate", scanned.CANDIDATE_KEYS, ()),
-        ("Page", scanned.PAGE_KEYS, scanned.PAGE_OPTIONAL),
+        ("Page", scanned.PAGE_KEYS, ()),
         ("Section", scanned.SECTION_KEYS, scanned.SECTION_OPTIONAL),
         ("Part", scanned.PART_KEYS, ()),
         ("Reference", scanned.REFERENCE_KEYS, ()),

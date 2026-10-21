@@ -233,7 +233,6 @@ PAGE_KEYS = (
     "vote_correction_ids",
     "blank_evidence",
 )
-PAGE_OPTIONAL = ()
 BLANK_EVIDENCE_KEYS = ("rule", "attempts", "page_read_errors")
 BLANK_RULE = "page_read_empty_response"
 EMPTY_RESPONSE = "empty response"
@@ -476,7 +475,7 @@ def validate(files, *, source_sha256, physical_pages):
     for p in pages:
         n = p["physical_page"]
         w = f"pages[{n}]"
-        _keys(p, w, PAGE_KEYS, PAGE_OPTIONAL)
+        _keys(p, w, PAGE_KEYS)
         status = _enum(p["status"], f"{w}.status", PAGE_STATUSES)
         text = _str(p["text"], f"{w}.text", empty=True)
         if (
@@ -766,9 +765,10 @@ def import_candidate(files, *, source_id, source_sha256, physical_pages, ledger=
     rows for other sources are ignored. Each outcome is listed by id in the summary, and
     ambiguous rows are returned as ``owner_queue`` items.
     """
-    from . import ledger as ledger_rows
+    from .ledger import dump as dump_ledger
+    from .ledger import for_source
 
-    corrections = ledger_rows.for_source(ledger or [], source_sha256)
+    corrections = for_source(ledger or [], source_sha256)
     v = validate(files, source_sha256=source_sha256, physical_pages=physical_pages)
     c = v["candidate"]
     candidate_sha256 = hashlib.sha256(files[CANDIDATE]).hexdigest()
@@ -923,7 +923,7 @@ def import_candidate(files, *, source_id, source_sha256, physical_pages, ledger=
         "quantity_reviews": c["counts"]["quantity_reviews"],
         "unresolved": c["counts"]["unresolved"],
         "corrections": outcomes,
-        "ledger_sha256": hashlib.sha256(ledger_rows.dump(corrections)).hexdigest(),
+        "ledger_sha256": hashlib.sha256(dump_ledger(corrections)).hexdigest(),
     }
     return {
         "units": units,
