@@ -135,3 +135,29 @@ evidence ownership, typed references, selected preparation ownership and relatio
 ownership. Complete semantic parent/endpoint policies, table-grid interpretation,
 correction lineage and owner acceptance remain follow-up work; records are not
 promoted to reviewed by this deployment.
+
+## Mixed native and scanned publications
+
+A publication can retain its native EPUB model while adding approved scanned
+candidates through the scanned import. `retain_native_model` takes the admitted
+mixed build and a previous manifest with its verified model, report and index
+inputs. It requires an exact match between native editions and the mixed build's
+EPUB book/source identities. It copies the model and changes only its publication
+binding; source nodes, interpretation records, reading targets and model snapshot
+stay intact. The scanned publication gate and complete runtime model validation
+still apply. Whole-book validation covers exactly the EPUB selection; PDF/DjVu
+content is independently admitted by its existing transcription or OCR gate.
+
+The model report records the original keyword collection and a digest over every
+keyword document. When the persisted collection's original model identity,
+document count and field schema match, and the new model's keyword-document digest
+is identical, the process routes the new publication's native queries to that
+collection. A mismatch fails preparation and leaves the prior runtime pointer
+active. No second collection is imported merely to change publication metadata.
+After a cold rebuild without that collection, ordinary indexing remains available.
+Each publication still reads and cites its own immutable model artifact.
+
+`find_book_content` covers native EPUB content. For scanned recipes and passages,
+use `search_library`, then `read_section` and `get_page`. A correction refresh
+retains the native model and shared keyword-index binding while rebuilding the
+scanned content; it does not discard the native recipe records.

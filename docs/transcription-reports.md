@@ -220,3 +220,10 @@ Resolving an item stays a manual owner step.
 - **Hosting is not configured.** See
   [hosted-runtime.md](hosted-runtime.md#transcription-reports--not-deployed). The
   bucket, its keys, the Fly secrets and the deploy each need the owner's approval.
+
+For a mixed publication that also contains a native EPUB whole-book model, refresh
+carries that verified model forward after rebuilding the scanned content. Native
+reading targets, interpretation states and the model snapshot are retained. The
+new publication reuses the existing keyword collection only after its recorded
+model identity and complete keyword-document digest match. See
+[mixed native and scanned publications](whole-book-typesense.md#mixed-native-and-scanned-publications).

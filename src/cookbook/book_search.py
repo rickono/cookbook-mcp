@@ -15,7 +15,7 @@ from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from .book_model import MODEL_PATH, connection
+from .book_model import MODEL_PATH, REPORT_PATH, connection, search_units_digest
 from .storage import IntegrityError, canonical
 
 FIELDS = [
@@ -38,6 +38,7 @@ class BookSearch:
         self.log = None
         self.lock = threading.Lock()
         self.prepared = set()
+        self.shared = {}
 
     def start(self):
         if self.process:
@@ -96,6 +97,7 @@ class BookSearch:
                 self.process.wait(timeout=5)
         self.process = None
         self.prepared.clear()
+        self.shared.clear()
         if self.log:
             self.log.close()
             self.log = None
@@ -167,6 +169,45 @@ class BookSearch:
                 ):
                     self.prepared.add(name)
                     return
+                report = json.loads((directory / REPORT_PATH).read_bytes())
+                reuse = report.get("keyword_index")
+                if reuse:
+                    original = self.collection(reuse["publication_id"])
+                    if original == name:
+                        raise IntegrityError("invalid shared keyword index")
+                    try:
+                        shared = self.call("GET", "/collections/" + original)
+                    except HTTPError as error:
+                        if error.code != 404:
+                            raise
+                        shared = None
+                    if shared is not None:
+                        # The immutable publication records the old model identity
+                        # and complete keyword-document digest. Reuse only when
+                        # both the persisted collection and new documents match.
+                        if (
+                            shared.get("metadata")
+                            != {
+                                "model_sha256": reuse["model_sha256"],
+                                "publication_id": reuse["publication_id"],
+                                "index_version": "keyword-v1",
+                            }
+                            or shared["num_documents"] != count
+                            or sorted(
+                                (f["name"], f["type"], f.get("facet", False))
+                                for f in shared["fields"]
+                            )
+                            != sorted(
+                                (f["name"], f["type"], f.get("facet", False))
+                                for f in FIELDS
+                            )
+                            or any(f.get("embed") for f in shared["fields"])
+                            or search_units_digest(path) != reuse["search_units_sha256"]
+                        ):
+                            raise IntegrityError("shared keyword index differs")
+                        self.shared[manifest.publication_id] = original
+                        self.prepared.add(name)
+                        return
                 if existing:
                     # This collection belongs solely to this exact immutable publication.
                     self.call("DELETE", "/collections/" + name)
@@ -242,7 +283,7 @@ class BookSearch:
         return self.call(
             "GET",
             "/collections/"
-            + self.collection(publication_id)
+            + self.shared.get(publication_id, self.collection(publication_id))
             + "/documents/search?"
             + urlencode(params),
             timeout=5,
