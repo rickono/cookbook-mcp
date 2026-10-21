@@ -6,6 +6,7 @@ from synthetic_scanned import (
     PAGE_4,
     REVIEWER,
     SIDEBAR,
+    SIDEBAR_TEXT,
     correction,
     pack,
     rows,
@@ -185,6 +186,37 @@ def test_citing_a_section_disambiguates_a_repeated_quote_on_its_page():
     ]
     assert units["LENTIL SOUP"]["transcription"]["corrections"] == []
     assert result["summary"]["corrections"]["applied"] == [c["id"]]
+
+
+def reworded_sidebar():
+    """The sidebar's text part reads differently from its page row."""
+    data = rows()
+    data["sections"][1]["parts"][1]["text"] = SIDEBAR_TEXT.replace(
+        "shape.", "shape well."
+    )
+    return data
+
+
+def test_a_quote_found_only_in_the_cited_section_is_applied_to_that_section():
+    sidebar = section_unit_id(SOURCE_ID, SIDEBAR)
+    c = fix(1, "shape well", "form well", page=2, section_id=sidebar)
+    result = corrected([c], reworded_sidebar())
+    assert by_title(result)["ON LENTILS"]["text"].endswith("keep their form well.")
+    assert result["units"][1]["transcription"]["corrections"] == []
+    assert result["summary"]["corrections"]["applied"] == [c["id"]]
+
+
+def test_a_quote_on_no_page_and_no_cited_section_is_stale_not_ambiguous():
+    # Without a cited section the scope is the page, and the page lacks the quote.
+    c = fix(1, "shape well", "form well", page=2)
+    result = corrected([c], reworded_sidebar())
+    assert result["units"] == corrected([], reworded_sidebar())["units"]
+    assert result["summary"]["corrections"] == {
+        "applied": [],
+        "stale": [c["id"]],
+        "ambiguous": [],
+    }
+    assert result["owner_queue"] == []
 
 
 def test_chained_corrections_apply_in_decision_order():

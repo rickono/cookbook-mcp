@@ -656,9 +656,11 @@ def _edit(text, span, to_text):
 def _apply(row, page_texts, segments, unit_of, page_unit_of):
     """Apply one ledger row in place; returns (outcome, reason, ids of affected units).
 
-    Exactly one occurrence of ``from_text`` on the cited page, or within the cited
-    section's text from that page, is applied to the page unit and to every section part
-    from that page that holds it. None is stale; more than one is ambiguous.
+    Exactly one occurrence of ``from_text`` on the cited page is applied to the page unit
+    and to every section part from that page that holds it. Otherwise the cited scope is
+    the cited section's text from that page (or, with no section cited, the page): exactly
+    one occurrence there is applied to that section, none is stale and more than one is
+    ambiguous.
     """
     n, old, new = row["physical_page"], row["from_text"], row["to_text"]
     if n not in page_texts:
@@ -701,8 +703,11 @@ def _apply(row, page_texts, segments, unit_of, page_unit_of):
                     [],
                 )
             page_span = inside[0]
-    elif not page_hits and not any(hits.values()):
-        return "stale", "from_text no longer occurs on the cited page", []
+    elif cited is not None and scoped:
+        return "ambiguous", "from_text occurs more than once in the cited section", []
+    elif not page_hits or cited is not None:
+        # Nothing in the cited scope: the cited section's text from the page, else the page.
+        return "stale", "from_text no longer occurs in the cited scope", []
     else:
         return "ambiguous", "from_text occurs more than once on the cited page", []
     if any(len(hits[at]) != 1 for at in targets):

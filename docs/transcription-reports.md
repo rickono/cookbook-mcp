@@ -109,12 +109,12 @@ the rows for each scanned source, in order, after unresolved markers are in plac
 Matching is whitespace-normalized and case-sensitive, and text touching an
 `[unresolved …]` marker never matches, so a correction cannot fill a marker:
 
-| `from_text` on the cited page | Outcome |
+| `from_text` | Outcome |
 |---|---|
-| exactly once | applied to the page and to every section part from that page that holds it |
-| more than once, but once in the cited section's text from that page | applied there (section-scoped) |
-| nowhere | stale; nothing changes |
-| more than once otherwise, or `to_text` holds a marker | ambiguous; nothing changes, owner queue |
+| exactly once on the cited page | applied to the page and to every section part from that page that holds it |
+| otherwise, exactly once in the cited section's text from that page | applied there (section-scoped) |
+| nowhere in the cited scope (the cited section's text from that page, else the page) | stale; nothing changes |
+| more than once in the cited scope, or `to_text` holds a marker | ambiguous; nothing changes, owner queue |
 
 Chained corrections work because each row sees the text the earlier rows left. Every
 unit a correction changed lists `{id, reviewer}` in `extraction.corrections`.
