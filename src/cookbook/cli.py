@@ -115,7 +115,7 @@ def _main():
     b.add_argument(
         "--ledger",
         type=Path,
-        help="correction ledger (corrections.jsonl from scripts/triage_reports.py) to apply",
+        help="correction ledger (ledger.jsonl from scripts/triage_reports.py) to apply",
     )
     pub = sub.add_parser("publish-local")
     pub.add_argument("--build", type=Path, required=True)

@@ -1,6 +1,6 @@
 """The correction ledger: accepted transcription corrections, in decision order.
 
-scripts/triage_reports.py regenerates ``corrections.jsonl`` from its decisions. Each row is
+scripts/triage_reports.py regenerates ``ledger.jsonl`` from its decisions. Each row is
 one accepted correction, keyed by source digest, physical page, optional section and region,
 ``from_text`` and ``to_text``; it carries the reviewer, evidence hashes and votes. Rows bind
 to a source by digest and page, never to the publication a report was filed against, so a
@@ -21,7 +21,6 @@ FILE = "ledger.jsonl"
 KEYS = (
     "id",
     "decided_at",
-    "report_id",
     "publication_id",
     "book_id",
     "source_id",
@@ -67,7 +66,7 @@ def _check(row, n):
     w = f"ledger:{n}"
     if not isinstance(row, dict) or set(row) != set(KEYS):
         raise LedgerError(f"{w}: must have exactly {list(KEYS)}")
-    for k in ("id", "report_id", "publication_id", "source_id", "kind"):
+    for k in ("id", "publication_id", "source_id", "kind"):
         if not isinstance(row[k], str) or not row[k]:
             raise LedgerError(f"{w}.{k}: must be a non-empty string")
     if not isinstance(row["decided_at"], str) or not _TIME.fullmatch(row["decided_at"]):
@@ -121,7 +120,7 @@ def check(rows):
 
 
 def parse(data: bytes):
-    """Rows from ``corrections.jsonl`` bytes (one JSON object per line), in decision order."""
+    """Rows from ``ledger.jsonl`` bytes (one JSON object per line), in decision order."""
     rows = []
     for n, line in enumerate(data.splitlines(), 1):
         if not line.strip():
@@ -134,7 +133,7 @@ def parse(data: bytes):
 
 
 def read(path: Path):
-    """The ledger triage wrote (``corrections.jsonl``); a missing file is an empty ledger."""
+    """The ledger triage wrote (``ledger.jsonl``); a missing file is an empty ledger."""
     path = Path(path)
     return parse(path.read_bytes()) if path.exists() else []
 

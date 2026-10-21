@@ -10,7 +10,7 @@ Run by hand; nothing schedules it. One run:
   3. blind-triages up to --limit of them (scripts/triage_reports.py). A failed crop or a
      timed-out reading leaves its report pending, a usage or rate limit leaves it pending
      and ends triage, and a content-filter refusal goes to the owner queue as it is;
-  4. regenerates the correction ledger (corrections.jsonl) from every decision;
+  4. regenerates the correction ledger (ledger.jsonl) from every decision;
   5. if the ledger changes what the active publication serves, rebuilds it from the
      snapshot, approved selection and candidate set that publication recorded, with the
      new ledger (src/cookbook/refresh.py);
@@ -84,7 +84,7 @@ def refresh(
         call=call or tr.rd.call,
         log=log,
     )
-    rows = ledger.read(out / "corrections.jsonl")
+    rows = ledger.read(out / ledger.FILE)
     published = republish(
         store,
         rows,

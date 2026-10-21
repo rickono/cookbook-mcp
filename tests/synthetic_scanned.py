@@ -342,7 +342,6 @@ def correction(n, from_text, to_text, *, page=1, section_id=None, source=None, *
     row = {
         "id": sha(f"report {n}"),
         "decided_at": f"2026-10-20T10:00:{n:02d}Z",
-        "report_id": sha(f"report {n}"),
         "publication_id": "an-earlier-publication",
         "book_id": "synthetic-book",
         "source_id": "pdf:" + digest,

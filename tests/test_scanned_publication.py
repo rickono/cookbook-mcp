@@ -342,7 +342,7 @@ def test_build_command_reads_the_triage_ledger_and_prints_the_counts(
             }
         )
     )
-    triaged = tmp_path / "corrections.jsonl"
+    triaged = tmp_path / "ledger.jsonl"
     triaged.write_bytes(
         ledger.dump(
             [

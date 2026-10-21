@@ -85,7 +85,7 @@ A crop failure or a timed-out reading is not recorded, so the report is retried 
 the next run. A provider content-filter refusal is a result: the report goes to the
 owner queue and is not worked around. A usage limit stops the run.
 
-Each run rebuilds `corrections.jsonl`, `owner-queue.jsonl` and `owner-queue.md` from
+Each run rebuilds `ledger.jsonl`, `owner-queue.jsonl` and `owner-queue.md` from
 all decisions. Sources not registered with the helper, and DjVu sources, go to the
 owner queue.
 
@@ -96,7 +96,10 @@ python3 scripts/triage_reports.py --reports-s3 --limit 20  # decide up to 20
 
 ## 3. The next publication applies corrections
 
-`corrections.jsonl` is the correction ledger (`cookbook.ledger`). Each row carries an
+`ledger.jsonl` is the correction ledger (`cookbook.ledger`); triage runs before this
+change wrote it as `corrections.jsonl`, which is no longer read. It is unrelated to the
+reader pipeline's `corrections.jsonl` (reader-vote corrections, `vote-corrections.jsonl`
+in a candidate). Each row carries an
 `id` (the report id), `decided_at`, the source digest and id, the physical page, an
 optional section and region, `from_text`, `to_text`, the reviewer and the evidence
 (crop hash, readings hash, votes). Rows are in decision order. A row binds to the
@@ -104,7 +107,7 @@ source digest and page, not to the publication the report was filed against, so 
 report against an older publication still applies. The same correction decided again
 from a later report is kept once, at its first decision.
 
-`cookbook build --scanned-registry registry.json --ledger corrections.jsonl` applies
+`cookbook build --scanned-registry registry.json --ledger ledger.jsonl` applies
 the rows for each scanned source, in order, after unresolved markers are in place.
 Matching is whitespace-normalized and case-sensitive, and text touching an
 `[unresolved …]` marker never matches, so a correction cannot fill a marker:
@@ -152,7 +155,7 @@ hand, and nothing schedules it. One run:
    fails;
 3. blind-triages up to `--limit` (default 20) of them, exactly as in step 2. Reports
    over the limit stay pending for the next run;
-4. regenerates `corrections.jsonl` from every decision;
+4. regenerates `ledger.jsonl` from every decision;
 5. compares the ledger's rows for each scanned source with the `ledger_sha256` the
    active publication's transcription summary records. If none differ, for example
    when there were no new decisions or only rejections, it publishes nothing and
