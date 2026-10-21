@@ -376,3 +376,54 @@ Private receipts, build logs, the rollback configuration and the runbook are und
 `~/cookbook-mcp-data/setup/deploy-spec46-20261021/`. Refresh ChatGPT/Grok app metadata
 to discover the report tool and updated schemas. No scanned publication, successful
 hosted report write, or largest-PDF zoom is claimed by this rollout record.
+
+## October 21 three-book publication
+
+With the owner's publication authorization, the active library is now
+`0539a03a0bdc441282a0d3391139cdcb`, manifest SHA-256
+`2c05e89ad5d159ae8942ddda6a982d13ad6ed81f1120c5878c1c31778c0f9b75`.
+It adds Calibre 6, 79 and 81 to the existing 59 native EPUB books. The scanned
+books contain 233, 247 and 392 physical pages and 226, 201 and 249 assembled
+sections. Full coverage passes, with no blank or failed pages. The 73 unresolved
+items (15, 11 and 47 respectively) remain marked, and scanned text remains
+unapproved agent transcription. No new OCR, PDF ingestion or inference ran.
+
+The service image is
+`registry.fly.io/cookbook-agent@sha256:447cd6c32230d73269c7a598f520e7a4ffd83770c55b9c0a200b5f8cd5def6db`,
+built from `2f85a3bfb16435f3644b2adb01f9a34cdf7c646b`. Only the image changed
+on the existing Machine; guest resources, volume and other configuration match
+the captured before-state. The native snapshot, 7,266 recipe records and 627,907
+keyword documents are unchanged. The combined publication reuses the original
+immutable keyword collection only after exact document, metadata, schema and
+count checks. Correction refreshes retain the native model through the same path.
+
+The publication quality gate and full native-model structural validation passed
+inside the original OCR sandbox limits. The Python suite passed 400 checks;
+93 focused checks passed after adding validator-specific receipts, and all 11
+viewer checks passed. Native service startup passed before deployment. Genuine
+full-validation receipts were staged under the exact Linux validator signature;
+file hashes and index integrity are still checked by the runtime. The original
+default receipt was retained so the prior service image remains usable for rollback.
+
+All 11,617 unique R2 objects passed fresh streamed SHA-256 readback before the
+conditional active-pointer update. The server reconstructed the new native
+SQLite bytes from its checksum-verified parent plus two changed blocks, then
+verified the complete new checksum. Its stored files and runtime validation passed.
+Authenticated MCP checks confirmed all 62 catalog books, searches and complete
+multi-page recipe reads for each scanned book, unapproved provenance, check
+regions, and page/region images. The largest PDF in this publication is about
+70 MiB and remains below the 512 MiB original cache; zoom renders remain capped
+at 2,400 pixels. Native keyword search and source reading also passed.
+
+Exact publication/manifest readiness and active MCP responses were confirmed
+before recording successful history. The prior publication remains retained.
+Publisher credentials never left the Mac. Private books, page images, transfer
+and validation evidence remain under
+`~/cookbook-mcp-data/publications/scanned-three-live-20261021/`; service image and
+rollback receipts are under `~/cookbook-mcp-data/setup/deploy-scanned-three-20261021/`.
+The remaining 15 scanned books are tracked in issue 53. Visual QA found one
+section-assembly discrepancy; a genuine report was filed through the hosted MCP
+and retrieved with the Mac reports-only read key. It remains pending independent
+review, with no correction applied. Issue 54 retains the remaining-corpus rendering
+and refresh/triage acceptance work; this publication does not claim a render of
+the unpublished 136 MB PDF or completed blind triage.
