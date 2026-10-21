@@ -253,7 +253,8 @@
         "section_ids",
         "unresolved_ids",
         "page_reader",
-        "vote_correction_ids"
+        "vote_correction_ids",
+        "blank_evidence"
       ],
       "properties": {
         "physical_page": {
@@ -316,15 +317,44 @@
           "uniqueItems": true
         },
         "blank_evidence": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "minItems": 1,
-          "description": "Required when status is blank; absent otherwise."
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/BlankEvidence"
+            }
+          ],
+          "description": "An object when status is blank; null otherwise."
         }
       },
       "description": "pages.jsonl: exactly one row per physical page 1..N, in order. A failed page lists a failed_page unresolved row."
+    },
+    "BlankEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rule",
+        "attempts",
+        "page_read_errors"
+      ],
+      "properties": {
+        "rule": {
+          "const": "page_read_empty_response"
+        },
+        "attempts": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "page_read_errors": {
+          "type": "array",
+          "items": {
+            "const": "empty response"
+          },
+          "minItems": 1
+        }
+      },
+      "description": "Production blank rule: every recorded page-read error was an empty response."
     },
     "Section": {
       "type": "object",

@@ -46,6 +46,7 @@ def page(n, status, text="", *, sections=(), unresolved=(), printed=None, **extr
         "unresolved_ids": list(unresolved),
         "page_reader": READERS[0] if status == "transcribed" else None,
         "vote_correction_ids": [],
+        "blank_evidence": None,
     }
     row.update(extra)
     return row
@@ -71,7 +72,15 @@ def rows():
                 page(
                     2, "transcribed", PAGE_2, sections=[RECIPE, SIDEBAR], printed="13"
                 ),
-                page(3, "blank", blank_evidence=["empty response"]),
+                page(
+                    3,
+                    "blank",
+                    blank_evidence={
+                        "rule": "page_read_empty_response",
+                        "attempts": 2,
+                        "page_read_errors": ["empty response"] * 2,
+                    },
+                ),
                 page(4, "transcribed", PAGE_4),
             ],
             "sections": [

@@ -166,7 +166,12 @@ def repeat_page(data, n=2):
 
 
 def blank_without_evidence(data):
-    del data["pages"][2]["blank_evidence"]
+    data["pages"][2]["blank_evidence"] = None
+    return data
+
+
+def blank_with_other_errors(data):
+    data["pages"][2]["blank_evidence"]["page_read_errors"] = ["timeout"]
     return data
 
 
@@ -226,6 +231,7 @@ def page_sections_disagree(data):
         drop_page,
         repeat_page,
         blank_without_evidence,
+        blank_with_other_errors,
         failed_without_marker,
         text_digest_wrong,
         dangling_section,
@@ -359,15 +365,22 @@ def test_published_schema_matches_the_validator_and_accepts_the_synthetic_rows()
 
 
 def test_validator_imports_without_the_extraction_or_server_stack():
+    import os
     import subprocess
     import sys
+    from pathlib import Path
 
     code = (
         "import sys, cookbook.scanned;"
         "heavy={'lxml','PIL','pypdf','pydantic','fastapi','mcp','starlette'};"
         "print(sorted(m for m in sys.modules if m.split('.')[0] in heavy))"
     )
+    src = str(Path(__file__).parents[1] / "src")
     out = subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=True,
+        env={**os.environ, "PYTHONPATH": src},
     )
     assert out.stdout.strip() == "[]"

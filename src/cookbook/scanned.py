@@ -229,8 +229,12 @@ PAGE_KEYS = (
     "unresolved_ids",
     "page_reader",
     "vote_correction_ids",
+    "blank_evidence",
 )
-PAGE_OPTIONAL = ("blank_evidence",)
+PAGE_OPTIONAL = ()
+BLANK_EVIDENCE_KEYS = ("rule", "attempts", "page_read_errors")
+BLANK_RULE = "page_read_empty_response"
+EMPTY_RESPONSE = "empty response"
 SECTION_KEYS = (
     "id",
     "kind",
@@ -483,15 +487,27 @@ def validate(files, *, source_sha256, physical_pages):
         _str(p["page_reader"], f"{w}.page_reader", null=True)
         if (status == "transcribed") != bool(text.strip()):
             raise CandidateError(f"{w}: only transcribed pages have text")
-        if status == "blank":
-            evidence = p.get("blank_evidence")
-            if not isinstance(evidence, list) or not evidence:
+        evidence = p["blank_evidence"]
+        if status != "blank":
+            if evidence is not None:
+                raise CandidateError(f"{w}: blank_evidence only on blank pages")
+        else:
+            # Production blank rule: every recorded page-read error was an empty response.
+            if evidence is None:
                 raise CandidateError(
                     f"{w}: a blank page requires recorded blank_evidence"
                 )
-            _strs(evidence, f"{w}.blank_evidence")
-        elif "blank_evidence" in p:
-            raise CandidateError(f"{w}: blank_evidence only on blank pages")
+            _keys(evidence, f"{w}.blank_evidence", BLANK_EVIDENCE_KEYS)
+            if evidence["rule"] != BLANK_RULE:
+                raise CandidateError(f"{w}.blank_evidence.rule must be {BLANK_RULE!r}")
+            _int(evidence["attempts"], f"{w}.blank_evidence.attempts", 1)
+            errors = _strs(
+                evidence["page_read_errors"], f"{w}.blank_evidence.page_read_errors"
+            )
+            if not errors or any(e != EMPTY_RESPONSE for e in errors):
+                raise CandidateError(
+                    f"{w}.blank_evidence: page-read errors must all be empty responses"
+                )
         on_page = {sid for sid, s in section_ids.items() if n in s["physical_pages"]}
         if set(_strs(p["section_ids"], f"{w}.section_ids", unique=True)) != on_page:
             raise CandidateError(f"{w}.section_ids do not match the sections")
