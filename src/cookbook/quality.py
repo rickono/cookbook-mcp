@@ -206,6 +206,80 @@ def _check_bindings(db, rows, item, source_id):
             raise IntegrityError(f"correction {cid} does not bind to its page")
 
 
+def _check_index(db, source, item, result):
+    """The scanned index rows of one source equal a fresh import of its candidate: its
+    stored summary, sections, TOC, search rows and transcription labels."""
+    source_id = source["id"]
+    stored = db.execute(
+        "select summary from transcription_sources where source_id=?", (source_id,)
+    ).fetchone()
+    units = result["units"]
+    indexed = [
+        (
+            r["id"],
+            r["ordinal"],
+            r["title"],
+            r["text"],
+            json.loads(r["locator"]),
+            r["provenance"],
+            r["kind"],
+            json.loads(r["images"]),
+        )
+        for r in db.execute(
+            "select * from sections where source_id=? order by ordinal",
+            (source_id,),
+        )
+    ]
+    expected = [
+        (
+            u["id"],
+            n,
+            u["title"],
+            u["text"],
+            u["locator"],
+            u["provenance"],
+            u["kind"],
+            u["images"],
+        )
+        for n, u in enumerate(units)
+    ]
+    searched = sorted(
+        tuple(r)
+        for r in db.execute(
+            "select section_id,title,text from search where source_id=?",
+            (source_id,),
+        )
+    )
+    labels = {
+        r["section_id"]: (
+            json.loads(r["label"]),
+            json.loads(r["check_regions"]),
+            json.loads(r["corrections"]),
+        )
+        for r in db.execute(
+            "select * from transcription_units where source_id=?", (source_id,)
+        )
+    }
+    if (
+        stored is None
+        or json.loads(stored[0]) != item
+        or indexed != expected
+        or json.loads(source["toc"]) != result["toc"]
+        or searched
+        != sorted((u["id"], u["title"], u["text"]) for u in units if u["searchable"])
+        or labels
+        != {
+            u["id"]: (
+                u["transcription"]["label"],
+                u["transcription"]["check_regions"],
+                u["transcription"]["corrections"],
+            )
+            for u in units
+        }
+    ):
+        raise IntegrityError("scanned index does not match the candidate")
+
+
 def check_transcription(manifest, inputs, db):
     """Transcription text is publishable only as the exact import of a backed-up candidate.
 
@@ -299,76 +373,7 @@ def check_transcription(manifest, inputs, db):
         # The stored ledger re-derives every applied, stale and ambiguous outcome.
         if item != result["summary"]:
             raise IntegrityError("transcription summary mismatch")
-        stored = db.execute(
-            "select summary from transcription_sources where source_id=?", (source_id,)
-        ).fetchone()
-        units = result["units"]
-        indexed = [
-            (
-                r["id"],
-                r["ordinal"],
-                r["title"],
-                r["text"],
-                json.loads(r["locator"]),
-                r["provenance"],
-                r["kind"],
-                json.loads(r["images"]),
-            )
-            for r in db.execute(
-                "select * from sections where source_id=? order by ordinal",
-                (source_id,),
-            )
-        ]
-        expected = [
-            (
-                u["id"],
-                n,
-                u["title"],
-                u["text"],
-                u["locator"],
-                u["provenance"],
-                u["kind"],
-                u["images"],
-            )
-            for n, u in enumerate(units)
-        ]
-        searched = sorted(
-            tuple(r)
-            for r in db.execute(
-                "select section_id,title,text from search where source_id=?",
-                (source_id,),
-            )
-        )
-        labels = {
-            r["section_id"]: (
-                json.loads(r["label"]),
-                json.loads(r["check_regions"]),
-                json.loads(r["corrections"]),
-            )
-            for r in db.execute(
-                "select * from transcription_units where source_id=?", (source_id,)
-            )
-        }
-        if (
-            stored is None
-            or json.loads(stored[0]) != item
-            or indexed != expected
-            or json.loads(row["toc"]) != result["toc"]
-            or searched
-            != sorted(
-                (u["id"], u["title"], u["text"]) for u in units if u["searchable"]
-            )
-            or labels
-            != {
-                u["id"]: (
-                    u["transcription"]["label"],
-                    u["transcription"]["check_regions"],
-                    u["transcription"]["corrections"],
-                )
-                for u in units
-            }
-        ):
-            raise IntegrityError("scanned index does not match the candidate")
+        _check_index(db, row, item, result)
 
 
 def finalize(build: Path, cache: Path, output: Path):
