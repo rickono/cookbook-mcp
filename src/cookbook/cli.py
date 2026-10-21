@@ -5,9 +5,10 @@ import json
 import os
 import sys
 from pathlib import Path
-from .publication import Runtime, publish_build, restore
-from .storage import LocalStore, IntegrityError, atomic_write, canonical, file_lock
+
 from .ocr_limits import OcrIsolationError
+from .publication import Runtime, publish_build, restore
+from .storage import IntegrityError, LocalStore, atomic_write, canonical, file_lock
 
 
 def hosted_activator(readiness_url, *, token_file=None, browser_login=False):
@@ -40,7 +41,8 @@ def hosted_activator(readiness_url, *, token_file=None, browser_login=False):
 
     def activate(pointer):
         if login_config:
-            from .publisher_login import LoginError, browser_login as login
+            from .publisher_login import LoginError
+            from .publisher_login import browser_login as login
 
             # Sign in after upload/readback, before starting the acknowledgement timer.
             try:
@@ -114,13 +116,6 @@ def _main():
         "--ledger",
         type=Path,
         help="correction ledger (corrections.jsonl from scripts/triage_reports.py) to apply",
-    )
-    b.add_argument(
-        "--legacy-ocr-books",
-        type=int,
-        nargs="+",
-        default=[],
-        help="Index selected PDF Calibre IDs with native low-text page OCR instead of a candidate",
     )
     pub = sub.add_parser("publish-local")
     pub.add_argument("--build", type=Path, required=True)
@@ -216,8 +211,8 @@ def _main():
         print(json.dumps({"review_id": a.id, "pending": result["pending"]}))
         return
     if a.command == "review-report":
-        from .quality import read_report
         from .ocr import write_review_page
+        from .quality import read_report
 
         count = write_review_page(a.ocr_cache, read_report(a.build)["items"], a.output)
         print(json.dumps({"pending_pages": count, "report": str(a.output)}))
@@ -244,13 +239,12 @@ def _main():
             a.ocr_cache,
             progress=lambda d: print(json.dumps(d), flush=True),
             force_ocr_ids=a.force_ocr_books,
-            legacy_ocr_ids=a.legacy_ocr_books,
             scanned=read_registry(a.scanned_registry) if a.scanned_registry else None,
             ledger=read_ledger(a.ledger) if a.ledger else None,
         )
         scanned_report = read_build_report(a.output) or {}
-        from .quality import read_report
         from .ocr import write_review_page
+        from .quality import read_report
 
         pending = read_report(a.output)["pending_ids"]
         if pending:
@@ -289,6 +283,7 @@ def _main():
         print(json.dumps({"restored": m.publication_id}))
     else:
         import uvicorn
+
         from .library import Library
         from .server import JWTVerifier, create_app
 
@@ -322,7 +317,7 @@ def main():
     logging.getLogger("pypdf").setLevel(logging.CRITICAL)
     try:
         _main()
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 - every failure maps to a coded error
         from .ocr import ReviewRequired
         from .publisher_login import LoginError
 

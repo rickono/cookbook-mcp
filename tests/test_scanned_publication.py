@@ -133,14 +133,30 @@ def test_candidate_for_a_different_page_count_is_refused_before_output(tmp_path)
     assert not (tmp_path / "build").exists()
 
 
-def test_candidate_and_legacy_ocr_for_one_book_is_refused(tmp_path):
-    with pytest.raises(IntegrityError, match="legacy OCR"):
-        build(tmp_path, registry(tmp_path), legacy_ocr_ids=[1])
+def test_candidate_and_forced_ocr_for_one_book_is_refused(tmp_path):
+    with pytest.raises(IntegrityError, match="forced OCR"):
+        build(tmp_path, registry(tmp_path), force_ocr_ids=[1])
 
 
-def test_legacy_ocr_opt_in_still_goes_through_admission_checked_paged(tmp_path):
+def test_forced_ocr_still_goes_through_admission_checked_paged(tmp_path):
     with pytest.raises(AssertionError, match="must not render"):
-        build(tmp_path, None, legacy_ocr_ids=[1])
+        build(tmp_path, None, force_ocr_ids=[1])
+
+
+def test_build_has_no_legacy_ocr_opt_in(tmp_path, monkeypatch, capsys):
+    import sys
+
+    from cookbook import cli
+
+    argv = ["cookbook", "build", "--snapshot", str(snapshot(tmp_path)), "--books", "1"]
+    argv += ["--output", str(tmp_path / "build"), "--ocr-cache", str(tmp_path / "c")]
+    argv += ["--legacy-ocr-books", "1"]
+    monkeypatch.setattr(sys, "argv", argv)
+    with pytest.raises(SystemExit):
+        cli.main()
+    assert "unrecognized arguments: --legacy-ocr-books" in capsys.readouterr().err
+    with pytest.raises(TypeError):
+        build(tmp_path / "direct", None, legacy_ocr_ids=[1])
 
 
 def test_unregistered_change_to_candidate_rows_is_refused(tmp_path):

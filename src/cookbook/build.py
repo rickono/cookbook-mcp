@@ -1,14 +1,16 @@
 """Build an index from an explicitly approved, already verified snapshot."""
 
 from __future__ import annotations
-from datetime import datetime, timezone
+
 import json
-from pathlib import Path
 import sqlite3
 import uuid
-from .extract import VERSION, epub, paged, ident
-from .publication import Entry, Manifest
+from datetime import UTC, datetime
+from pathlib import Path
+
 from . import ledger as ledger_rows
+from .extract import VERSION, epub, ident, paged
+from .publication import Entry, Manifest
 from .scanned import (
     BUILD_REPORT,
     INVENTORY,
@@ -114,7 +116,6 @@ def build_snapshot(
     progress=print,
     *,
     force_ocr_ids=(),
-    legacy_ocr_ids=(),
     scanned=None,
     ledger=None,
 ):
@@ -124,17 +125,16 @@ def build_snapshot(
     sha256 to ``{"physical_pages", "candidate"}``, see scanned.read_registry), with the
     rows of the correction ``ledger`` (cookbook.ledger) for its digest applied; each
     source's rows are backed up beside its candidate and the outcomes are counted in
-    ``build-report.json``, which also holds the owner queue of ambiguous corrections. Native
-    page OCR runs only for books named in ``legacy_ocr_ids`` or ``force_ocr_ids``, and
-    still passes the OCR admission check.
+    ``build-report.json``, which also holds the owner queue of ambiguous corrections. A
+    PDF without a candidate is refused unless it is named in ``force_ocr_ids``; native
+    page OCR still passes the OCR admission check.
     """
     if output.exists():
         raise IntegrityError("build directory must be new")
     force_ocr_ids = set(force_ocr_ids)
-    legacy_ocr_ids = set(legacy_ocr_ids) | force_ocr_ids
     scanned = scanned or {}
     ledger = ledger_rows.check(ledger or [])
-    if not legacy_ocr_ids.issubset(approved_ids):
+    if not force_ocr_ids.issubset(approved_ids):
         raise IntegrityError("forced OCR books must be in the approved selection")
     # POC backs up only approved record directories plus catalog metadata; full-library command deferred.
     snapshot = snapshot.resolve()
@@ -191,14 +191,12 @@ def build_snapshot(
         sha = proof_files[r["path"] + "/" + name + ".pdf"]["sha256"]
         source = "pdf:" + sha
         if sha not in scanned:
-            if r["id"] not in legacy_ocr_ids:
-                raise IntegrityError(
-                    "PDF book requires a registered scanned candidate or a legacy OCR opt-in"
-                )
+            if r["id"] not in force_ocr_ids:
+                raise IntegrityError("PDF book requires a registered scanned candidate")
             continue
-        if r["id"] in legacy_ocr_ids:
+        if r["id"] in force_ocr_ids:
             raise IntegrityError(
-                "PDF book has both a registered scanned candidate and a legacy OCR opt-in"
+                "PDF book has both a registered scanned candidate and forced OCR"
             )
         if source not in imported:
             files = read_candidate(scanned[sha]["candidate"])
@@ -334,7 +332,7 @@ def build_snapshot(
     dest.execute("insert into search(search) values('optimize')")
     dest.commit()
     dest.close()
-    from .quality import make_report, QUALITY_PATH
+    from .quality import QUALITY_PATH, make_report
 
     report = make_report(pub, quality_items, forced_ocr_sources=forced_sources)
     atomic_write(output / "ocr-review.json", canonical(report))
@@ -361,7 +359,6 @@ def build_snapshot(
         "ocr_cache": str(Path(cache).resolve()),
         "approved_ids": list(approved_ids),
         "force_ocr_ids": sorted(force_ocr_ids),
-        "legacy_ocr_ids": sorted(legacy_ocr_ids - force_ocr_ids),
         "scanned": [
             {
                 "source_sha256": imported[s]["summary"]["source_sha256"],
@@ -394,7 +391,7 @@ def build_snapshot(
     m = Manifest(
         publication_id=pub,
         locator_version="epub-spine-v2",
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
         files=entries,
     )
     atomic_write(output / "manifest.json", canonical(m.model_dump()))

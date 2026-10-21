@@ -101,9 +101,7 @@ def rebuild(store, manifest, rows, work: Path, *, ocr_cache=None, progress=None)
         or digest_file(proof)[0] != record["snapshot"]["proof_sha256"]
     ):
         raise RefreshError("the recorded snapshot is missing or has changed")
-    run = work / (
-        datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ-") + uuid.uuid4().hex[:8]
-    )
+    run = work / (datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ-") + uuid.uuid4().hex[:8])
     scanned = {}
     for item in record["scanned"]:
         sha = item["source_sha256"]
@@ -128,7 +126,6 @@ def rebuild(store, manifest, rows, work: Path, *, ocr_cache=None, progress=None)
         Path(ocr_cache or record["ocr_cache"]),
         progress=progress or (lambda event: None),
         force_ocr_ids=record["force_ocr_ids"],
-        legacy_ocr_ids=record["legacy_ocr_ids"],
         scanned=scanned,
         ledger=rows,
     )

@@ -137,7 +137,7 @@ publication (`build-inputs.v1`). The record holds:
 - the snapshot path and the sha256 of its `snapshot-manifest.json`;
 - the OCR cache;
 - the approved Calibre ids, in order;
-- the forced and legacy OCR ids;
+- the forced OCR ids;
 - for each imported scanned source, its digest, physical page count and the sha256 of
   its `candidate.json`.
 
@@ -205,8 +205,8 @@ Resolving an item stays a manual owner step.
 - **No scanned book is hosted yet.** The build imports a scanned PDF from a frozen
   `scanned-candidate.v1` candidate (`cookbook build --scanned-registry registry.json`);
   the gate accepts its text only through the transcription summary. A PDF without a
-  registered candidate is refused unless it is named in `--legacy-ocr-books`, which
-  keeps the old OCR path and its assessments. The three production-transcribed books
+  registered candidate is refused unless it is named in `--force-ocr-books`, which
+  keeps native page OCR and its assessments; a book cannot have both. The three production-transcribed books
   (#49) are built and published to a local store only; hosted activation waits for the
   owner. `get_page` renders with poppler's `pdftoppm`. The hosted image installs it;
   on the Mac it is not on `PATH`, so for local checks put Calibre's bundled copy
