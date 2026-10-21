@@ -8,6 +8,13 @@ import sqlite3
 import uuid
 from .extract import VERSION, epub, paged, ident
 from .publication import Entry, Manifest
+from .scanned import (
+    INVENTORY,
+    SUMMARY_PATH,
+    SUMMARY_VERSION,
+    import_candidate,
+    read_candidate,
+)
 from .storage import IntegrityError, atomic_write, canonical, digest_file
 
 SCHEMA = """
@@ -18,6 +25,8 @@ CREATE TABLE sections(id TEXT PRIMARY KEY, source_id TEXT, ordinal INTEGER, titl
 CREATE INDEX sections_source ON sections(source_id,ordinal);
 CREATE TABLE images(id TEXT PRIMARY KEY, source_id TEXT, asset TEXT, document TEXT, caption TEXT);
 CREATE TABLE image_context(image_id TEXT PRIMARY KEY, title TEXT, section_id TEXT);
+CREATE TABLE transcription_sources(source_id TEXT PRIMARY KEY, summary TEXT);
+CREATE TABLE transcription_units(section_id TEXT PRIMARY KEY, source_id TEXT, label TEXT, check_regions TEXT, corrections TEXT);
 CREATE VIRTUAL TABLE search USING fts5(section_id UNINDEXED, source_id UNINDEXED, title, text, tokenize='unicode61 remove_diacritics 2');
 """
 
@@ -49,10 +58,24 @@ def add_content(db, source, fmt, sha, original, sections, images, toc):
                 json.dumps(s["images"]),
             ),
         )
-        db.execute(
-            "insert into search values (?,?,?,?)",
-            (s["id"], source, s["title"], s["text"]),
-        )
+        # Scanned page units covered by a section stay readable but are not search hits.
+        if s.get("searchable", True):
+            db.execute(
+                "insert into search values (?,?,?,?)",
+                (s["id"], source, s["title"], s["text"]),
+            )
+        if "transcription" in s:
+            t = s["transcription"]
+            db.execute(
+                "insert into transcription_units values (?,?,?,?,?)",
+                (
+                    s["id"],
+                    source,
+                    json.dumps(t["label"]),
+                    json.dumps(t["check_regions"]),
+                    json.dumps(t["corrections"]),
+                ),
+            )
     for im in images:
         db.execute(
             "insert into images values (?,?,?,?,?)",
@@ -84,11 +107,22 @@ def build_snapshot(
     progress=print,
     *,
     force_ocr_ids=(),
+    legacy_ocr_ids=(),
+    scanned=None,
 ):
+    """Build a new publication directory.
+
+    A PDF is indexed from its registered scanned candidate (``scanned`` maps a source
+    sha256 to ``{"physical_pages", "candidate"}``, see scanned.read_registry). Native
+    page OCR runs only for books named in ``legacy_ocr_ids`` or ``force_ocr_ids``, and
+    still passes the OCR admission check.
+    """
     if output.exists():
         raise IntegrityError("build directory must be new")
     force_ocr_ids = set(force_ocr_ids)
-    if not force_ocr_ids.issubset(approved_ids):
+    legacy_ocr_ids = set(legacy_ocr_ids) | force_ocr_ids
+    scanned = scanned or {}
+    if not legacy_ocr_ids.issubset(approved_ids):
         raise IntegrityError("forced OCR books must be in the approved selection")
     # POC backs up only approved record directories plus catalog metadata; full-library command deferred.
     snapshot = snapshot.resolve()
@@ -137,6 +171,31 @@ def build_snapshot(
             raise IntegrityError("forced OCR requires a PDF or DjVu source")
         rel = r["path"] + "/" + name + "." + fmt.lower()
         forced_sources.add(fmt.lower() + ":" + proof_files[rel]["sha256"])
+    imported = {}
+    for r in records:
+        fmt, name = r["selected_format"]
+        if fmt != "PDF":
+            continue
+        sha = proof_files[r["path"] + "/" + name + ".pdf"]["sha256"]
+        source = "pdf:" + sha
+        if sha not in scanned:
+            if r["id"] not in legacy_ocr_ids:
+                raise IntegrityError(
+                    "PDF book requires a registered scanned candidate or a legacy OCR opt-in"
+                )
+            continue
+        if r["id"] in legacy_ocr_ids:
+            raise IntegrityError(
+                "PDF book has both a registered scanned candidate and a legacy OCR opt-in"
+            )
+        if source not in imported:
+            files = read_candidate(scanned[sha]["candidate"])
+            imported[source] = import_candidate(
+                files,
+                source_id=source,
+                source_sha256=sha,
+                physical_pages=scanned[sha]["physical_pages"],
+            ) | {"files": files}
     output.mkdir(parents=True, mode=0o700)
     (output / "assets").mkdir(mode=0o700)
     pub = uuid.uuid4().hex
@@ -193,6 +252,17 @@ def build_snapshot(
         progress({"event": "extract_start", "calibre_id": r["id"], "format": fmt})
         if fmt == "EPUB":
             sections, images, toc = epub(p, source, emit_asset)
+        elif source in imported:
+            candidate = imported[source]
+            sections, images, toc = candidate["units"], [], candidate["toc"]
+            for file_name, data in candidate["files"].items():
+                copy = output / "scanned" / sha / file_name
+                atomic_write(copy, data)
+                inputs[f"{INVENTORY}/{sha}/{file_name}"] = copy
+            dest.execute(
+                "insert into transcription_sources values (?,?)",
+                (source, json.dumps(candidate["summary"])),
+            )
         else:
             sections, images, toc = paged(
                 p,
@@ -228,6 +298,8 @@ def build_snapshot(
                 ),
                 "ocr_mode": "all_pages"
                 if source in forced_sources
+                else "scanned_candidate"
+                if source in imported
                 else "low_text_pages"
                 if fmt != "EPUB"
                 else "not_applicable",
@@ -247,6 +319,13 @@ def build_snapshot(
     report = make_report(pub, quality_items, forced_ocr_sources=forced_sources)
     atomic_write(output / "ocr-review.json", canonical(report))
     inputs[QUALITY_PATH] = output / "ocr-review.json"
+    if imported:
+        summary = {
+            "version": SUMMARY_VERSION,
+            "sources": [imported[s]["summary"] for s in sorted(imported)],
+        }
+        atomic_write(output / "transcription-summary.json", canonical(summary))
+        inputs[SUMMARY_PATH] = output / "transcription-summary.json"
     inputs["runtime/index.sqlite"] = index
     entries = []
     for logical, p in sorted(inputs.items()):

@@ -191,8 +191,14 @@ def test_pending_review_blocks_publish_and_correction_finalizes_new_version(
     )
     cache = tmp_path / "ocr-cache"
     build = tmp_path / "build-review"
+    # Native page OCR for a PDF is an explicit legacy opt-in; the default needs a candidate.
     m, inputs, _ = build_snapshot(
-        snapshot_fixture(tmp_path), [1], build, cache, progress=lambda x: None
+        snapshot_fixture(tmp_path),
+        [1],
+        build,
+        cache,
+        progress=lambda x: None,
+        legacy_ocr_ids=[1],
     )
     report = read_report(build)
     assert len(report["pending_ids"]) == 1
