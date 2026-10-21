@@ -282,6 +282,17 @@ def test_build_applies_and_backs_up_the_ledger_and_reports_counts(tmp_path):
     check_publish_quality(m, inputs)
 
 
+def test_build_report_gives_each_books_page_section_and_unresolved_counts(tmp_path):
+    from cookbook.scanned import read_build_report
+
+    build(tmp_path, registry(tmp_path))
+    [source] = read_build_report(tmp_path / "build")["sources"]
+    assert source["calibre_ids"] == [1]
+    assert source["pages"] == {"total": 4, "transcribed": 3, "blank": 1, "failed": 0}
+    assert source["sections"] == 2
+    assert source["unresolved"] == 1
+
+
 def test_a_build_without_corrections_stores_an_empty_ledger(tmp_path):
     _, inputs, stats = build(tmp_path, registry(tmp_path))
     assert inputs[LEDGER].read_bytes() == b""

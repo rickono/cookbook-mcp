@@ -209,6 +209,8 @@ def build_snapshot(
             imported[source]["files"] = files | {
                 ledger_rows.FILE: ledger_rows.dump(imported[source]["ledger"])
             }
+            imported[source]["calibre_ids"] = []
+        imported[source]["calibre_ids"].append(r["id"])
     output.mkdir(parents=True, mode=0o700)
     (output / "assets").mkdir(mode=0o700)
     pub = uuid.uuid4().hex
