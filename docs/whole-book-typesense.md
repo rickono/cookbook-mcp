@@ -161,3 +161,11 @@ Each publication still reads and cites its own immutable model artifact.
 use `search_library`, then `read_section` and `get_page`. A correction refresh
 retains the native model and shared keyword-index binding while rebuilding the
 scanned content; it does not discard the native recipe records.
+
+A matching validator-specific receipt can be pre-staged as
+`.model-validation-<validator_sha256>.json`. Runtime accepts it only after the
+manifest digest, validator/library signature and complete validation counts match,
+and still hashes every runtime file before considering any receipt. This permits
+a full protected validation before a serving rollout without replacing the previous
+release's default restart receipt. Missing, stale or damaged receipts trigger the
+complete validation as before.

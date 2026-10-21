@@ -759,3 +759,36 @@ def test_native_carry_refuses_an_unrepresented_epub_selection(tmp_path):
     with pytest.raises(IntegrityError, match="whole-book selection differs"):
         retain_native_model(mixed, tmp_path / "refused", previous, previous_inputs)
     assert not (tmp_path / "refused").exists()
+
+
+def test_restart_accepts_a_matching_versioned_validation_receipt(
+    structured, tmp_path, monkeypatch
+):
+    from cookbook import book_build
+
+    _, manifest, _, _, root = structured
+    inputs = {
+        k: Path(v) for k, v in json.loads((root / "inputs.json").read_bytes()).items()
+    }
+    store = LocalStore(tmp_path / "store")
+    runtime = Runtime(store, tmp_path / "runtime")
+    calls = []
+    original = book_build.validate_model
+
+    def counted(*args, **kwargs):
+        calls.append(True)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(book_build, "validate_model", counted)
+    publish(store, manifest, inputs, expected_version=None, activate=runtime.activate)
+    version = runtime.root / "versions" / manifest.publication_id
+    default = version / ".model-validation.json"
+    receipt = json.loads(default.read_bytes())
+    versioned = version / (".model-validation-" + receipt["validator_sha256"] + ".json")
+    atomic_write(versioned, canonical(receipt))
+    default.write_text("stale receipt")
+    runtime.resume_cached()
+    assert len(calls) == 1
+    versioned.write_text("broken receipt")
+    runtime.resume_cached()
+    assert len(calls) == 2

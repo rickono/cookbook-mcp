@@ -153,6 +153,16 @@ def validate_version(pointer, destination):
             receipt = json.loads(receipt_path.read_bytes())
         except (OSError, ValueError):
             receipt = None
+        if receipt != identity:
+            # An exact receipt produced by this validator can be pre-staged
+            # without replacing the previous release's restart receipt.
+            versioned = destination / (
+                ".model-validation-" + identity["validator_sha256"] + ".json"
+            )
+            try:
+                receipt = json.loads(versioned.read_bytes())
+            except (OSError, ValueError):
+                receipt = None
         # All runtime bytes were hashed above, on every call. Only the expensive
         # structural pass is reused, after an exact-byte/exact-validator match.
         if receipt != identity:
