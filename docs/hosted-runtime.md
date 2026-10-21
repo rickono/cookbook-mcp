@@ -1,12 +1,22 @@
 # Hosted trial runtime
 
+Current status, October 21, 2026: service revision `96612b4` is deployed on the
+existing Fly Machine. It combines scanned transcription/report support with the
+live whole-book recipe features and the bounded manifest cache. The active
+publication remains `e4c84953d6ae46bca9cc31ba37171f15`, with 59 native source books
+and 7,266 candidate recipe records across 55 books. Authenticated publication,
+search and section reads pass. Hosted whole-book checks pass for all 59 source
+roots and title retrieval in all 55 recipe books. The active publication has no
+scanned books yet; scanned publication and its end-to-end acceptance remain pending.
+See the rollout record below and [native recipe interpretation](native-recipe-interpretation.md).
+
 Image selection update, September 13: the existing service now exposes
 `list_images` and `inspect_image` before the final `get_image` display. Live
 ChatGPT checks confirm candidate inspection without image cards and a single
 selected-photo viewer. Deployment details and acceptance evidence are in
 [image selection](image-selection.md).
 
-Current status, September 13, 2026: all 58 authorized EPUB records are uploaded to private R2 and active on the existing Fly Machine as publication `d9e2b701b6864ccaa4aabfd6bc04d32a`. Full remote checksum readback, hosted active-manifest/index validation, the exact 58-book inventory, and health pass. Google publisher sign-in, exact authenticated readiness acknowledgement, 293 hosted MCP calls across all 58 books, and successful-publication history verification now pass. The full build preserves the newer image captions/recipe context and resolves all EPUB TOC links; 57 books have searchable text and one is image-only. See [the full publication record](full-epub-publication.md). The full catalog has now passed authenticated transport checks. Earlier two-book ChatGPT visual acceptance and subsequent viewer deployments remain the recorded in-ChatGPT visual checks.
+Publication status on September 13, 2026: all 58 authorized EPUB records are uploaded to private R2 and active on the existing Fly Machine as publication `d9e2b701b6864ccaa4aabfd6bc04d32a`. Full remote checksum readback, hosted active-manifest/index validation, the exact 58-book inventory, and health pass. Google publisher sign-in, exact authenticated readiness acknowledgement, 293 hosted MCP calls across all 58 books, and successful-publication history verification now pass. The full build preserves the newer image captions/recipe context and resolves all EPUB TOC links; 57 books have searchable text and one is image-only. See [the full publication record](full-epub-publication.md). The full catalog has now passed authenticated transport checks. Earlier two-book ChatGPT visual acceptance and subsequent viewer deployments remain the recorded in-ChatGPT visual checks.
 
 ## Serving and updates
 
@@ -20,9 +30,9 @@ Older cached versions remain available for citation follow-ups. No real cache-ve
 
 ## Restart behavior
 
-The independent supervisor checks the worker's local `/healthz` every 30 seconds with a five-second request timeout. Failed liveness checks during the initial five minutes do not trigger a restart. Afterwards, three consecutive failures trigger worker process-group termination and replacement. Successful probes reset the failure count. Crashes are detected separately and restarted, including during startup grace. A one-second pause limits rapid crash loops. Shutdown forwards termination and escalates to kill after 15 seconds, including rendering descendants.
+The independent supervisor checks the worker's local `/healthz` every 30 seconds with a five-second request timeout. Failed liveness checks during the initial fifteen minutes do not trigger a restart. Afterwards, three consecutive failures trigger worker process-group termination and replacement. Successful probes reset the failure count. Crashes are detected separately and restarted, including during startup grace. A one-second pause limits rapid crash loops. Shutdown forwards termination and escalates to kill after 15 seconds, including rendering descendants.
 
-R2 and Auth0 are not contacted by the liveness probe, so dependency failures alone do not trigger restarts. Fly's draft Machine policy is `always`, covering a failed supervisor. The Fly routing health check has a one-minute grace because the Fly validator caps it there; this does not change the supervisor's five-minute grace.
+R2 and Auth0 are not contacted by the liveness probe, so dependency failures alone do not trigger restarts. Fly's draft Machine policy is `always`, covering a failed supervisor. The Fly routing health check has a one-minute grace because the Fly validator caps it there; this does not change the supervisor's fifteen-minute grace.
 
 ## Publisher acknowledgement
 
@@ -293,9 +303,9 @@ returned Classic Nigerian Jollof Rice with a source-bound citation. This verifie
 authenticated discovery and search, not a complete recipe read, image/card UI,
 or refresh exchange. No ingestion, OCR, book publication or deployment was run.
 
-## Transcription reports — not deployed
+## Transcription reports — service deployed
 
-Code only, 2026-10-20; see [transcription-reports.md](transcription-reports.md).
+Deployed on 2026-10-21; see [transcription-reports.md](transcription-reports.md).
 The service accepts agent reports when three secrets name a reports-only bucket:
 
 - `REPORTS_S3_BUCKET`, `REPORTS_AWS_ACCESS_KEY_ID`, `REPORTS_AWS_SECRET_ACCESS_KEY`;
@@ -309,5 +319,60 @@ The reports key should be scoped to the reports bucket alone. R2's object tokens
 read-only or read & write. I am not aware of a write-only scope, so it will be
 read & write on that one bucket. The server only creates objects, conditionally, and
 never reads or deletes them. The Mac reads reports with a separate key for that
-bucket. Creating the bucket and keys, adding the Fly secrets and deploying each need
-the owner's approval. None of them has been done.
+bucket. The owner approved bucket/key setup and the service deployment. The private
+`cookbook-reports` bucket now has a bucket-scoped read/write runtime key and a
+separate read-only Mac key. All three required settings and
+`REPORTS_S3_ENDPOINT_URL` are present on the running Machine. The endpoint is
+explicit because the reports bucket uses the default jurisdiction while the
+library bucket uses the US jurisdiction. The keyword engine child does not inherit
+`REPORTS_*` settings. The library runtime credential remains read-only, and the
+publisher credential was not sent to Fly.
+
+Uploading the PDF originals, about 1 GB, is a separate publication step governed
+by [Host the scanned books and reports bucket](https://github.com/rickono/cookbook-mcp/issues/54).
+It was not part of this service rollout. Once the scanned publication is ready and
+its upload is approved, acceptance still needs a render and region zoom of the
+largest scanned PDF on the existing 1 GB Machine, followed by a real hosted report
+and Mac reader round trip. The current EPUB-only publication correctly rejects
+transcription reports, so no synthetic report was placed in the live reports bucket.
+
+
+## October 21 service rollout
+
+The deployed image is
+`registry.fly.io/cookbook-agent@sha256:cf12a1327c58f01cad3686ae46e614e9c0b6d4eea93c58c9010754681209638b`,
+built from `96612b49d1fd81666552945f809c8ae2aebc94e0` on
+`deploy/spec46-preserve-live-20261021`. The initial preflight refused an obsolete
+volume pin before making remote changes. Fresh inspection identified the live
+recipe-structure image; its 27 packaged source files matched the recipe-structure
+branch exactly. That branch was merged before rebuilding, preserving whole-book
+retrieval and its bounded recovery behavior alongside scanned transcription support.
+
+Only the image changed on Machine `2863795a042368`. Its SJC placement, shared
+1 CPU / 1 GB guest, encrypted 20 GB volume `vol_r68yxje08mo6q3n4`, mounts,
+services, environment, metadata and restart policy match the saved before-state.
+The prior image and full configuration are retained for rollback. The active
+publication and model snapshot `32f3d7787d0cd991b26106c6e6eba6f1` are unchanged.
+
+All 395 Python checks passed through the OCR sandbox with its original resource
+ceilings; temporary test files used the private output mount. All 11 viewer checks
+passed. After adding reports-credential isolation, all 11 model/search checks
+passed again. The native x86 image build and a separate source-free, network-disabled
+service startup check passed, including UID 10001, manifest cache, renderer presence,
+complete synthetic reports settings, health HTTP 200 and anonymous HTTP 401.
+Native build execution is required on this Mac: the unchanged prior live Typesense
+binary also segfaulted under its x86 emulator.
+
+Clean post-update verification passed. Fly's routing check passes, health is OK,
+and anonymous readiness/MCP return 401. Real authenticated connected-tool checks
+confirm publication information, search and a source section read. Read-only
+hosted checks confirm 59 source roots, 7,266 recipes, title retrieval in all 55
+recipe books without query cutoffs, all 627,907 keyword search units, current and
+retained citations, source continuations, supporting work and candidate filtering.
+The running service can list the reports bucket using its separate endpoint and
+key; its keyword engine inherits no reports credentials.
+
+Private receipts, build logs, the rollback configuration and the runbook are under
+`~/cookbook-mcp-data/setup/deploy-spec46-20261021/`. Refresh ChatGPT/Grok app metadata
+to discover the report tool and updated schemas. No scanned publication, successful
+hosted report write, or largest-PDF zoom is claimed by this rollout record.
