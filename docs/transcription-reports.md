@@ -85,7 +85,7 @@ A crop failure or a timed-out reading is not recorded, so the report is retried 
 the next run. A provider content-filter refusal is a result: the report goes to the
 owner queue and is not worked around. A usage limit stops the run.
 
-Each run rebuilds `corrections.jsonl`, `owner-queue.jsonl` and `owner-queue.md` from
+Each run rebuilds `ledger.jsonl`, `owner-queue.jsonl` and `owner-queue.md` from
 all decisions. Sources not registered with the helper, and DjVu sources, go to the
 owner queue.
 
@@ -96,7 +96,10 @@ python3 scripts/triage_reports.py --reports-s3 --limit 20  # decide up to 20
 
 ## 3. The next publication applies corrections
 
-`corrections.jsonl` is the correction ledger (`cookbook.ledger`). Each row carries an
+`ledger.jsonl` is the correction ledger (`cookbook.ledger`); triage runs before this
+change wrote it as `corrections.jsonl`, which is no longer read. It is unrelated to the
+reader pipeline's `corrections.jsonl` (reader-vote corrections, `vote-corrections.jsonl`
+in a candidate). Each row carries an
 `id` (the report id), `decided_at`, the source digest and id, the physical page, an
 optional section and region, `from_text`, `to_text`, the reviewer and the evidence
 (crop hash, readings hash, votes). Rows are in decision order. A row binds to the
@@ -104,17 +107,17 @@ source digest and page, not to the publication the report was filed against, so 
 report against an older publication still applies. The same correction decided again
 from a later report is kept once, at its first decision.
 
-`cookbook build --scanned-registry registry.json --ledger corrections.jsonl` applies
+`cookbook build --scanned-registry registry.json --ledger ledger.jsonl` applies
 the rows for each scanned source, in order, after unresolved markers are in place.
 Matching is whitespace-normalized and case-sensitive, and text touching an
 `[unresolved …]` marker never matches, so a correction cannot fill a marker:
 
-| `from_text` on the cited page | Outcome |
+| `from_text` | Outcome |
 |---|---|
-| exactly once | applied to the page and to every section part from that page that holds it |
-| more than once, but once in the cited section's text from that page | applied there (section-scoped) |
-| nowhere | stale; nothing changes |
-| more than once otherwise, or `to_text` holds a marker | ambiguous; nothing changes, owner queue |
+| exactly once on the cited page | applied to the page and to every section part from that page that holds it |
+| otherwise, exactly once in the cited section's text from that page | applied there (section-scoped) |
+| nowhere in the cited scope (the cited section's text from that page, else the page) | stale; nothing changes |
+| more than once in the cited scope, or `to_text` holds a marker | ambiguous; nothing changes, owner queue |
 
 Chained corrections work because each row sees the text the earlier rows left. Every
 unit a correction changed lists `{id, reviewer}` in `extraction.corrections`.
@@ -137,7 +140,7 @@ publication (`build-inputs.v1`). The record holds:
 - the snapshot path and the sha256 of its `snapshot-manifest.json`;
 - the OCR cache;
 - the approved Calibre ids, in order;
-- the forced and legacy OCR ids;
+- the forced OCR ids;
 - for each imported scanned source, its digest, physical page count and the sha256 of
   its `candidate.json`.
 
@@ -152,7 +155,7 @@ hand, and nothing schedules it. One run:
    fails;
 3. blind-triages up to `--limit` (default 20) of them, exactly as in step 2. Reports
    over the limit stay pending for the next run;
-4. regenerates `corrections.jsonl` from every decision;
+4. regenerates `ledger.jsonl` from every decision;
 5. compares the ledger's rows for each scanned source with the `ledger_sha256` the
    active publication's transcription summary records. If none differ, for example
    when there were no new decisions or only rejections, it publishes nothing and
@@ -205,8 +208,8 @@ Resolving an item stays a manual owner step.
 - **No scanned book is hosted yet.** The build imports a scanned PDF from a frozen
   `scanned-candidate.v1` candidate (`cookbook build --scanned-registry registry.json`);
   the gate accepts its text only through the transcription summary. A PDF without a
-  registered candidate is refused unless it is named in `--legacy-ocr-books`, which
-  keeps the old OCR path and its assessments. The three production-transcribed books
+  registered candidate is refused unless it is named in `--force-ocr-books`, which
+  keeps native page OCR and its assessments; a book cannot have both. The three production-transcribed books
   (#49) are built and published to a local store only; hosted activation waits for the
   owner. `get_page` renders with poppler's `pdftoppm`. The hosted image installs it;
   on the Mac it is not on `PATH`, so for local checks put Calibre's bundled copy

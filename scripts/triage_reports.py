@@ -17,10 +17,10 @@ script settles each one without trusting it:
        otherwise       -> owner queue
 
 Decisions are written once per report under --out (outside Git) and never redone.
-corrections.jsonl, owner-queue.jsonl and the readable owner-queue.md are rebuilt from
+ledger.jsonl, owner-queue.jsonl and the readable owner-queue.md are rebuilt from
 the decisions on every run; owner-queue.md also lists the ambiguous corrections the last
 refresh's build reported (ambiguous-corrections.jsonl, written by refresh_library.py);
-the next scanned-book publication applies corrections.jsonl (cookbook.ledger rows, in
+the next scanned-book publication applies ledger.jsonl (cookbook.ledger rows, in
 decision order). A correction binds to the source digest and physical page, not to the
 publication the report was filed against, so reports against older publications still
 apply; a correction decided again from a later report is kept once, at its first
@@ -207,24 +207,40 @@ def limited(d):
     )
 
 
+# The report fields a ledger row carries over, as (ledger key, report key). The row's id
+# is the report id; the quoted and proposed texts become from_text and to_text.
+REPORT_FIELDS = (
+    ("id", "report_id"),
+    *(
+        (k, k)
+        for k in (
+            "publication_id",
+            "book_id",
+            "source_id",
+            "source_sha256",
+            "physical_page",
+            "section_id",
+            "region",
+            "kind",
+        )
+    ),
+    ("from_text", "quoted_text"),
+    ("to_text", "proposed_text"),
+)
+
+
+def report_of(row):
+    """The report fields a ledger row carries, under their report names."""
+    return {rk: row[k] for k, rk in REPORT_FIELDS}
+
+
 def correction(d):
     r = d["report"]
     readings = json.dumps(d["readings"], ensure_ascii=False).encode()
     return {
-        "id": r["report_id"],
+        **{k: r[rk] for k, rk in REPORT_FIELDS},
         "decided_at": d["decided_at"],
-        "report_id": r["report_id"],
-        "publication_id": r["publication_id"],
-        "book_id": r["book_id"],
-        "source_id": r["source_id"],
-        "source_sha256": r["source_sha256"],
-        "physical_page": r["physical_page"],
-        "section_id": r["section_id"],
-        "region": r["region"],
-        "kind": r["kind"],
-        "from_text": r["quoted_text"],
-        "to_text": r["proposed_text"],
-        "state": "source_reviewed",
+        "state": ledger.STATE,
         "reviewer": {"kind": "agent", "id": f"blind-reread:{d['reader']}"},
         "evidence": {
             "crop_sha256": d["crop"].get("sha256"),
@@ -252,9 +268,7 @@ def rebuild(out):
     groups = {"correction": [], "rejected": [], "owner_queue": []}
     for d in decisions:
         groups[d["outcome"]].append(d)
-    (out / "corrections.jsonl").write_bytes(
-        ledger.dump(corrections(groups["correction"]))
-    )
+    (out / ledger.FILE).write_bytes(ledger.dump(corrections(groups["correction"])))
     lines = {
         "owner-queue.jsonl": [
             {
@@ -302,23 +316,12 @@ def owner_items(out, queued=None):
     for line in path.read_text().splitlines() if path.exists() else []:
         q = json.loads(line)
         c = q["correction"]
-        decision = out / "decisions" / f"{c['report_id']}.json"
+        decision = out / "decisions" / f"{c['id']}.json"
         items.append(
             {
                 "key": q["correction_id"],
                 "kind": "accepted correction the build could not place",
-                "report": {
-                    "report_id": c["report_id"],
-                    "publication_id": c["publication_id"],
-                    "book_id": c["book_id"],
-                    "source_id": c["source_id"],
-                    "physical_page": c["physical_page"],
-                    "section_id": c["section_id"],
-                    "region": c["region"],
-                    "kind": c["kind"],
-                    "quoted_text": c["from_text"],
-                    "proposed_text": c["to_text"],
-                },
+                "report": report_of(c),
                 "decision": json.loads(decision.read_text())
                 if decision.exists()
                 else None,

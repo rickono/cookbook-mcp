@@ -1,21 +1,23 @@
 """Read-only library queries and bounded authenticated content responses."""
 
 from __future__ import annotations
-from contextlib import contextmanager
+
 import io
 import json
 import math
-from pathlib import Path
 import re
 import sqlite3
 import tempfile
 import threading
+from contextlib import contextmanager
+from pathlib import Path
+
 from PIL import Image
+
 from .extract import render_page
 from .reports import check_region
 from .scanned import LABEL
-from .storage import IntegrityError, digest_file, verify
-
+from .storage import IntegrityError, digest_file, has_table, verify
 
 ZOOM_EDGE = 2400  # largest render for a region zoom; about 25 MB of RGB on a 1 GB host
 
@@ -68,11 +70,12 @@ class Library:
         with self.db(pub) as db:
             return db.execute("select extraction_version from info").fetchone()[0]
 
-    def transcription(self, db, table, key, value):
-        # Older immutable publications remain readable without the additive tables.
-        if not db.execute(
-            "select 1 from sqlite_master where type='table' and name=?", (table,)
-        ).fetchone():
+    def additive_row(self, db, table, key, value):
+        """The row of an additive table whose ``key`` is ``value``; None without one.
+
+        Older immutable publications remain readable without the additive tables.
+        """
+        if not has_table(db, table):
             return None
         return db.execute(f"select * from {table} where {key}=?", (value,)).fetchone()
 
@@ -84,9 +87,7 @@ class Library:
         """
         counts = {"scanned_books": 0, "applied_corrections": 0, "unresolved_items": 0}
         with self.db(pub) as db:
-            if not db.execute(
-                "select 1 from sqlite_master where type='table' and name='transcription_sources'"
-            ).fetchone():
+            if not has_table(db, "transcription_sources"):
                 return counts
             for (raw,) in db.execute("select summary from transcription_sources"):
                 summary = json.loads(raw)
@@ -116,7 +117,7 @@ class Library:
                 },
             )
             with self.db(pub) as db:
-                unit = self.transcription(
+                unit = self.additive_row(
                     db, "transcription_units", "section_id", section["id"]
                 )
             if unit is not None:
@@ -243,7 +244,7 @@ class Library:
                 "image_association": "EPUB document",
                 "ocr": "English; low-text physical pages",
             }
-            scanned = self.transcription(
+            scanned = self.additive_row(
                 db, "transcription_sources", "source_id", b["source_id"]
             )
             if scanned is not None:
@@ -293,10 +294,27 @@ class Library:
                 "image_ids": json.loads(s["images"])[:50],
             }
             # Scanned units only: where to zoom with get_page(region=box); EPUB is unchanged.
-            unit = self.transcription(db, "transcription_units", "section_id", s["id"])
+            unit = self.additive_row(db, "transcription_units", "section_id", s["id"])
             if unit is not None:
                 result["check_regions"] = json.loads(unit["check_regions"])
             return result
+
+    def section_pages(self, publication_id, book_id, source_id, section_id):
+        """Physical pages of a scanned section, from its locator; None for any other."""
+        try:
+            pub = self.publication(publication_id)
+        except IntegrityError:
+            return None
+        with self.db(pub) as db:
+            s = db.execute(
+                "select s.locator from sections s join books b on b.source_id=s.source_id"
+                " where s.id=? and s.source_id=? and b.id=?",
+                (section_id, source_id, book_id),
+            ).fetchone()
+        locator = json.loads(s["locator"]) if s else {}
+        if locator.get("kind") != "scanned-section":
+            return None
+        return locator["physical_pages"]
 
     def cached(self, pub, logical):
         m = self.runtime.manifest(pub)
@@ -333,9 +351,7 @@ class Library:
     def image_metadata(self, db, pub, book, im):
         context = None
         # Older immutable publications remain readable without this additive table.
-        if db.execute(
-            "select 1 from sqlite_master where type='table' and name='image_context'"
-        ).fetchone():
+        if has_table(db, "image_context"):
             row = db.execute(
                 "select title,section_id from image_context where image_id=?",
                 (im["id"],),

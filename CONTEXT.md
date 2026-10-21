@@ -86,3 +86,32 @@ its result qualifies as approved content is a separate decision.
 **Human edge case**:
 Uncertainty that remains after agent review and requires the owner's judgment,
 source inspection, or a better scan. The escalation criteria are not yet settled.
+
+**Owner queue**:
+The human edge cases waiting for the owner's decision: transcription reports a
+blind re-read did not settle, and corrections that no longer apply unambiguously.
+_Avoid_: review queue, escalation list
+
+**Scanned candidate**:
+A frozen agent transcription of one scanned book edition, page by page and section
+by section, with its unresolved content identified. Each library build takes the
+book's text from it.
+_Avoid_: OCR output, draft transcription
+
+**Correction ledger**:
+The ordered record of decided corrections, each bound to a book edition and its
+original page. Every later build applies it again, so corrections outlive the
+build they were decided against.
+_Avoid_: corrections list, errata
+
+**Check region**:
+An area of an original page where a reader should compare the transcription with
+the page itself, because it holds unresolved content or a quantity settled by crop
+voting.
+_Avoid_: zoom box, hotspot
+
+**Build report**:
+The owner's per-book account of one library build: page coverage, sections,
+unresolved content, correction outcomes and the owner queue. It is not part of
+the library.
+_Avoid_: build log, quality report

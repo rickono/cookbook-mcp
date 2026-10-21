@@ -10,7 +10,7 @@ Run by hand; nothing schedules it. One run:
   3. blind-triages up to --limit of them (scripts/triage_reports.py). A failed crop or a
      timed-out reading leaves its report pending, a usage or rate limit leaves it pending
      and ends triage, and a content-filter refusal goes to the owner queue as it is;
-  4. regenerates the correction ledger (corrections.jsonl) from every decision;
+  4. regenerates the correction ledger (ledger.jsonl) from every decision;
   5. if the ledger changes what the active publication serves, rebuilds it from the
      snapshot, approved selection and candidate set that publication recorded, with the
      new ledger (src/cookbook/refresh.py);
@@ -58,33 +58,18 @@ def refresh(
     store,
     activate,
     work: Path,
-    limit=20,
-    reader=tr.READER,
-    admission=tr.doctor,
-    books=tr.registered_books,
-    crop=None,
-    call=None,
     ocr_cache=None,
     log=print,
+    **triage_options,
 ):
     """One refresh run; the caller holds the publisher lock. Returns its JSON summary.
 
-    admission, books, crop and call are the triage's injectable sandbox check, helper
-    registry, guarded crop and reader (see triage_reports.run).
+    ``triage_options`` (limit, reader, and the injectable admission, books, crop and
+    call) go to triage_reports.run unchanged; its defaults apply.
     """
     before = _keys(out)
-    triage = tr.run(
-        reports,
-        out,
-        limit=limit,
-        reader=reader,
-        admission=admission,
-        books=books,
-        crop=crop or tr.fp.guarded_crop,
-        call=call or tr.rd.call,
-        log=log,
-    )
-    rows = ledger.read(out / "corrections.jsonl")
+    triage = tr.run(reports, out, log=log, **triage_options)
+    rows = ledger.read(out / ledger.FILE)
     published = republish(
         store,
         rows,

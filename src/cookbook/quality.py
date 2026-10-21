@@ -1,14 +1,23 @@
 """Publisher-level OCR gate and a new-build finalizer; no mutation of published versions."""
 
-from datetime import datetime, timezone
 import hashlib
 import json
-from pathlib import Path
 import shutil
 import sqlite3
 import uuid
+from datetime import UTC, datetime
+from pathlib import Path
+
 from .ocr import POLICY, ReviewRequired, effective, load_record
-from .storage import IntegrityError, atomic_write, canonical, digest_file
+from .storage import (
+    IntegrityError,
+    atomic_write,
+    canonical,
+    check_bytes,
+    digest_file,
+    has_table,
+    source_id_for,
+)
 
 QUALITY_PATH = "quality/ocr-review.json"
 
@@ -128,10 +137,14 @@ def check_publish_quality(manifest, inputs):
         check_transcription(manifest, inputs, db)
 
 
-def _table(db, name):
-    return db.execute(
-        "select 1 from sqlite_master where type='table' and name=?", (name,)
-    ).fetchone()
+def _inventory_bytes(files_by_path, inputs, logical, what):
+    """A backed-up inventory file's bytes, checked against its manifest entry."""
+    e = files_by_path.get(logical)
+    if e is None or logical not in inputs:
+        raise ReviewRequired(f"missing {what}")
+    return check_bytes(
+        inputs[logical].read_bytes(), e.sha256, e.size, f"{what} changed"
+    )
 
 
 def _stored_ledger(files_by_path, inputs, sha):
@@ -140,20 +153,18 @@ def _stored_ledger(files_by_path, inputs, sha):
     from .scanned import INVENTORY
 
     logical = f"{INVENTORY}/{sha}/{ledger.FILE}"
-    e = files_by_path.get(logical)
-    if e is None or logical not in inputs:
-        raise ReviewRequired("missing scanned correction ledger")
-    data = inputs[logical].read_bytes()
-    if (hashlib.sha256(data).hexdigest(), len(data)) != (e.sha256, e.size):
-        raise IntegrityError("scanned correction ledger changed")
-    return ledger.parse(data)
+    return ledger.parse(
+        _inventory_bytes(files_by_path, inputs, logical, "scanned correction ledger")
+    )
 
 
 def _check_bindings(db, rows, item, source_id):
     """Every stored correction names this source; every applied one sits on its page.
 
-    The summary's applied ids must be ledger rows whose page is in the source, whose page
-    unit records the id, and every unit recording the id must come from that page.
+    The summary's applied ids must be ledger rows whose page is in the source, and every
+    unit recording the id must come from that page. The page unit records it, unless the
+    quote was found only in the cited section's text from that page: then the cited
+    section is the only unit that does.
     """
     by_id = {r["id"]: r for r in rows}
     for r in rows:
@@ -172,21 +183,101 @@ def _check_bindings(db, rows, item, source_id):
         locator = json.loads(locator)
         pages = locator.get("physical_pages") or [locator.get("physical_page")]
         for c in json.loads(value):
-            recorded.setdefault(c.get("id"), []).append((locator["kind"], pages))
+            recorded.setdefault(c.get("id"), []).append(
+                (unit_id, locator["kind"], pages)
+            )
     for cid in applied:
         if cid not in by_id:
             raise IntegrityError(
                 f"applied correction {cid} is not in the stored ledger"
             )
-        page = by_id[cid]["physical_page"]
+        page, cited = by_id[cid]["physical_page"], by_id[cid]["section_id"]
         units = recorded.get(cid, [])
         if (
             not isinstance(item.get("pages_total"), int)
             or page > item["pages_total"]
-            or ("page", [page]) not in units
-            or any(page not in pages for _, pages in units)
+            or not units
+            or any(page not in pages for _, _, pages in units)
+            or (
+                ("page", [page]) not in [(kind, pages) for _, kind, pages in units]
+                and {unit for unit, _, _ in units} != {cited}
+            )
         ):
             raise IntegrityError(f"correction {cid} does not bind to its page")
+
+
+def _check_index(db, source, item, result):
+    """The scanned index rows of one source equal a fresh import of its candidate: its
+    stored summary, sections, TOC, search rows and transcription labels."""
+    source_id = source["id"]
+    stored = db.execute(
+        "select summary from transcription_sources where source_id=?", (source_id,)
+    ).fetchone()
+    units = result["units"]
+    indexed = [
+        (
+            r["id"],
+            r["ordinal"],
+            r["title"],
+            r["text"],
+            json.loads(r["locator"]),
+            r["provenance"],
+            r["kind"],
+            json.loads(r["images"]),
+        )
+        for r in db.execute(
+            "select * from sections where source_id=? order by ordinal",
+            (source_id,),
+        )
+    ]
+    expected = [
+        (
+            u["id"],
+            n,
+            u["title"],
+            u["text"],
+            u["locator"],
+            u["provenance"],
+            u["kind"],
+            u["images"],
+        )
+        for n, u in enumerate(units)
+    ]
+    searched = sorted(
+        tuple(r)
+        for r in db.execute(
+            "select section_id,title,text from search where source_id=?",
+            (source_id,),
+        )
+    )
+    labels = {
+        r["section_id"]: (
+            json.loads(r["label"]),
+            json.loads(r["check_regions"]),
+            json.loads(r["corrections"]),
+        )
+        for r in db.execute(
+            "select * from transcription_units where source_id=?", (source_id,)
+        )
+    }
+    if (
+        stored is None
+        or json.loads(stored[0]) != item
+        or indexed != expected
+        or json.loads(source["toc"]) != result["toc"]
+        or searched
+        != sorted((u["id"], u["title"], u["text"]) for u in units if u["searchable"])
+        or labels
+        != {
+            u["id"]: (
+                u["transcription"]["label"],
+                u["transcription"]["check_regions"],
+                u["transcription"]["corrections"],
+            )
+            for u in units
+        }
+    ):
+        raise IntegrityError("scanned index does not match the candidate")
 
 
 def check_transcription(manifest, inputs, db):
@@ -238,7 +329,9 @@ def check_transcription(manifest, inputs, db):
         raise ReviewRequired(
             "transcription summary does not cover the transcription text"
         )
-    if not (_table(db, "transcription_sources") and _table(db, "transcription_units")):
+    if not (
+        has_table(db, "transcription_sources") and has_table(db, "transcription_units")
+    ):
         raise IntegrityError("scanned index lacks transcription tables")
     labelled = {
         r[0]
@@ -253,23 +346,19 @@ def check_transcription(manifest, inputs, db):
         if (
             row is None
             or row["format"] != "PDF"
-            or source_id != f"pdf:{sha}"
+            or source_id != source_id_for("PDF", sha)
             or row["sha256"] != sha
         ):
             raise IntegrityError("scanned source mismatch")
         original = files_by_path.get(row["original_path"])
         if original is None or original.sha256 != sha:
             raise IntegrityError("source digest mismatch")
-        files = {}
-        for name in (CANDIDATE, *FILES):
-            logical = f"{INVENTORY}/{sha}/{name}"
-            e = files_by_path.get(logical)
-            if e is None or logical not in inputs:
-                raise ReviewRequired("missing scanned candidate")
-            data = inputs[logical].read_bytes()
-            if (hashlib.sha256(data).hexdigest(), len(data)) != (e.sha256, e.size):
-                raise IntegrityError("scanned candidate changed")
-            files[name] = data
+        files = {
+            name: _inventory_bytes(
+                files_by_path, inputs, f"{INVENTORY}/{sha}/{name}", "scanned candidate"
+            )
+            for name in (CANDIDATE, *FILES)
+        }
         if hashlib.sha256(files[CANDIDATE]).hexdigest() != item.get("candidate_sha256"):
             raise IntegrityError("scanned candidate changed")
         rows = _stored_ledger(files_by_path, inputs, sha)
@@ -284,77 +373,11 @@ def check_transcription(manifest, inputs, db):
         # The stored ledger re-derives every applied, stale and ambiguous outcome.
         if item != result["summary"]:
             raise IntegrityError("transcription summary mismatch")
-        stored = db.execute(
-            "select summary from transcription_sources where source_id=?", (source_id,)
-        ).fetchone()
-        units = result["units"]
-        indexed = [
-            (
-                r["id"],
-                r["ordinal"],
-                r["title"],
-                r["text"],
-                json.loads(r["locator"]),
-                r["provenance"],
-                r["kind"],
-                json.loads(r["images"]),
-            )
-            for r in db.execute(
-                "select * from sections where source_id=? order by ordinal",
-                (source_id,),
-            )
-        ]
-        expected = [
-            (
-                u["id"],
-                n,
-                u["title"],
-                u["text"],
-                u["locator"],
-                u["provenance"],
-                u["kind"],
-                u["images"],
-            )
-            for n, u in enumerate(units)
-        ]
-        searched = sorted(
-            tuple(r)
-            for r in db.execute(
-                "select section_id,title,text from search where source_id=?",
-                (source_id,),
-            )
-        )
-        labels = {
-            r["section_id"]: (
-                json.loads(r["label"]),
-                json.loads(r["check_regions"]),
-                json.loads(r["corrections"]),
-            )
-            for r in db.execute(
-                "select * from transcription_units where source_id=?", (source_id,)
-            )
-        }
-        t = "transcription"
-        if (
-            stored is None
-            or json.loads(stored[0]) != item
-            or indexed != expected
-            or json.loads(row["toc"]) != result["toc"]
-            or searched
-            != sorted(
-                (u["id"], u["title"], u["text"]) for u in units if u["searchable"]
-            )
-            or labels
-            != {
-                u["id"]: (u[t]["label"], u[t]["check_regions"], u[t]["corrections"])
-                for u in units
-            }
-        ):
-            raise IntegrityError("scanned index does not match the candidate")
+        _check_index(db, row, item, result)
 
 
 def finalize(build: Path, cache: Path, output: Path):
-    from .publication import Manifest, Entry
+    from .publication import Entry, Manifest
 
     if output.exists():
         raise IntegrityError("finalized build directory must be new")
@@ -429,7 +452,7 @@ def finalize(build: Path, cache: Path, output: Path):
         update={
             "publication_id": pub,
             "files": entries,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
         }
     )
     check_publish_quality(m, inputs)

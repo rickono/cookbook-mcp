@@ -20,8 +20,9 @@ import shutil
 import assemble as asm
 import pipeline as fp
 
-VERSION = "scanned-candidate.v1"
-EMPTY = "empty response"
+from cookbook.scanned import BLANK_RULE, EMPTY_RESPONSE, VERSION
+from cookbook.storage import canonical
+
 WHOLE_PAGE = [0, 0, 1, 1]
 CODES = {
     "page transcription failed": "failed_page",
@@ -46,21 +47,15 @@ def sha256(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def canonical(obj):
-    return json.dumps(
-        obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-    ).encode()
-
-
 def blank_evidence(failure, rounds):
     """The production blank rule: `rounds` recorded passes whose page-read errors are all empty
     responses. Returns the evidence to store, or None (the page is then failed)."""
     attempts = (failure or {}).get("attempts") or []
     errors = [e for a in attempts for c in a["page_read"]["calls"] for e in c["errors"]]
-    if len(attempts) < rounds or not errors or any(e != EMPTY for e in errors):
+    if len(attempts) < rounds or not errors or any(e != EMPTY_RESPONSE for e in errors):
         return None
     return {
-        "rule": "page_read_empty_response",
+        "rule": BLANK_RULE,
         "attempts": len(attempts),
         "page_read_errors": errors,
     }

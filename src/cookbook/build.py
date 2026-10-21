@@ -1,14 +1,18 @@
 """Build an index from an explicitly approved, already verified snapshot."""
 
 from __future__ import annotations
-from datetime import datetime, timezone
+
 import json
-from pathlib import Path
 import sqlite3
 import uuid
-from .extract import VERSION, epub, paged, ident
+from datetime import UTC, datetime
+from pathlib import Path
+
+from .extract import VERSION, epub, ident, paged
+from .ledger import FILE as LEDGER_FILE
+from .ledger import check as check_ledger
+from .ledger import dump as dump_ledger
 from .publication import Entry, Manifest
-from . import ledger as ledger_rows
 from .scanned import (
     BUILD_REPORT,
     INVENTORY,
@@ -19,7 +23,13 @@ from .scanned import (
     import_candidate,
     read_candidate,
 )
-from .storage import IntegrityError, atomic_write, canonical, digest_file
+from .storage import (
+    IntegrityError,
+    atomic_write,
+    canonical,
+    digest_file,
+    source_id_for,
+)
 
 BUILD_INPUTS = "quality/build-inputs.json"
 BUILD_INPUTS_VERSION = "build-inputs.v1"
@@ -114,7 +124,6 @@ def build_snapshot(
     progress=print,
     *,
     force_ocr_ids=(),
-    legacy_ocr_ids=(),
     scanned=None,
     ledger=None,
 ):
@@ -124,17 +133,16 @@ def build_snapshot(
     sha256 to ``{"physical_pages", "candidate"}``, see scanned.read_registry), with the
     rows of the correction ``ledger`` (cookbook.ledger) for its digest applied; each
     source's rows are backed up beside its candidate and the outcomes are counted in
-    ``build-report.json``, which also holds the owner queue of ambiguous corrections. Native
-    page OCR runs only for books named in ``legacy_ocr_ids`` or ``force_ocr_ids``, and
-    still passes the OCR admission check.
+    ``build-report.json``, which also holds the owner queue of ambiguous corrections. A
+    PDF without a candidate is refused unless it is named in ``force_ocr_ids``; native
+    page OCR still passes the OCR admission check.
     """
     if output.exists():
         raise IntegrityError("build directory must be new")
     force_ocr_ids = set(force_ocr_ids)
-    legacy_ocr_ids = set(legacy_ocr_ids) | force_ocr_ids
     scanned = scanned or {}
-    ledger = ledger_rows.check(ledger or [])
-    if not legacy_ocr_ids.issubset(approved_ids):
+    ledger = check_ledger(ledger or [])
+    if not force_ocr_ids.issubset(approved_ids):
         raise IntegrityError("forced OCR books must be in the approved selection")
     # POC backs up only approved record directories plus catalog metadata; full-library command deferred.
     snapshot = snapshot.resolve()
@@ -182,23 +190,21 @@ def build_snapshot(
         if fmt not in ("PDF", "DJVU"):
             raise IntegrityError("forced OCR requires a PDF or DjVu source")
         rel = r["path"] + "/" + name + "." + fmt.lower()
-        forced_sources.add(fmt.lower() + ":" + proof_files[rel]["sha256"])
+        forced_sources.add(source_id_for(fmt, proof_files[rel]["sha256"]))
     imported = {}
     for r in records:
         fmt, name = r["selected_format"]
         if fmt != "PDF":
             continue
         sha = proof_files[r["path"] + "/" + name + ".pdf"]["sha256"]
-        source = "pdf:" + sha
+        source = source_id_for("PDF", sha)
         if sha not in scanned:
-            if r["id"] not in legacy_ocr_ids:
-                raise IntegrityError(
-                    "PDF book requires a registered scanned candidate or a legacy OCR opt-in"
-                )
+            if r["id"] not in force_ocr_ids:
+                raise IntegrityError("PDF book requires a registered scanned candidate")
             continue
-        if r["id"] in legacy_ocr_ids:
+        if r["id"] in force_ocr_ids:
             raise IntegrityError(
-                "PDF book has both a registered scanned candidate and a legacy OCR opt-in"
+                "PDF book has both a registered scanned candidate and forced OCR"
             )
         if source not in imported:
             files = read_candidate(scanned[sha]["candidate"])
@@ -210,7 +216,7 @@ def build_snapshot(
                 ledger=ledger,
             )
             imported[source]["files"] = files | {
-                ledger_rows.FILE: ledger_rows.dump(imported[source]["ledger"])
+                LEDGER_FILE: dump_ledger(imported[source]["ledger"])
             }
             imported[source]["calibre_ids"] = []
         imported[source]["calibre_ids"].append(r["id"])
@@ -253,7 +259,7 @@ def build_snapshot(
         rel = r["path"] + "/" + name + "." + fmt.lower()
         p = snapshot / rel
         sha, size = digest_file(p)
-        source = fmt.lower() + ":" + sha
+        source = source_id_for(fmt, sha)
         dest.execute(
             "insert into books values (?,?,?,?,?,?)",
             (
@@ -334,7 +340,7 @@ def build_snapshot(
     dest.execute("insert into search(search) values('optimize')")
     dest.commit()
     dest.close()
-    from .quality import make_report, QUALITY_PATH
+    from .quality import QUALITY_PATH, make_report
 
     report = make_report(pub, quality_items, forced_ocr_sources=forced_sources)
     atomic_write(output / "ocr-review.json", canonical(report))
@@ -361,7 +367,6 @@ def build_snapshot(
         "ocr_cache": str(Path(cache).resolve()),
         "approved_ids": list(approved_ids),
         "force_ocr_ids": sorted(force_ocr_ids),
-        "legacy_ocr_ids": sorted(legacy_ocr_ids - force_ocr_ids),
         "scanned": [
             {
                 "source_sha256": imported[s]["summary"]["source_sha256"],
@@ -394,7 +399,7 @@ def build_snapshot(
     m = Manifest(
         publication_id=pub,
         locator_version="epub-spine-v2",
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
         files=entries,
     )
     atomic_write(output / "manifest.json", canonical(m.model_dump()))

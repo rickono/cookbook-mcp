@@ -6,18 +6,20 @@ import json
 import logging
 from pathlib import Path
 from urllib.parse import urlsplit
+
 import jwt
+from mcp import types
 from mcp.server import MCPServer
 from mcp.server.auth.provider import AccessToken
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.transport_security import TransportSecuritySettings
-from mcp import types
 from pydantic import AnyHttpUrl
 from pydantic_core import Url
 from starlette.responses import FileResponse, JSONResponse
 from starlette.routing import Route
-from .storage import IntegrityError
+
 from .recipe import RecipeCard
+from .storage import IntegrityError
 
 
 class JWTVerifier:
@@ -149,7 +151,11 @@ def create_app(library, verifier, reports=None):
         },
     )
     def show_recipe(recipe: RecipeCard) -> types.CallToolResult:
-        """Display ONE selected everyday recipe in an inline card. Prepare final data before calling; every call creates a card. For book recipes first read the complete recipe with read_section (follow continuation offsets), then supply exact citations and faithful quantities/instructions. Mark adaptations explicitly; label generated recipes as original. Pair each action with only the ingredient quantities needed there; include prep and useful overlap within method prose. No readiness subtitles. Do not use for brainstorming lists or complex multi-component projects. This only formats supplied data, does not retrieve or verify recipes, and stores nothing. After rendering, keep the reply brief instead of duplicating the recipe."""
+        """Display ONE selected everyday recipe in an inline card. Prepare final data before calling; every call creates a card. For book recipes first read the complete recipe with read_section (follow continuation offsets), then supply exact citations and faithful quantities/instructions. Mark adaptations explicitly; label generated recipes as original. Pair each action with only the ingredient quantities needed there; include prep and useful overlap within method prose. No readiness subtitles. Do not use for brainstorming lists or complex multi-component projects. This only formats supplied data, does not verify recipes, and stores nothing; a scanned citation's physical_pages are taken from the cited section's locator. After rendering, keep the reply brief instead of duplicating the recipe."""
+        for c in recipe.source.citations:
+            c.physical_pages = library.section_pages(
+                c.publication_id, c.book_id, c.source_id, c.section_id
+            )
         return result({"recipe": recipe.model_dump(mode="json", exclude_none=True)})
 
     def result(data, binary=None):
@@ -172,7 +178,7 @@ def create_app(library, verifier, reports=None):
         try:
             value = fn(**kwargs)
             return result(*value) if isinstance(value, tuple) else result(value)
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 - every tool error becomes a coded result
             code = (
                 "unavailable_publication"
                 if isinstance(error, IntegrityError)

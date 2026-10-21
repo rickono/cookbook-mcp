@@ -85,9 +85,7 @@ def test_blind_majority_corrects(tmp_path):
         "rejected": 0,
         "owner_queue": 0,
     }
-    [c] = [
-        json.loads(x) for x in (tmp_path / "corrections.jsonl").read_text().splitlines()
-    ]
+    [c] = [json.loads(x) for x in (tmp_path / "ledger.jsonl").read_text().splitlines()]
     assert (c["from_text"], c["to_text"], c["state"]) == (
         "2 tsp salt",
         "2 tbsp salt",
@@ -118,7 +116,7 @@ def test_ledger_is_in_decision_order_and_binds_to_source_and_page(tmp_path):
         tmp_path, "c", "2026-10-20T10:00:03Z", report_id="3" * 64, publication_id="new"
     )
     assert triage.rebuild(tmp_path)["correction"] == 3
-    rows = ledger.read(tmp_path / "corrections.jsonl")
+    rows = ledger.read(tmp_path / "ledger.jsonl")
     assert [(r["id"], r["decided_at"]) for r in rows] == [
         ("2" * 64, "2026-10-20T10:00:01Z"),
         ("1" * 64, "2026-10-20T10:00:02Z"),
@@ -128,6 +126,8 @@ def test_ledger_is_in_decision_order_and_binds_to_source_and_page(tmp_path):
         ("b" * 64, 13),
     ]
     assert rows[0]["publication_id"] == "pub"
+    # The row id is the report id; the row does not repeat it.
+    assert "report_id" not in rows[0]
 
 
 def test_blind_majority_rejects(tmp_path):

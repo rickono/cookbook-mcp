@@ -7,6 +7,8 @@ import pytest
 from conftest import fixture_build
 from synthetic_scanned import (
     RECIPE,
+    SIDEBAR,
+    SIDEBAR_TEXT,
     correction,
     pack,
     pdf_sha256,
@@ -21,6 +23,7 @@ from cookbook.library import Library
 from cookbook.ocr import ReviewRequired
 from cookbook.publication import Entry, Runtime, publish
 from cookbook.quality import check_publish_quality
+from cookbook.scanned import section_unit_id
 from cookbook.storage import IntegrityError, LocalStore, digest_file
 
 SUMMARY = "quality/transcription-summary.json"
@@ -130,14 +133,30 @@ def test_candidate_for_a_different_page_count_is_refused_before_output(tmp_path)
     assert not (tmp_path / "build").exists()
 
 
-def test_candidate_and_legacy_ocr_for_one_book_is_refused(tmp_path):
-    with pytest.raises(IntegrityError, match="legacy OCR"):
-        build(tmp_path, registry(tmp_path), legacy_ocr_ids=[1])
+def test_candidate_and_forced_ocr_for_one_book_is_refused(tmp_path):
+    with pytest.raises(IntegrityError, match="forced OCR"):
+        build(tmp_path, registry(tmp_path), force_ocr_ids=[1])
 
 
-def test_legacy_ocr_opt_in_still_goes_through_admission_checked_paged(tmp_path):
+def test_forced_ocr_still_goes_through_admission_checked_paged(tmp_path):
     with pytest.raises(AssertionError, match="must not render"):
-        build(tmp_path, None, legacy_ocr_ids=[1])
+        build(tmp_path, None, force_ocr_ids=[1])
+
+
+def test_build_has_no_legacy_ocr_opt_in(tmp_path, monkeypatch, capsys):
+    import sys
+
+    from cookbook import cli
+
+    argv = ["cookbook", "build", "--snapshot", str(snapshot(tmp_path)), "--books", "1"]
+    argv += ["--output", str(tmp_path / "build"), "--ocr-cache", str(tmp_path / "c")]
+    argv += ["--legacy-ocr-books", "1"]
+    monkeypatch.setattr(sys, "argv", argv)
+    with pytest.raises(SystemExit):
+        cli.main()
+    assert "unrecognized arguments: --legacy-ocr-books" in capsys.readouterr().err
+    with pytest.raises(TypeError):
+        build(tmp_path / "direct", None, legacy_ocr_ids=[1])
 
 
 def test_unregistered_change_to_candidate_rows_is_refused(tmp_path):
@@ -323,7 +342,7 @@ def test_build_command_reads_the_triage_ledger_and_prints_the_counts(
             }
         )
     )
-    triaged = tmp_path / "corrections.jsonl"
+    triaged = tmp_path / "ledger.jsonl"
     triaged.write_bytes(
         ledger.dump(
             [
@@ -375,6 +394,33 @@ def test_gate_refuses_corrected_text_the_ledger_does_not_explain(tmp_path):
     m, inputs, _ = corrected_build(tmp_path)
     edit_index(inputs, "update sections set text=replace(text,'2 tbsp','3 tbsp')")
     with pytest.raises(IntegrityError, match="scanned index"):
+        check_publish_quality(reseal(m, inputs), inputs)
+
+
+def sidebar_reworded():
+    """The sidebar's text part reads differently from its page row (the page lacks it)."""
+    data = rows()
+    sidebar = next(s for s in data["sections"] if s["id"] == SIDEBAR)
+    sidebar["parts"][1]["text"] = SIDEBAR_TEXT.replace("shape.", "shape well.")
+    return data
+
+
+def test_gate_accepts_a_correction_applied_only_to_its_cited_section(tmp_path):
+    sidebar = section_unit_id("pdf:" + pdf_sha256(), SIDEBAR)
+    c = correction(1, "shape well", "form well", page=2, section_id=sidebar)
+    m, inputs, stats = build(
+        tmp_path, registry(tmp_path, sidebar_reworded()), ledger=[c]
+    )
+    assert stats[0]["corrections"] == {"applied": 1, "stale": 0, "ambiguous": 0}
+    check_publish_quality(m, inputs)
+
+
+def test_gate_refuses_a_section_only_correction_moved_to_another_section(tmp_path):
+    sidebar = section_unit_id("pdf:" + pdf_sha256(), SIDEBAR)
+    c = correction(1, "shape well", "form well", page=2, section_id=sidebar)
+    m, inputs, _ = build(tmp_path, registry(tmp_path, sidebar_reworded()), ledger=[c])
+    rewrite_ledger(inputs, section_id=section_unit_id("pdf:" + pdf_sha256(), RECIPE))
+    with pytest.raises(IntegrityError, match="does not bind to its page"):
         check_publish_quality(reseal(m, inputs), inputs)
 
 
@@ -565,17 +611,20 @@ def test_agent_reads_a_scanned_recipe_through_the_mcp(mcp):
                     "kind": "book",
                     "label": "Synthetic Lentils, Test Author",
                     "citations": [
+                        # A wrong page list from the agent is replaced by the locator's.
                         {
                             **ids,
                             "section_id": citation["section_id"],
-                            "physical_pages": [1, 2],
-                        }
+                            "physical_pages": [7],
+                        },
+                        {**ids, "section_id": citation["section_id"]},
                     ],
                 },
             }
         },
     )
-    assert card["recipe"]["source"]["citations"][0]["physical_pages"] == [1, 2]
+    cited = card["recipe"]["source"]["citations"]
+    assert [c["physical_pages"] for c in cited] == [[1, 2], [1, 2]]
 
 
 def test_a_ledger_correction_is_served_through_the_mcp(corrected_mcp):
@@ -677,6 +726,23 @@ def test_epub_read_section_response_is_unchanged(epub_mcp):
         "image_ids",
     }
     assert set(section["citation"]["extraction"]) == {"provenance", "version"}
+
+
+def test_recipe_card_drops_physical_pages_for_a_section_that_is_not_scanned(epub_mcp):
+    client, headers = epub_mcp
+    c = find(client, headers, "bean")
+    ids = {k: c[k] for k in ("publication_id", "book_id", "source_id", "section_id")}
+    recipe = {
+        "title": "Beans",
+        "steps": [{"title": "Warm", "ingredients": ["beans"], "method": "Warm."}],
+        "source": {
+            "kind": "book",
+            "label": "Synthetic beans",
+            "citations": [{**ids, "physical_pages": [3]}],
+        },
+    }
+    card = tool(client, headers, "show_recipe", {"recipe": recipe})
+    assert card["recipe"]["source"]["citations"] == [ids]
 
 
 def test_publication_info_counts_scanned_books_corrections_and_unresolved_items(mcp):
