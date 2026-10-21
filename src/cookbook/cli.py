@@ -5,9 +5,65 @@ import json
 import os
 import sys
 from pathlib import Path
-from .publication import Manifest, Runtime, publish, restore
+from .publication import Runtime, publish_build, restore
 from .storage import LocalStore, IntegrityError, atomic_write, canonical, file_lock
 from .ocr_limits import OcrIsolationError
+
+
+def hosted_activator(readiness_url, *, token_file=None, browser_login=False):
+    """activate(pointer) for the hosted runtime: await its authenticated readiness ack.
+
+    The Mac's publisher signs in (or reads an owner-only token file); the credential is
+    used only to ask the configured resource server whether it serves the new pointer.
+    """
+    from urllib.parse import urlsplit
+
+    from .hosted import https_url, wait_for_activation
+
+    https_url(readiness_url)
+    # Restrict acknowledgement to the configured resource server, including origin.
+    audience = https_url(os.environ["COOKBOOK_AUDIENCE"])
+    target, resource = urlsplit(readiness_url), urlsplit(audience)
+    if (target.scheme, target.netloc, target.path) != (
+        resource.scheme,
+        resource.netloc,
+        "/readyz",
+    ):
+        raise ValueError("readiness target must match the resource server")
+    if token_file and token_file.stat().st_mode & 0o077:
+        raise ValueError("token file must be owner-only")
+    login_config = None
+    if browser_login:
+        from .publisher_login import LoginConfig
+
+        login_config = LoginConfig.from_environment()
+
+    def activate(pointer):
+        if login_config:
+            from .publisher_login import LoginError, browser_login as login
+
+            # Sign in after upload/readback, before starting the acknowledgement timer.
+            try:
+                token = login(login_config)
+            except LoginError as error:
+                print(json.dumps({"error": str(error)}), file=sys.stderr)
+                return None
+            provider = token.bearer
+        else:
+            provider = lambda: token_file.read_text().strip()
+        return wait_for_activation(pointer, readiness_url, provider)
+
+    return activate
+
+
+def recording(state_directory, activate):
+    """Record the uploaded pointer before awaiting activation, so wait-active can resume."""
+
+    def record_and_wait(pointer):
+        atomic_write(state_directory / "pending-activation.json", canonical(pointer))
+        return activate(pointer)
+
+    return record_and_wait
 
 
 def _main():
@@ -121,41 +177,11 @@ def _main():
         supervise()
         return
     if a.command in ("publish-s3", "wait-active"):
-        from .hosted import https_url, store_from_environment, wait_for_activation
+        from .hosted import store_from_environment
 
-        https_url(a.readiness_url)
-        # Restrict acknowledgement to the configured resource server, including origin.
-        audience = https_url(os.environ["COOKBOOK_AUDIENCE"])
-        from urllib.parse import urlsplit
-
-        target, resource = urlsplit(a.readiness_url), urlsplit(audience)
-        if (target.scheme, target.netloc, target.path) != (
-            resource.scheme,
-            resource.netloc,
-            "/readyz",
-        ):
-            raise ValueError("readiness target must match the resource server")
-        if a.token_file and a.token_file.stat().st_mode & 0o077:
-            raise ValueError("token file must be owner-only")
-        login_config = None
-        if a.browser_login:
-            from .publisher_login import LoginConfig, LoginError, browser_login
-
-            login_config = LoginConfig.from_environment()
-
-        def activate(pointer):
-            if login_config:
-                # Sign in after upload/readback, before starting the acknowledgement timer.
-                try:
-                    token = browser_login(login_config)
-                except LoginError as error:
-                    print(json.dumps({"error": str(error)}), file=sys.stderr)
-                    return None
-                provider = token.bearer
-            else:
-                provider = lambda: a.token_file.read_text().strip()
-            return wait_for_activation(pointer, a.readiness_url, provider)
-
+        activate = hosted_activator(
+            a.readiness_url, token_file=a.token_file, browser_login=a.browser_login
+        )
         if a.command == "wait-active":
             pointer = json.loads(a.pointer.read_bytes())
             mid = activate(pointer)
@@ -170,34 +196,9 @@ def _main():
         store = store_from_environment()
         a.state_directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         with file_lock(a.state_directory / ".publisher.lock"):
-            m = Manifest.model_validate_json((a.build / "manifest.json").read_bytes())
-            inputs = {
-                k: Path(v)
-                for k, v in json.loads((a.build / "inputs.json").read_bytes()).items()
-            }
-            _, version = store.read_version("control/active.json")
-
-            def record_and_wait(pointer):
-                atomic_write(
-                    a.state_directory / "pending-activation.json", canonical(pointer)
-                )
-                return activate(pointer)
-
-            result = publish(
-                store, m, inputs, expected_version=version, activate=record_and_wait
+            result = publish_build(
+                store, a.build, activate=recording(a.state_directory, activate)
             )
-            if result["status"] == "active":
-                raw, history_version = store.read_version("control/successful.json")
-                history = json.loads(raw) if raw else []
-                pointer = {k: result[k] for k in ("publication_id", "manifest_sha256")}
-                history = [pointer] + [
-                    v for v in history if v["publication_id"] != m.publication_id
-                ]
-                store.put_bytes(
-                    "control/successful.json",
-                    canonical(history),
-                    expected=history_version,
-                )
             print(json.dumps(result))
             if result["status"] != "active":
                 raise SystemExit(4)
@@ -276,28 +277,8 @@ def _main():
         store = LocalStore(a.store)
         runtime = Runtime(store, a.runtime)
         with file_lock(a.store / ".publisher.lock"):
-            m = Manifest.model_validate_json((a.build / "manifest.json").read_bytes())
-            inputs = {
-                k: Path(v)
-                for k, v in json.loads((a.build / "inputs.json").read_bytes()).items()
-            }
-            raw, version = store.read_version("control/active.json")
             # A retry of the same verified pointer can confirm activation without rebuilding.
-            result = publish(
-                store, m, inputs, expected_version=version, activate=runtime.activate
-            )
-            if result["status"] == "active":
-                history_path = a.store / "control/successful.json"
-                history = (
-                    json.loads(history_path.read_bytes())
-                    if history_path.exists()
-                    else []
-                )
-                pointer = {k: result[k] for k in ("publication_id", "manifest_sha256")}
-                history = [pointer] + [
-                    v for v in history if v["publication_id"] != m.publication_id
-                ]
-                atomic_write(history_path, canonical(history))
+            result = publish_build(store, a.build, activate=runtime.activate)
             print(json.dumps(result))
     elif a.command == "restore-local":
         store = LocalStore(a.store)
