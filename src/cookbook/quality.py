@@ -134,12 +134,67 @@ def _table(db, name):
     ).fetchone()
 
 
+def _stored_ledger(files_by_path, inputs, sha):
+    """The correction ledger backed up beside a scanned candidate (possibly empty)."""
+    from . import ledger
+    from .scanned import INVENTORY
+
+    logical = f"{INVENTORY}/{sha}/{ledger.FILE}"
+    e = files_by_path.get(logical)
+    if e is None or logical not in inputs:
+        raise ReviewRequired("missing scanned correction ledger")
+    data = inputs[logical].read_bytes()
+    if (hashlib.sha256(data).hexdigest(), len(data)) != (e.sha256, e.size):
+        raise IntegrityError("scanned correction ledger changed")
+    return ledger.parse(data)
+
+
+def _check_bindings(db, rows, item, source_id):
+    """Every stored correction names this source; every applied one sits on its page.
+
+    The summary's applied ids must be ledger rows whose page is in the source, whose page
+    unit records the id, and every unit recording the id must come from that page.
+    """
+    by_id = {r["id"]: r for r in rows}
+    for r in rows:
+        if r["source_id"] != source_id or r["source_sha256"] != item["source_sha256"]:
+            raise IntegrityError(f"correction {r['id']} does not bind to its source")
+    corrections = item.get("corrections")
+    applied = corrections.get("applied") if isinstance(corrections, dict) else None
+    if not isinstance(applied, list):
+        raise IntegrityError("transcription summary mismatch")
+    recorded = {}
+    for unit_id, locator, value in db.execute(
+        "select s.id,s.locator,u.corrections from transcription_units u "
+        "join sections s on s.id=u.section_id where u.source_id=?",
+        (source_id,),
+    ):
+        locator = json.loads(locator)
+        pages = locator.get("physical_pages") or [locator.get("physical_page")]
+        for c in json.loads(value):
+            recorded.setdefault(c.get("id"), []).append((locator["kind"], pages))
+    for cid in applied:
+        if cid not in by_id:
+            raise IntegrityError(
+                f"applied correction {cid} is not in the stored ledger"
+            )
+        page = by_id[cid]["physical_page"]
+        units = recorded.get(cid, [])
+        if (
+            not isinstance(item.get("pages_total"), int)
+            or page > item["pages_total"]
+            or ("page", [page]) not in units
+            or any(page not in pages for _, pages in units)
+        ):
+            raise IntegrityError(f"correction {cid} does not bind to its page")
+
+
 def check_transcription(manifest, inputs, db):
     """Transcription text is publishable only as the exact import of a backed-up candidate.
 
     Every source with transcription-provenance rows must be listed in the transcription
     summary, and its index rows, search rows, labels and TOC must equal a fresh import of
-    the candidate files in the inventory.
+    the candidate files and the correction ledger in the inventory.
     """
     from .scanned import (
         CANDIDATE,
@@ -217,13 +272,16 @@ def check_transcription(manifest, inputs, db):
             files[name] = data
         if hashlib.sha256(files[CANDIDATE]).hexdigest() != item.get("candidate_sha256"):
             raise IntegrityError("scanned candidate changed")
+        rows = _stored_ledger(files_by_path, inputs, sha)
+        _check_bindings(db, rows, item, source_id)
         result = import_candidate(
             files,
             source_id=source_id,
             source_sha256=sha,
             physical_pages=item.get("pages_total"),
+            ledger=rows,
         )
-        # Corrections are applied by a later ledger; until then the lists stay empty.
+        # The stored ledger re-derives every applied, stale and ambiguous outcome.
         if item != result["summary"]:
             raise IntegrityError("transcription summary mismatch")
         stored = db.execute(

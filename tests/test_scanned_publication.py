@@ -5,7 +5,15 @@ import sqlite3
 
 import pytest
 from conftest import fixture_build
-from synthetic_scanned import RECIPE, pack, pdf_sha256, registry, rows, snapshot
+from synthetic_scanned import (
+    RECIPE,
+    correction,
+    pack,
+    pdf_sha256,
+    registry,
+    rows,
+    snapshot,
+)
 
 import cookbook.build as build_module
 from cookbook.build import build_snapshot
@@ -248,6 +256,117 @@ def test_gate_refuses_a_repeated_page_unit(tmp_path):
         check_publish_quality(reseal(m, inputs), inputs)
 
 
+# -- corrections from the ledger ---------------------------------------------------------
+
+LEDGER = f"quality/scanned/{pdf_sha256()}/ledger.jsonl"
+
+
+def corrected_build(tmp_path, *rows_):
+    ledger = list(rows_) or [correction(1, "Salt | 2 tsp", "Salt | 2 tbsp")]
+    return build(tmp_path, registry(tmp_path), ledger=ledger)
+
+
+def test_build_applies_and_backs_up_the_ledger_and_reports_counts(tmp_path):
+    applied = correction(1, "Salt | 2 tsp", "Salt | 2 tbsp")
+    stale = correction(2, "Salt | 9 tsp", "Salt | 9 tbsp")
+    ambiguous = correction(3, "lentils", "beans", page=2)
+    other_book = correction(4, "Salt", "Pepper", source="e" * 64)
+    m, inputs, stats = corrected_build(tmp_path, applied, stale, ambiguous, other_book)
+    assert {e.path: e.role for e in m.files}[LEDGER] == "backup"
+    stored = [json.loads(x) for x in inputs[LEDGER].read_bytes().splitlines()]
+    assert [r["id"] for r in stored] == [applied["id"], stale["id"], ambiguous["id"]]
+    assert stats[0]["corrections"] == {"applied": 1, "stale": 1, "ambiguous": 1}
+    report = json.loads((tmp_path / "build" / "build-report.json").read_bytes())
+    assert report["corrections"] == {"applied": 1, "stale": 1, "ambiguous": 1}
+    assert [i["correction_id"] for i in report["owner_queue"]] == [ambiguous["id"]]
+    check_publish_quality(m, inputs)
+
+
+def test_a_build_without_corrections_stores_an_empty_ledger(tmp_path):
+    _, inputs, stats = build(tmp_path, registry(tmp_path))
+    assert inputs[LEDGER].read_bytes() == b""
+    assert stats[0]["corrections"] == {"applied": 0, "stale": 0, "ambiguous": 0}
+
+
+def test_build_command_reads_the_triage_ledger_and_prints_the_counts(
+    tmp_path, monkeypatch, capsys
+):
+    import sys
+
+    from cookbook import cli, ledger
+    from cookbook.scanned import read_build_report
+
+    entry = registry(tmp_path)[pdf_sha256()]
+    reg = tmp_path / "registry.json"
+    reg.write_text(
+        json.dumps(
+            {
+                "version": "scanned-registry.v1",
+                "sources": [
+                    {
+                        "source_sha256": pdf_sha256(),
+                        "physical_pages": entry["physical_pages"],
+                        "candidate": str(entry["candidate"]),
+                    }
+                ],
+            }
+        )
+    )
+    triaged = tmp_path / "corrections.jsonl"
+    triaged.write_bytes(
+        ledger.dump(
+            [
+                correction(1, "Salt | 2 tsp", "Salt | 2 tbsp"),
+                correction(2, "lentils", "beans", page=2),
+            ]
+        )
+    )
+    out = tmp_path / "build"
+    argv = ["cookbook", "build", "--snapshot", str(snapshot(tmp_path)), "--books", "1"]
+    argv += ["--output", str(out), "--ocr-cache", str(tmp_path / "cache")]
+    argv += ["--scanned-registry", str(reg), "--ledger", str(triaged)]
+    monkeypatch.setattr(sys, "argv", argv)
+    cli.main()
+    printed = json.loads(capsys.readouterr().out.splitlines()[-1])
+    counts = {"applied": 1, "stale": 0, "ambiguous": 1}
+    assert printed["corrections"] == counts
+    assert read_build_report(out)["corrections"] == counts
+
+
+def rewrite_ledger(inputs, **changes):
+    [row] = [json.loads(x) for x in inputs[LEDGER].read_bytes().splitlines()]
+    inputs[LEDGER].write_bytes(json.dumps(row | changes).encode() + b"\n")
+
+
+def test_gate_refuses_an_applied_correction_for_another_source(tmp_path):
+    m, inputs, _ = corrected_build(tmp_path)
+    other = "e" * 64
+    rewrite_ledger(inputs, source_sha256=other, source_id="pdf:" + other)
+    with pytest.raises(IntegrityError, match="does not bind to its source"):
+        check_publish_quality(reseal(m, inputs), inputs)
+
+
+def test_gate_refuses_an_applied_correction_moved_to_another_page(tmp_path):
+    m, inputs, _ = corrected_build(tmp_path)
+    rewrite_ledger(inputs, physical_page=2)
+    with pytest.raises(IntegrityError, match="does not bind to its page"):
+        check_publish_quality(reseal(m, inputs), inputs)
+
+
+def test_gate_refuses_a_dropped_ledger(tmp_path):
+    m, inputs, _ = corrected_build(tmp_path)
+    del inputs[LEDGER]
+    with pytest.raises(ReviewRequired, match="ledger"):
+        check_publish_quality(reseal(m, inputs), inputs)
+
+
+def test_gate_refuses_corrected_text_the_ledger_does_not_explain(tmp_path):
+    m, inputs, _ = corrected_build(tmp_path)
+    edit_index(inputs, "update sections set text=replace(text,'2 tbsp','3 tbsp')")
+    with pytest.raises(IntegrityError, match="scanned index"):
+        check_publish_quality(reseal(m, inputs), inputs)
+
+
 def test_legacy_ocr_sections_still_need_their_assessments(tmp_path):
     m, inputs = fixture_build(tmp_path / "epub")
     edit_index(inputs, "update sections set provenance='ocr'")
@@ -312,8 +431,7 @@ def tool(client, headers, name, arguments):
     return r["structuredContent"]
 
 
-@pytest.fixture
-def mcp(tmp_path, monkeypatch, keys, mint):
+def serve(tmp_path, monkeypatch, keys, mint, **kwargs):
     from PIL import Image
     from starlette.testclient import TestClient
 
@@ -324,7 +442,7 @@ def mcp(tmp_path, monkeypatch, keys, mint):
         Image.new("RGB", (round(edge * 0.75), edge), "white").save(destination, "PNG")
 
     monkeypatch.setattr(library_module, "render_page", fake_render)
-    lib = publish_build(tmp_path, *build(tmp_path, registry(tmp_path))[:2])
+    lib = publish_build(tmp_path, *build(tmp_path, registry(tmp_path), **kwargs)[:2])
     verifier = JWTVerifier(
         issuer="https://issuer.example/",
         audience="https://service.example",
@@ -334,6 +452,19 @@ def mcp(tmp_path, monkeypatch, keys, mint):
     headers = {"Authorization": "Bearer " + mint(aud="https://service.example")}
     with TestClient(create_app(lib, verifier), base_url="https://service.example") as c:
         yield c, headers
+
+
+@pytest.fixture
+def mcp(tmp_path, monkeypatch, keys, mint):
+    yield from serve(tmp_path, monkeypatch, keys, mint)
+
+
+SALT_FIX = correction(1, "Salt | 2 tsp", "Salt | 2 tbsp")
+
+
+@pytest.fixture
+def corrected_mcp(tmp_path, monkeypatch, keys, mint):
+    yield from serve(tmp_path, monkeypatch, keys, mint, ledger=[SALT_FIX])
 
 
 def test_instructions_explain_the_unapproved_label_and_markers(mcp):
@@ -415,3 +546,28 @@ def test_agent_reads_a_scanned_recipe_through_the_mcp(mcp):
         },
     )
     assert card["recipe"]["source"]["citations"][0]["physical_pages"] == [1, 2]
+
+
+def test_a_ledger_correction_is_served_through_the_mcp(corrected_mcp):
+    client, headers = corrected_mcp
+    found = tool(client, headers, "search_library", {"query": "tbsp"})
+    [hit] = found["results"]
+    citation = hit["citation"]
+    assert citation["section_title"] == "LENTIL SOUP"
+    # Reported against an earlier publication; it binds by source digest and page.
+    assert citation["publication_id"] != SALT_FIX["publication_id"]
+    applied = [{"id": SALT_FIX["id"], "reviewer": SALT_FIX["reviewer"]}]
+    assert citation["extraction"]["corrections"] == applied
+    assert tool(client, headers, "search_library", {"query": "2 tsp"})["results"] == []
+    ids = {k: citation[k] for k in ("publication_id", "book_id", "source_id")}
+    section = tool(
+        client, headers, "read_section", {**ids, "section_id": citation["section_id"]}
+    )
+    assert "Salt | 2 tbsp" in section["text"] and "2 tsp" not in section["text"]
+    assert "Cumin | [unresolved u1: amount]" in section["text"]
+    assert section["citation"]["extraction"]["corrections"] == applied
+    page = tool(client, headers, "get_page", {**ids, "physical_page": 1})
+    assert "Salt | 2 tbsp" in page["text"] and "2 tsp" not in page["text"]
+    assert page["citation"]["extraction"]["corrections"] == applied
+    other = tool(client, headers, "get_page", {**ids, "physical_page": 2})
+    assert "corrections" not in other["citation"]["extraction"]

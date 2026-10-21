@@ -8,10 +8,14 @@ import sqlite3
 import uuid
 from .extract import VERSION, epub, paged, ident
 from .publication import Entry, Manifest
+from . import ledger as ledger_rows
 from .scanned import (
+    BUILD_REPORT,
     INVENTORY,
     SUMMARY_PATH,
     SUMMARY_VERSION,
+    build_report,
+    correction_counts,
     import_candidate,
     read_candidate,
 )
@@ -109,11 +113,15 @@ def build_snapshot(
     force_ocr_ids=(),
     legacy_ocr_ids=(),
     scanned=None,
+    ledger=None,
 ):
     """Build a new publication directory.
 
     A PDF is indexed from its registered scanned candidate (``scanned`` maps a source
-    sha256 to ``{"physical_pages", "candidate"}``, see scanned.read_registry). Native
+    sha256 to ``{"physical_pages", "candidate"}``, see scanned.read_registry), with the
+    rows of the correction ``ledger`` (cookbook.ledger) for its digest applied; each
+    source's rows are backed up beside its candidate and the outcomes are counted in
+    ``build-report.json``, which also holds the owner queue of ambiguous corrections. Native
     page OCR runs only for books named in ``legacy_ocr_ids`` or ``force_ocr_ids``, and
     still passes the OCR admission check.
     """
@@ -122,6 +130,7 @@ def build_snapshot(
     force_ocr_ids = set(force_ocr_ids)
     legacy_ocr_ids = set(legacy_ocr_ids) | force_ocr_ids
     scanned = scanned or {}
+    ledger = ledger_rows.check(ledger or [])
     if not legacy_ocr_ids.issubset(approved_ids):
         raise IntegrityError("forced OCR books must be in the approved selection")
     # POC backs up only approved record directories plus catalog metadata; full-library command deferred.
@@ -195,7 +204,11 @@ def build_snapshot(
                 source_id=source,
                 source_sha256=sha,
                 physical_pages=scanned[sha]["physical_pages"],
-            ) | {"files": files}
+                ledger=ledger,
+            )
+            imported[source]["files"] = files | {
+                ledger_rows.FILE: ledger_rows.dump(imported[source]["ledger"])
+            }
     output.mkdir(parents=True, mode=0o700)
     (output / "assets").mkdir(mode=0o700)
     pub = uuid.uuid4().hex
@@ -308,6 +321,8 @@ def build_snapshot(
                 "unresolved_toc": sum(t.get("section_id") is None for t in toc),
             }
         )
+        if source in imported:
+            stats[-1]["corrections"] = correction_counts(imported[source]["summary"])
         dest.commit()
         progress({"event": "extract_done", **stats[-1]})
     db.close()
@@ -326,6 +341,10 @@ def build_snapshot(
         }
         atomic_write(output / "transcription-summary.json", canonical(summary))
         inputs[SUMMARY_PATH] = output / "transcription-summary.json"
+        atomic_write(
+            output / BUILD_REPORT,
+            canonical(build_report(imported.values())),
+        )
     inputs["runtime/index.sqlite"] = index
     entries = []
     for logical, p in sorted(inputs.items()):
