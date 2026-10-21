@@ -1,21 +1,23 @@
 """Read-only library queries and bounded authenticated content responses."""
 
 from __future__ import annotations
-from contextlib import contextmanager
+
 import io
 import json
 import math
-from pathlib import Path
 import re
 import sqlite3
 import tempfile
 import threading
+from contextlib import contextmanager
+from pathlib import Path
+
 from PIL import Image
+
 from .extract import render_page
 from .reports import check_region
 from .scanned import LABEL
 from .storage import IntegrityError, digest_file, verify
-
 
 ZOOM_EDGE = 2400  # largest render for a region zoom; about 25 MB of RGB on a 1 GB host
 
@@ -297,6 +299,23 @@ class Library:
             if unit is not None:
                 result["check_regions"] = json.loads(unit["check_regions"])
             return result
+
+    def section_pages(self, publication_id, book_id, source_id, section_id):
+        """Physical pages of a scanned section, from its locator; None for any other."""
+        try:
+            pub = self.publication(publication_id)
+        except IntegrityError:
+            return None
+        with self.db(pub) as db:
+            s = db.execute(
+                "select s.locator from sections s join books b on b.source_id=s.source_id"
+                " where s.id=? and s.source_id=? and b.id=?",
+                (section_id, source_id, book_id),
+            ).fetchone()
+        locator = json.loads(s["locator"]) if s else {}
+        if locator.get("kind") != "scanned-section":
+            return None
+        return locator["physical_pages"]
 
     def cached(self, pub, logical):
         m = self.runtime.manifest(pub)

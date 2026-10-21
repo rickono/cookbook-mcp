@@ -19,7 +19,10 @@ The input contains a title, optional short metadata/description, ordered actions
 with ingredient quantities and method text, and source attribution. Book and
 adapted recipes require exact publication/book/source/section identifiers.
 These identifiers are supplied by the model, not independently verified by the
-render tool. Tool instructions require reading the complete source, following
+render tool. A citation may carry `physical_pages` for a scanned section. The tool
+does not trust the model's value: it looks up the cited section in the publication
+and fills `physical_pages` from that section's `scanned-section` locator. The field
+is dropped when the cited section is not a scanned section or cannot be found. Tool instructions require reading the complete source, following
 continuation offsets, preserving quantities and dependencies, and identifying
 adaptations. Original recipes are explicitly labeled. Divided ingredient
 amounts must be supplied separately at their points of use.

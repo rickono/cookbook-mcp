@@ -595,17 +595,20 @@ def test_agent_reads_a_scanned_recipe_through_the_mcp(mcp):
                     "kind": "book",
                     "label": "Synthetic Lentils, Test Author",
                     "citations": [
+                        # A wrong page list from the agent is replaced by the locator's.
                         {
                             **ids,
                             "section_id": citation["section_id"],
-                            "physical_pages": [1, 2],
-                        }
+                            "physical_pages": [7],
+                        },
+                        {**ids, "section_id": citation["section_id"]},
                     ],
                 },
             }
         },
     )
-    assert card["recipe"]["source"]["citations"][0]["physical_pages"] == [1, 2]
+    cited = card["recipe"]["source"]["citations"]
+    assert [c["physical_pages"] for c in cited] == [[1, 2], [1, 2]]
 
 
 def test_a_ledger_correction_is_served_through_the_mcp(corrected_mcp):
@@ -707,6 +710,23 @@ def test_epub_read_section_response_is_unchanged(epub_mcp):
         "image_ids",
     }
     assert set(section["citation"]["extraction"]) == {"provenance", "version"}
+
+
+def test_recipe_card_drops_physical_pages_for_a_section_that_is_not_scanned(epub_mcp):
+    client, headers = epub_mcp
+    c = find(client, headers, "bean")
+    ids = {k: c[k] for k in ("publication_id", "book_id", "source_id", "section_id")}
+    recipe = {
+        "title": "Beans",
+        "steps": [{"title": "Warm", "ingredients": ["beans"], "method": "Warm."}],
+        "source": {
+            "kind": "book",
+            "label": "Synthetic beans",
+            "citations": [{**ids, "physical_pages": [3]}],
+        },
+    }
+    card = tool(client, headers, "show_recipe", {"recipe": recipe})
+    assert card["recipe"]["source"]["citations"] == [ids]
 
 
 def test_publication_info_counts_scanned_books_corrections_and_unresolved_items(mcp):

@@ -4,7 +4,6 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
-
 ShortText = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)
 ]
@@ -25,7 +24,7 @@ class RecipeCitation(RecipeModel):
     physical_pages: list[Annotated[int, Field(ge=1, le=100000)]] | None = Field(
         default=None,
         max_length=50,
-        description="Physical pages of a scanned section, from its locator.",
+        description="Physical pages of a scanned section. Filled from the cited section's locator; a supplied value is replaced, and dropped for a section that is not scanned.",
     )
 
 
