@@ -6,6 +6,8 @@ generalised from the frozen benchmark page list to a registered book's full page
   production.py assemble BOOK... | --all [--offline] [--allow-missing]
                                                          sectioning, assembler v4, scanned candidate
   production.py status   [BOOK...]                       per-book progress and list-price cost
+  production.py seed     BOOK... [--from WORK]           copy pages this config already read (the
+                                                         benchmark cell by default); reads EXP only
 
 The reader is fixed to the production config: Claude Haiku 5.5 x3, with Codex Luna low reading only
 pages Anthropic's output filter refuses. Everything is written under
@@ -19,10 +21,12 @@ work/failures/ so the cost is counted, and a page whose reads were only ever emp
 import argparse
 import concurrent.futures as cf
 import json
+import shutil
 import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 
 import assemble as asm
 import bench
@@ -221,6 +225,81 @@ def transcribe(n, books, registry, workers=3, passes=2, render=helper_render):
     return report
 
 
+def seed(n, books, registry, source, images=None):
+    """Copy books' finished page records, label caches and failure sidecars from another work dir
+    of this same reader config, so pages it already paid for are not read again. The page images
+    are the frozen records the source was read from (by default the benchmark's images.json).
+    Nothing in `source` is changed."""
+    images = images or asm.frozen_images
+    source = source.resolve()
+    if source == n["work"].resolve():
+        sys.exit("seed source is the production work dir itself")
+    m = json.loads((source / "manifest.json").read_text())
+    if (m.get("reader_samples"), m.get("fallback")) != (n["samples"], n["fallback"]):
+        sys.exit(f"{source} was not read by the production config {n['config']}")
+    copies, counts = [], {}
+    for book in books:
+        reg = registry[book]
+        rows = images(book)
+        meta = {r["physical_page"]: r for r in rows}
+        if sorted(meta) != list(range(1, reg["physical_pages"] + 1)) or any(
+            r["source_sha256"] != reg["sha256"] for r in rows
+        ):
+            sys.exit(f"book {book}: page images do not match the registered source")
+        groups = {
+            "pages": sorted((source / "pages").glob(f"b{book}-p*.json")),
+            "labels": sorted((source / "sections" / str(book)).glob("p*.json")),
+            "failures": sorted((source / "failures").glob(f"b{book}-p*.json")),
+        }
+        for kind, files in groups.items():
+            for f in files:
+                rec = json.loads(f.read_text())
+                page = rec["page"]
+                if page not in meta:
+                    sys.exit(
+                        f"{f}: page {page} is not a registered page of book {book}"
+                    )
+                if kind == "pages" and (
+                    rec["book"] != book or rec["image_sha256"] != meta[page]["sha256"]
+                ):
+                    sys.exit(f"{f}: read from another page image than book {book}'s")
+                copies.append((f, n["work"] / f.relative_to(source)))
+        counts[str(book)] = {k: len(v) for k, v in groups.items()}
+        copies.append((rows, book_dir(n, book) / "images.json"))
+    for src, dest in copies:
+        data = (
+            json.dumps(src, indent=1).encode()
+            if isinstance(src, list)
+            else src.read_bytes()
+        )
+        if dest.exists() and dest.read_bytes() != data:
+            sys.exit(f"{dest} exists with other content; not overwritten")
+    for src, dest in copies:
+        if not dest.exists():
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if isinstance(src, list):
+                dest.write_text(json.dumps(src, indent=1))
+            else:
+                shutil.copy2(src, dest)
+    f = n["work"] / "manifest.json"
+    mine = (
+        json.loads(f.read_text())
+        if f.exists()
+        else {"reader_samples": n["samples"], "fallback": n["fallback"], "runs": []}
+    )
+    mine.setdefault("seeded", []).append(
+        {
+            "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "from": str(source),
+            "books": counts,
+        }
+    )
+    f.write_text(json.dumps(mine, indent=1))
+    for book in books:
+        page_images(n, book, registry[book], no_render)
+    return counts
+
+
 def no_render(book, start, end):
     sys.exit(f"book {book}: no page images yet; run `production.py run {book}` first")
 
@@ -270,7 +349,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    ap.add_argument("command", choices=["run", "assemble", "status"])
+    ap.add_argument("command", choices=["run", "assemble", "status", "seed"])
     ap.add_argument("books", nargs="*", type=int, metavar="BOOK")
     ap.add_argument("--all", action="store_true", help="every registered book")
     ap.add_argument("--workers", type=int, default=3)
@@ -283,6 +362,13 @@ def main(argv=None):
         "--allow-missing",
         action="store_true",
         help="assemble although some pages failed (they become unresolved)",
+    )
+    ap.add_argument(
+        "--from",
+        dest="source",
+        type=Path,
+        default=bench.names(READER, FALLBACK)["work"],
+        help="seed: work dir of this config to copy from (default: the benchmark cell)",
     )
     a = ap.parse_args(argv)
     registry = registered()
@@ -300,6 +386,8 @@ def main(argv=None):
     if a.command == "status":
         for b in books:
             print(json.dumps(progress(n, b, registry[b])))
+    elif a.command == "seed":
+        print(json.dumps(seed(n, books, registry, a.source)))
     elif a.command == "run":
         bench.doctor()  # admission precedes every render, page read and crop
         bench.record(n, "production run " + " ".join(map(str, books)))

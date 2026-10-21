@@ -235,5 +235,13 @@ or writes EXP, the benchmark work dirs or `baseline.json`. Its output goes to
   The command refuses a book that still has failed pages unless you pass
   `--allow-missing`. With `--offline`, reassembly makes no model calls and
   reproduces the same bytes.
+- `production.py seed BOOK... [--from WORK]` copies books that another work dir
+  already read with the production config into the production work area, so they
+  are not paid for twice. By default it copies from the benchmark cell. It copies
+  their page records, label caches and failure sidecars, and their page images from
+  the frozen benchmark inputs. It refuses a work dir read by another reader config,
+  and page records read from other page images. It never overwrites production work
+  and changes nothing in the source; the manifest records each seed. Then
+  `assemble --offline` writes the candidates without model calls.
 - `production.py status [BOOK...]` reports, for each book, the pages
   transcribed, blank, failed and pending, and the list-price cost so far.

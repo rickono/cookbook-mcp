@@ -125,9 +125,10 @@ stale and ambiguous ids and the ledger digest. The publish gate re-imports the
 candidate with the stored ledger and requires the same text and outcomes. It refuses
 a stored row for another source digest, and an applied row whose page unit does not
 record it or whose page lies outside the source. `build-report.json` in the build
-directory (`scanned.build_report`, `scanned.read_build_report`) counts applied, stale
-and ambiguous corrections and holds the owner queue of ambiguous ones; it is not
-published. The library changes only when a new publication is built and activated.
+directory (`scanned.build_report`, `scanned.read_build_report`) gives, for each
+source, its Calibre ids, its page coverage (total, transcribed, blank, failed), and its
+section and unresolved counts. It counts applied, stale and ambiguous corrections and
+holds the owner queue of ambiguous ones. It is not published. The library changes only when a new publication is built and activated.
 Earlier publications stay as they were.
 
 Every build also records what it was built from, as `quality/build-inputs.json` in the
@@ -201,12 +202,15 @@ Resolving an item stays a manual owner step.
 
 ## Not done yet
 
-- **No scanned book is published yet.** The build can now import a scanned PDF from a
-  frozen `scanned-candidate.v1` candidate (`cookbook build --scanned-registry
-  registry.json`); the gate accepts its text only through the transcription summary.
-  Only synthetic candidates have been built so far. A PDF without a registered
-  candidate is refused unless it is named in `--legacy-ocr-books`, which keeps the old
-  OCR path and its assessments.
+- **No scanned book is hosted yet.** The build imports a scanned PDF from a frozen
+  `scanned-candidate.v1` candidate (`cookbook build --scanned-registry registry.json`);
+  the gate accepts its text only through the transcription summary. A PDF without a
+  registered candidate is refused unless it is named in `--legacy-ocr-books`, which
+  keeps the old OCR path and its assessments. The three production-transcribed books
+  (#49) are built and published to a local store only; hosted activation waits for the
+  owner. `get_page` renders with poppler's `pdftoppm`. The hosted image installs it;
+  on the Mac it is not on `PATH`, so for local checks put Calibre's bundled copy
+  (`/Applications/calibre.app/Contents/utils.app/Contents/MacOS`) on `PATH`.
 - **The owner queue has no resolution tooling.** Items in `owner-queue.md` wait for
   the owner; nothing records an owner decision back into the ledger yet. The refresh
   runs only by hand.

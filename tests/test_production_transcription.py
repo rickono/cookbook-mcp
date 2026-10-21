@@ -416,3 +416,102 @@ def test_assemble_refuses_a_book_with_failed_pages_unless_allowed(world, monkeyp
     with pytest.raises(SystemExit, match="1 pages not transcribed"):
         production.assemble_book(world.n, BOOK, world.reg[BOOK], 1, allow_missing=False)
     assert not (world.n["root"] / "books" / str(BOOK) / "candidate").exists()
+
+
+def finished_elsewhere(world, monkeypatch, tmp_path):
+    """The same config run and assembled in another work area, as the benchmark cell was."""
+    monkeypatch.setattr(bench, "record", fake_record)
+    other = production.config(tmp_path / "benchmark")
+    production.transcribe(other, [BOOK], world.reg, workers=1, render=world.render)
+    fake_record(other, "full")
+    production.assemble_book(other, BOOK, world.reg[BOOK], 1, allow_missing=True)
+    world.calls, world.renders = [], []
+    return other
+
+
+def frozen_images(book):
+    return [
+        {k: r[k] for k in ("image", "physical_page", "sha256", "source_sha256")}
+        for r in Fakes().render(book, 1, 4)
+    ]
+
+
+def candidate_files(n):
+    out = n["root"] / "books" / str(BOOK) / "candidate"
+    return {f.name: f.read_bytes() for f in out.iterdir() if f.name != "candidate.json"}
+
+
+def test_seeded_work_area_assembles_offline_without_repaying_any_page(
+    world, monkeypatch, tmp_path
+):
+    other = finished_elsewhere(world, monkeypatch, tmp_path)
+    production.seed(world.n, [BOOK], world.reg, other["work"], images=frozen_images)
+    assert production.progress(world.n, BOOK, world.reg[BOOK]) == {
+        **production.progress(other, BOOK, world.reg[BOOK]),
+        "transcribed": 2,
+        "blank": 1,
+        "failed": 1,
+        "pending": 0,
+    }
+    try:
+        cli(world, monkeypatch, "assemble", str(BOOK), "--allow-missing", "--offline")
+    finally:
+        readers.OFFLINE.clear()
+    assert world.calls == [] and world.renders == []
+    assert candidate_files(world.n) == candidate_files(other)
+    m = json.loads((world.n["work"] / "manifest.json").read_text())
+    assert m["seeded"][0]["from"] == str(other["work"])
+    assert m["seeded"][0]["books"] == {
+        str(BOOK): {"pages": 2, "labels": 4, "failures": 2}
+    }
+
+
+def test_seed_refuses_a_work_dir_read_by_another_reader_config(
+    world, monkeypatch, tmp_path
+):
+    other = finished_elsewhere(world, monkeypatch, tmp_path)
+    m = json.loads((other["work"] / "manifest.json").read_text())
+    (other["work"] / "manifest.json").write_text(json.dumps({**m, "fallback": None}))
+    with pytest.raises(SystemExit, match="not read by the production config"):
+        production.seed(world.n, [BOOK], world.reg, other["work"], images=frozen_images)
+    assert not world.n["root"].exists()
+
+
+def test_seed_refuses_page_records_read_from_other_page_images(
+    world, monkeypatch, tmp_path
+):
+    other = finished_elsewhere(world, monkeypatch, tmp_path)
+
+    def other_edition(book):
+        return [{**r, "sha256": "f" * 64} for r in frozen_images(book)]
+
+    with pytest.raises(SystemExit, match="another page image"):
+        production.seed(world.n, [BOOK], world.reg, other["work"], images=other_edition)
+    assert not world.n["root"].exists()
+
+
+def test_reseeding_is_idempotent_and_never_overwrites_production_work(
+    world, monkeypatch, tmp_path
+):
+    other = finished_elsewhere(world, monkeypatch, tmp_path)
+    production.seed(world.n, [BOOK], world.reg, other["work"], images=frozen_images)
+    production.seed(world.n, [BOOK], world.reg, other["work"], images=frozen_images)
+    page = world.n["work"] / "pages" / "b7-p001.json"
+    page.write_text(page.read_text().replace("BREAD", "BRED"))
+    with pytest.raises(SystemExit, match="exists with other content"):
+        production.seed(world.n, [BOOK], world.reg, other["work"], images=frozen_images)
+    assert "BRED" in page.read_text()
+
+
+def test_seed_command_takes_page_images_from_the_frozen_benchmark_inputs(
+    world, monkeypatch, tmp_path
+):
+    other = finished_elsewhere(world, monkeypatch, tmp_path)
+    frozen = tmp_path / "frozen-benchmark"
+    (frozen / "inputs/books/7").mkdir(parents=True)
+    (frozen / "inputs/books/7/images.json").write_text(json.dumps(frozen_images(BOOK)))
+    monkeypatch.setattr(assemble, "EXP", frozen)
+    cli(world, monkeypatch, "seed", str(BOOK), "--from", str(other["work"]))
+    images = world.n["root"] / "books" / "7" / "images.json"
+    assert json.loads(images.read_text()) == frozen_images(BOOK)
+    assert production.progress(world.n, BOOK, world.reg[BOOK])["pending"] == 0
