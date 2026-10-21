@@ -49,6 +49,18 @@ def _main():
         default=[],
         help="Ignore embedded text and OCR every page for selected PDF/DjVu Calibre IDs",
     )
+    b.add_argument(
+        "--scanned-registry",
+        type=Path,
+        help="scanned-registry.v1 JSON mapping PDF sha256 to a scanned-candidate.v1 directory",
+    )
+    b.add_argument(
+        "--legacy-ocr-books",
+        type=int,
+        nargs="+",
+        default=[],
+        help="Index selected PDF Calibre IDs with native low-text page OCR instead of a candidate",
+    )
     pub = sub.add_parser("publish-local")
     pub.add_argument("--build", type=Path, required=True)
     pub.add_argument("--store", type=Path, required=True)
@@ -216,6 +228,7 @@ def _main():
         return
     if a.command == "build":
         from .build import build_snapshot
+        from .scanned import read_registry
 
         m, _, stats = build_snapshot(
             a.snapshot,
@@ -224,6 +237,8 @@ def _main():
             a.ocr_cache,
             progress=lambda d: print(json.dumps(d), flush=True),
             force_ocr_ids=a.force_ocr_books,
+            legacy_ocr_ids=a.legacy_ocr_books,
+            scanned=read_registry(a.scanned_registry) if a.scanned_registry else None,
         )
         from .quality import read_report
         from .ocr import write_review_page

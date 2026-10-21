@@ -13,6 +13,7 @@ import threading
 from PIL import Image
 from .extract import render_page
 from .reports import check_region
+from .scanned import LABEL
 from .storage import IntegrityError, digest_file, verify
 
 
@@ -67,6 +68,14 @@ class Library:
         with self.db(pub) as db:
             return db.execute("select extraction_version from info").fetchone()[0]
 
+    def transcription(self, db, table, key, value):
+        # Older immutable publications remain readable without the additive tables.
+        if not db.execute(
+            "select 1 from sqlite_master where type='table' and name=?", (table,)
+        ).fetchone():
+            return None
+        return db.execute(f"select * from {table} where {key}=?", (value,)).fetchone()
+
     def citation(self, pub, book, section=None):
         d = {
             "publication_id": pub,
@@ -87,6 +96,12 @@ class Library:
                     "version": self.extraction_version(pub),
                 },
             )
+            with self.db(pub) as db:
+                unit = self.transcription(
+                    db, "transcription_units", "section_id", section["id"]
+                )
+            if unit is not None:
+                d["extraction"]["label"] = json.loads(unit["label"])
         if section and d["locator"]["kind"] == "page":
             d["page_id"] = section["id"]
         return d
@@ -201,6 +216,26 @@ class Library:
         with self.db(pub) as db:
             b = self.book(db, book_id)
             toc = json.loads(b["toc"])
+            coverage = {
+                "recipe_labels": "conservative source structure only",
+                "image_association": "EPUB document",
+                "ocr": "English; low-text physical pages",
+            }
+            scanned = self.transcription(
+                db, "transcription_sources", "source_id", b["source_id"]
+            )
+            if scanned is not None:
+                summary = json.loads(scanned["summary"])
+                coverage = {
+                    "recipe_labels": "agent-assembled sections, unapproved",
+                    "image_association": "none",
+                    "transcription": {
+                        "label": LABEL,
+                        "pages_total": summary["pages_total"],
+                        **summary["coverage"],
+                        "unresolved": summary["unresolved"],
+                    },
+                }
             return {
                 "citation": self.citation(pub, b),
                 "calibre_id": b["calibre_id"],
@@ -208,11 +243,7 @@ class Library:
                 "toc": toc[offset : offset + limit],
                 "next_offset": offset + limit if offset + limit < len(toc) else None,
                 "artifact_id": "original",
-                "coverage": {
-                    "recipe_labels": "conservative source structure only",
-                    "image_association": "EPUB document",
-                    "ocr": "English; low-text physical pages",
-                },
+                "coverage": coverage,
             }
 
     def read_section(

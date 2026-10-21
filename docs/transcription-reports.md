@@ -97,14 +97,18 @@ they were.
 
 ## Not done yet
 
-- **Scanned books are not published.** The hosted library is EPUB-only today. Until
-  the scanned pipeline's output is part of a publication, `get_page` has no scanned
-  pages to zoom and the tool has nothing to report against.
+- **No scanned book is published yet.** The build can now import a scanned PDF from a
+  frozen `scanned-candidate.v1` candidate (`cookbook build --scanned-registry
+  registry.json`); the gate accepts its text only through the transcription summary.
+  Only synthetic candidates have been built so far. A PDF without a registered
+  candidate is refused unless it is named in `--legacy-ocr-books`, which keeps the old
+  OCR path and its assessments.
 - **Applying corrections** to a scanned publication is the publication build's job.
   It means mapping a row onto the review revision model (`transcription_review`) for
   that book's snapshot. That build does not exist yet.
-- **Per-quantity crop boxes.** `read_section` does not yet return the pipeline's
-  quantity boxes, so the agent has to choose a region itself.
+- **Per-quantity crop boxes.** The imported candidate keeps the quantity-review and
+  unresolved boxes as check regions in the index, but `read_section` does not return
+  them yet, so the agent has to choose a region itself.
 - **Hosting is not configured.** See
   [hosted-runtime.md](hosted-runtime.md#transcription-reports--not-deployed). The
   bucket, its keys, the Fly secrets and the deploy each need the owner's approval.

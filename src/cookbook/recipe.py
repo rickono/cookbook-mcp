@@ -22,6 +22,11 @@ class RecipeCitation(RecipeModel):
     book_id: ShortText
     source_id: ShortText
     section_id: ShortText
+    physical_pages: list[Annotated[int, Field(ge=1, le=100000)]] | None = Field(
+        default=None,
+        max_length=50,
+        description="Physical pages of a scanned section, from its locator.",
+    )
 
 
 class RecipeSource(RecipeModel):

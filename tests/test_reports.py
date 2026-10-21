@@ -5,28 +5,18 @@ Rendering is replaced by a synthetic image: no PDF parser, OCR or model runs her
 
 import io
 import json
-import uuid
 
 import pytest
 from PIL import Image
 from starlette.testclient import TestClient
+from synthetic_scanned import one_section_rows, pdf_sha256, publish_scanned
 
 import cookbook.library as library_module
-from cookbook.build import add_content, create_index
 from cookbook.hosted import reports_store_from_environment
-from cookbook.library import Library
-from cookbook.publication import Entry, Manifest, Runtime, publish
-from cookbook.quality import QUALITY_PATH, make_report
 from cookbook.reports import ReportSink, list_reports
+from cookbook.scanned import section_unit_id
 from cookbook.server import JWTVerifier, create_app
-from cookbook.storage import (
-    IntegrityError,
-    LocalStore,
-    S3Store,
-    atomic_write,
-    canonical,
-    digest_file,
-)
+from cookbook.storage import IntegrityError, LocalStore, S3Store
 
 PAGE_1 = "Lentil soup\n1½ cups lentils\n2 tsp  salt\n4 cups water"
 PAGE_2 = "Simmer the lentils for 30 minutes."
@@ -34,62 +24,11 @@ PAGE_2 = "Simmer the lentils for 30 minutes."
 
 @pytest.fixture
 def scanned(tmp_path, monkeypatch):
-    root = tmp_path / "build"
-    root.mkdir()
-    pub = uuid.uuid4().hex
-    db = create_index(root / "index.sqlite", pub)
-    original = root / "book.pdf"
-    original.write_bytes(b"%PDF-synthetic placeholder, never parsed")
-    sha, _ = digest_file(original)
-    source = "pdf:" + sha
-    pages = [
-        {
-            "id": f"page-{n}",
-            "title": f"Page {n}",
-            "text": text,
-            "locator": {"kind": "page", "physical_page": n},
-            "provenance": "transcription",
-            "kind": "page",
-            "images": [],
-        }
-        for n, text in ((1, PAGE_1), (2, PAGE_2))
-    ]
-    recipe = {
-        "id": "lentil-soup",
-        "title": "Lentil soup",
-        "text": PAGE_1 + "\n" + PAGE_2,
-        "locator": {"kind": "page", "physical_page": 1},
-        "provenance": "transcription",
-        "kind": "recipe",
-        "images": [],
-    }
-    add_content(db, source, "PDF", sha, "backup/book.pdf", [*pages, recipe], [], [])
-    db.execute(
-        "insert into books values(?,?,?,?,?,?)",
-        ("book-1", 1, "Synthetic Lentils", '["Test Author"]', "[]", source),
+    # Published through the scanned-candidate build route, so the gate admits it.
+    lib, ids = publish_scanned(
+        tmp_path, one_section_rows([PAGE_1, PAGE_2]), monkeypatch
     )
-    db.commit()
-    db.close()
-    inputs = {
-        "runtime/index.sqlite": root / "index.sqlite",
-        "backup/book.pdf": original,
-    }
-    atomic_write(root / "ocr-review.json", canonical(make_report(pub, [])))
-    inputs[QUALITY_PATH] = root / "ocr-review.json"
-    entries = [
-        Entry(
-            path=k,
-            sha256=digest_file(p)[0],
-            size=digest_file(p)[1],
-            role="runtime" if k.startswith("runtime") else "backup",
-        )
-        for k, p in inputs.items()
-    ]
-    m = Manifest(publication_id=pub, created_at="2026-10-20T00:00:00Z", files=entries)
-    store = LocalStore(tmp_path / "store")
-    runtime = Runtime(store, tmp_path / "runtime")
-    publish(store, m, inputs, expected_version=None, activate=runtime.activate)
-
+    sha = pdf_sha256()
     renders = []
 
     def fake_render(path, fmt, page, destination, edge=1600):
@@ -100,8 +39,7 @@ def scanned(tmp_path, monkeypatch):
         im.save(destination, "PNG")
 
     monkeypatch.setattr(library_module, "render_page", fake_render)
-    ids = {"publication_id": pub, "book_id": "book-1", "source_id": source}
-    return Library(runtime), ids, sha, renders
+    return lib, ids, sha, renders
 
 
 def pixels(data):
@@ -168,7 +106,7 @@ def test_report_is_anchored_content_addressed_and_never_overwritten(scanned, tmp
         **report(
             ids,
             physical_page=2,
-            section_id="lentil-soup",
+            section_id=section_unit_id(ids["source_id"], "lentil-soup"),
             quoted_text="4 cups water",
             proposed_text="4 cups stock",
         ),
