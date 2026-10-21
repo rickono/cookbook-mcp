@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cookbook recipe</title>
+<style>
+:root { color-scheme:light dark; font:14px/1.6 system-ui,-apple-system,sans-serif; --bg:light-dark(#fff,#212121); --fg:light-dark(#252525,#eee); --muted:light-dark(#717171,#b2b2b2); --line:light-dark(#e6e6e6,#414141); }
+* { box-sizing:border-box; }
+[hidden] { display:none!important; }
+body { margin:0; background:var(--bg); color:var(--fg); }
+button,summary { font:inherit; cursor:pointer; }
+button { color:inherit; background:transparent; border:0; }
+button:focus-visible,summary:focus-visible { outline:2px solid var(--fg); outline-offset:3px; }
+article { padding:18px 20px; overflow-wrap:anywhere; }
+h1 { font-size:20px; line-height:1.3; letter-spacing:-.025em; margin:0 0 6px; font-weight:620; }
+h2 { font-size:12px; margin:0 0 9px; font-weight:620; }
+h3 { font-size:13px; font-weight:610; margin:0 0 6px; display:flex; align-items:baseline; gap:8px; }
+.meta,.compact-meta { font-size:12px; color:var(--muted); margin:0; }
+.description { font-size:13px; color:var(--muted); margin:11px 0 0; }
+header { margin-bottom:18px; }
+.ingredient-list { list-style:none; padding:0; margin:0; font-size:12px; line-height:1.7; }
+.ingredient-list li { padding:3px 0; }
+.aligned-head,.action-row { display:grid; grid-template-columns:minmax(0,.78fr) minmax(0,1.3fr); gap:25px; }
+.actions { list-style:none; margin:0; padding:0; }
+.action-row { border-top:1px solid var(--line); padding:15px 0; }
+.action-row:first-child { padding-top:10px; }
+.action-row:last-child { padding-bottom:0; }
+.action-row aside { padding-top:3px; }
+.action-row p { font-size:13px; line-height:1.75; margin:0; white-space:pre-line; }
+.step-num { font-size:10px; font-weight:400; color:var(--muted); }
+footer { display:flex; align-items:center; justify-content:space-between; gap:14px; border-top:1px solid var(--line); padding-top:12px; margin-top:16px; }
+.source { color:var(--muted); font-size:10px; padding:4px 0; text-align:left; }
+.toggle { font-size:12px; font-weight:550; padding:4px 0; flex-shrink:0; }
+.toggle span { margin-left:7px; }
+.source-note { font-size:11px; color:var(--muted); margin:13px 0 0; }
+.source-note p { margin:0 0 8px; white-space:pre-line; }
+.source-note ul { padding-left:18px; }
+.collapsed header { margin-bottom:10px; }
+#status { padding:16px; }
+@media(max-width:440px) {
+ article { padding:16px; } h1 { font-size:19px; }
+ .aligned-head,.action-row { grid-template-columns:minmax(0,.8fr) minmax(0,1.35fr); gap:14px; }
+ h2 { font-size:11px; line-height:1.4; } h3 { font-size:12px; }
+ .ingredient-list { font-size:11px; line-height:1.65; }
+ .action-row p { font-size:12px; line-height:1.7; }
+}
+</style>
+</head>
+<body>
+<p id="status" role="status" hidden></p>
+<div id="root"></div>
+<script>
+(() => {
+  const root = document.getElementById('root');
+  const status = document.getElementById('status');
+  let recipe = null, expanded = true, sourceOpen = false;
+  let initialized = false, lastHeight = -1;
+  const esc = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const text = (value, max=200) => typeof value === 'string' && value.trim().length > 0 && value.length <= max;
+  function valid(r) {
+    return r && text(r.title) && Array.isArray(r.metadata) && r.metadata.length <= 4 && r.metadata.every(x => text(x)) &&
+      (r.description == null || text(r.description)) && Array.isArray(r.steps) && r.steps.length > 0 && r.steps.length <= 12 &&
+      r.steps.every(s => s && text(s.title) && text(s.method,2000) && Array.isArray(s.ingredients) && s.ingredients.length <= 16 && s.ingredients.every(x => text(x))) &&
+      r.source && ['original','book','adapted'].includes(r.source.kind) && text(r.source.label) &&
+      (r.source.note == null || text(r.source.note,2000)) && Array.isArray(r.source.citations) && r.source.citations.length <= 8 &&
+      (r.source.kind === 'original' || r.source.citations.length > 0) &&
+      r.source.citations.every(c => c && ['publication_id','book_id','source_id','section_id'].every(k => text(c[k])));
+  }
+  function notify(method, params) { window.parent.postMessage({jsonrpc:'2.0',method,params}, '*'); }
+  function resize() {
+    const height = Math.ceil(document.body.getBoundingClientRect().height);
+    if (height === lastHeight) return;
+    lastHeight = height;
+    if (initialized) notify('ui/notifications/size-changed', {height});
+    window.openai?.notifyIntrinsicHeight?.(height);
+  }
+  function applyTheme(theme) {
+    if (theme === 'light' || theme === 'dark') document.documentElement.style.colorScheme = theme;
+    resize();
+  }
+  function fail() {
+    recipe = null;
+    root.innerHTML = '';
+    status.hidden = false;
+    status.textContent = 'This recipe could not be displayed. Please request it again.';
+    resize();
+  }
+  function render() {
+    if (!recipe) return;
+    const source = recipe.source;
+    const label = source.kind === 'adapted' ? 'Adapted from ' + source.label : source.label;
+    root.innerHTML = `<article class="${expanded?'':'collapsed'}"><header><h1>${esc(recipe.title)}</h1><p class="meta">${recipe.metadata.map(esc).join(' · ')}</p>${!expanded && recipe.description?`<p class="description">${esc(recipe.description)}</p>`:''}</header>
+      <div id="recipe-body" ${expanded?'':'hidden'}><div class="aligned-head"><h2>Ingredients for this action</h2><h2>Method</h2></div><ol class="actions">${recipe.steps.map((step,i)=>`<li class="action-row"><aside aria-label="Ingredients for step ${i+1}"><ul class="ingredient-list">${step.ingredients.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></aside><div><h3><span class="step-num" aria-hidden="true">${i+1}</span>${esc(step.title)}</h3><p>${esc(step.method)}</p></div></li>`).join('')}</ol></div>
+      <p class="compact-meta" ${expanded?'hidden':''}>${recipe.steps.length} ${recipe.steps.length===1?'step':'steps'}</p>
+      <footer><button type="button" class="source" id="source" aria-expanded="${sourceOpen}" aria-controls="source-note">${esc(label)} · Source</button><button type="button" id="expand" class="toggle" aria-expanded="${expanded}" aria-controls="recipe-body">${expanded?'Compact recipe':'View recipe'} <span aria-hidden="true">${expanded?'↑':'↓'}</span></button></footer>
+      <div id="source-note" class="source-note" ${sourceOpen?'':'hidden'}><p>${esc(label)}</p>${source.note?`<p>${esc(source.note)}</p>`:''}${source.citations.length?`<details><summary>Source identifiers</summary><ul>${source.citations.map(c=>`<li>Publication: ${esc(c.publication_id)}<br>Book: ${esc(c.book_id)}<br>Source: ${esc(c.source_id)}<br>Section: ${esc(c.section_id)}</li>`).join('')}</ul></details>`:''}</div></article>`;
+    status.hidden = true;
+    document.getElementById('expand').onclick = () => {
+      expanded = !expanded; render(); document.getElementById('expand').focus({preventScroll:true});
+    };
+    document.getElementById('source').onclick = () => {
+      sourceOpen = !sourceOpen;
+      document.getElementById('source-note').hidden = !sourceOpen;
+      document.getElementById('source').setAttribute('aria-expanded', String(sourceOpen));
+      resize();
+    };
+    resize();
+  }
+  function receive(result) {
+    if (!result) return;
+    if (result.isError || result.structuredContent?.error) { fail(); return; }
+    const next = result.structuredContent?.recipe;
+    if (next === undefined) return;
+    if (!valid(next)) { fail(); return; }
+    // Duplicate standard/compatibility delivery must not reopen a compact card.
+    if (JSON.stringify(recipe) !== JSON.stringify(next)) { expanded = true; sourceOpen = false; }
+    recipe = next; render();
+  }
+  window.addEventListener('message', event => {
+    if (event.source !== window.parent || event.data?.jsonrpc !== '2.0') return;
+    const message = event.data;
+    if (message.id === 'recipe-init' && message.result) {
+      initialized = true;
+      notify('ui/notifications/initialized', {});
+      applyTheme(message.result.hostContext?.theme);
+      lastHeight = -1; resize();
+    }
+    if (message.method === 'ui/notifications/host-context-changed') applyTheme(message.params?.theme);
+    if (message.method === 'ui/notifications/tool-result') receive(message.params);
+    if (message.method === 'ui/notifications/tool-cancelled') fail();
+    if (message.method === 'ping' || message.method === 'ui/resource-teardown') {
+      window.parent.postMessage({jsonrpc:'2.0',id:message.id,result:{}}, '*');
+    }
+  });
+  function globals() {
+    applyTheme(window.openai?.theme);
+    receive({structuredContent:window.openai?.toolOutput});
+  }
+  window.addEventListener('openai:set_globals', globals);
+  globals();
+  window.parent.postMessage({jsonrpc:'2.0',id:'recipe-init',method:'ui/initialize',params:{
+    protocolVersion:'2026-01-26',appInfo:{name:'Cookbook Recipe',version:'1.0.0'},appCapabilities:{availableDisplayModes:['inline']}
+  }}, '*');
+  new ResizeObserver(resize).observe(document.body);
+})();
+</script>
+</body>
+</html>

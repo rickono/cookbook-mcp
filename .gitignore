@@ -12,6 +12,7 @@ __pycache__/
 /output/
 /tmp/
 *.epub
+*.azw3
 *.pdf
 *.djvu
 *.sqlite*

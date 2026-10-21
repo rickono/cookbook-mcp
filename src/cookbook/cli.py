@@ -64,6 +64,11 @@ def _main():
     s.add_argument("--issuer", required=True)
     s.add_argument("--subject", required=True)
     s.add_argument("--port", type=int, default=8765)
+    s.add_argument(
+        "--reports",
+        type=Path,
+        help="Directory for agent transcription reports (a store separate from --store)",
+    )
     review = sub.add_parser("review-ocr")
     review.add_argument("--ocr-cache", type=Path, required=True)
     review.add_argument("--id", required=True)
@@ -290,8 +295,13 @@ def _main():
             subjects=[a.subject],
             public_key=a.public_key.read_text(),
         )
+        from .reports import ReportSink
+
+        if a.reports and a.reports.resolve() == a.store.resolve():
+            raise ValueError("reports store must be separate from the library store")
+        reports = ReportSink(LocalStore(a.reports)) if a.reports else None
         uvicorn.run(
-            create_app(Library(runtime), verifier),
+            create_app(Library(runtime), verifier, reports),
             host="127.0.0.1",
             port=a.port,
             access_log=False,

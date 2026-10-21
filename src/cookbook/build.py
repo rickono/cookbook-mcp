@@ -66,6 +66,16 @@ def add_content(db, source, fmt, sha, original, sections, images, toc):
             )
 
 
+def select_format(formats):
+    """Index EPUB when available; all snapshot formats remain backed up."""
+    epubs = [row for row in formats if row[0] == "EPUB"]
+    if len(epubs) == 1:
+        return epubs[0]
+    if not epubs and len(formats) == 1 and formats[0][0] in ("PDF", "DJVU"):
+        return formats[0]
+    raise IntegrityError("book requires an EPUB or one unambiguous PDF/DjVu format")
+
+
 def build_snapshot(
     snapshot: Path,
     approved_ids: list[int],
@@ -100,7 +110,11 @@ def build_snapshot(
         ).fetchone()
         if row is None:
             raise IntegrityError("unknown approved book")
-        records.append(dict(row))
+        record = dict(row)
+        record["selected_format"] = select_format(
+            db.execute("select format,name from data where book=?", (bid,)).fetchall()
+        )
+        records.append(record)
     inputs = {}
     selected_paths = {r["path"] for r in records}
     for rel, e in proof_files.items():
@@ -118,12 +132,9 @@ def build_snapshot(
     for r in records:
         if r["id"] not in force_ocr_ids:
             continue
-        formats = db.execute(
-            "select format,name from data where book=?", (r["id"],)
-        ).fetchall()
-        if len(formats) != 1 or formats[0][0] not in ("PDF", "DJVU"):
+        fmt, name = r["selected_format"]
+        if fmt not in ("PDF", "DJVU"):
             raise IntegrityError("forced OCR requires a PDF or DjVu source")
-        fmt, name = formats[0]
         rel = r["path"] + "/" + name + "." + fmt.lower()
         forced_sources.add(fmt.lower() + ":" + proof_files[rel]["sha256"])
     output.mkdir(parents=True, mode=0o700)
@@ -161,12 +172,7 @@ def build_snapshot(
                 (r["id"],),
             )
         ]
-        formats = db.execute(
-            "select format,name from data where book=?", (r["id"],)
-        ).fetchall()
-        if len(formats) != 1:
-            raise IntegrityError("POC requires one format per record")
-        fmt, name = formats[0]
+        fmt, name = r["selected_format"]
         rel = r["path"] + "/" + name + "." + fmt.lower()
         p = snapshot / rel
         sha, size = digest_file(p)

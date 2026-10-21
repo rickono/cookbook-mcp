@@ -4,6 +4,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 import io
 import json
+import math
 from pathlib import Path
 import re
 import sqlite3
@@ -11,7 +12,21 @@ import tempfile
 import threading
 from PIL import Image
 from .extract import render_page
+from .reports import check_region
 from .storage import IntegrityError, digest_file, verify
+
+
+ZOOM_EDGE = 2400  # largest render for a region zoom; about 25 MB of RGB on a 1 GB host
+
+
+def crop_region(im, box, edge):
+    """Cut a normalized box out of a rendered page and fit it within edge pixels."""
+    w, h = im.size
+    x0, y0, x1, y1 = box
+    im = im.crop((int(x0 * w), int(y0 * h), math.ceil(x1 * w), math.ceil(y1 * h)))
+    if max(im.size) > edge:
+        im.thumbnail((edge, edge), Image.Resampling.LANCZOS)
+    return im
 
 
 class Library:
@@ -321,35 +336,82 @@ class Library:
                 data = self.cached(pub, im["asset"]).read_bytes()
             return metadata, data
 
-    def get_page(self, publication_id, book_id, source_id, physical_page, edge=1600):
+    def page_row(self, db, source_id, physical_page):
+        s = db.execute(
+            "select * from sections where source_id=? and ordinal=? and kind=?",
+            (source_id, physical_page - 1, "page"),
+        ).fetchone()
+        if s is None:
+            raise IntegrityError("unavailable identifier")
+        return s
+
+    def page_context(
+        self, publication_id, book_id, source_id, physical_page, section_id=None
+    ):
+        """Full page (and optional section) text a transcription report must quote."""
+        pub = self.publication(publication_id)
+        with self.db(pub) as db:
+            b = self.book(db, book_id, source_id)
+            if b["format"] not in ("PDF", "DJVU"):
+                raise IntegrityError("unsupported page format")
+            texts = [self.page_row(db, source_id, physical_page)["text"]]
+            if section_id is not None:
+                s = db.execute(
+                    "select text from sections where id=? and source_id=?",
+                    (section_id, source_id),
+                ).fetchone()
+                if s is None:
+                    raise IntegrityError("unavailable identifier")
+                texts.append(s["text"])
+            return {
+                "publication_id": pub,
+                "source_sha256": b["sha256"],
+                "format": b["format"],
+                "texts": texts,
+            }
+
+    def get_page(
+        self, publication_id, book_id, source_id, physical_page, edge=1600, region=None
+    ):
         pub = self.publication(publication_id)
         if not 256 <= edge <= 1600:
             raise IntegrityError("invalid rendering bounds")
+        box = check_region(region)
+        # A zoom renders the whole page larger, then keeps only the box at <= edge.
+        render_edge = (
+            edge
+            if box is None
+            else min(
+                ZOOM_EDGE,
+                max(edge, math.ceil(edge / max(box[2] - box[0], box[3] - box[1]))),
+            )
+        )
         with self.db(pub) as db:
             b = self.book(db, book_id, source_id)
-            s = db.execute(
-                "select * from sections where source_id=? and ordinal=? and kind=?",
-                (source_id, physical_page - 1, "page"),
-            ).fetchone()
-            if s is None:
-                raise IntegrityError("unavailable identifier")
+            s = self.page_row(db, source_id, physical_page)
             with (
                 self.asset_lock,
                 tempfile.TemporaryDirectory(dir=self.runtime.root) as d,
             ):
                 original = self.cached(pub, b["original_path"])
                 png = Path(d) / "page.png"
-                render_page(original, b["format"], physical_page, png, edge)
+                render_page(original, b["format"], physical_page, png, render_edge)
                 with Image.open(png) as im:
+                    im = im.convert("RGB")
+                    if box is not None:
+                        im = crop_region(im, box, edge)
                     out = io.BytesIO()
-                    im.convert("RGB").save(out, "JPEG", quality=85)
+                    im.save(out, "JPEG", quality=85)
                     data = out.getvalue()
-            return {
+            meta = {
                 "citation": self.citation(pub, b, s),
                 "text": s["text"][:4000],
                 "text_truncated": len(s["text"]) > 4000,
                 "width_limit": edge,
-            }, data
+            }
+            if box is not None:
+                meta.update(region=box, render_edge=render_edge)
+            return meta, data
 
     def get_artifact(self, publication_id, book_id, source_id, artifact_id):
         pub = self.publication(publication_id)

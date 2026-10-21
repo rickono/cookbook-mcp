@@ -47,9 +47,60 @@ def test_authenticated_official_client(published, keys, mint):
             ) as http:
                 async with streamable_http_client(url, http_client=http) as transport:
                     async with ClientSession(*transport) as session:
-                        await session.initialize()
+                        initialized = await session.initialize()
+                        icon = initialized.server_info.icons[0]
+                        assert icon.mime_type == "image/png"
+                        assert icon.sizes == ["512x512"]
+                        # Branding is publicly fetchable; it must not need OAuth.
+                        async with httpx2.AsyncClient() as public_http:
+                            logo = await public_http.get(icon.src)
+                        assert logo.status_code == 200
+                        assert logo.headers["content-type"] == "image/png"
+                        assert logo.content.startswith(b"\x89PNG\r\n\x1a\n")
                         listed = await session.list_tools()
-                        assert len(listed.tools) == 9
+                        assert len(listed.tools) == 11
+                        recipe_tool = next(
+                            t for t in listed.tools if t.name == "show_recipe"
+                        )
+                        recipe_uri = recipe_tool.meta["ui"]["resourceUri"]
+                        recipe_template = await session.read_resource(recipe_uri)
+                        assert (
+                            recipe_template.contents[0].mime_type
+                            == "text/html;profile=mcp-app"
+                        )
+                        assert (
+                            "ui/notifications/tool-result"
+                            in recipe_template.contents[0].text
+                        )
+                        assert "Miso mushrooms" not in recipe_template.contents[0].text
+                        recipe = {
+                            "title": "Synthetic beans",
+                            "metadata": ["Serves 2"],
+                            "steps": [
+                                {
+                                    "title": "Warm beans",
+                                    "ingredients": ["400 g beans"],
+                                    "method": "Warm gently.",
+                                }
+                            ],
+                            "source": {"kind": "original", "label": "Original recipe"},
+                        }
+                        card = await session.call_tool(
+                            "show_recipe", {"recipe": recipe}
+                        )
+                        assert not card.is_error
+                        assert (
+                            card.structured_content["recipe"]["steps"]
+                            == recipe["steps"]
+                        )
+                        assert "400 g beans" in card.content[0].text
+                        assert all(b.type == "text" for b in card.content)
+                        # A book attribution must include the exact source identifiers.
+                        recipe["source"]["kind"] = "book"
+                        invalid = await session.call_tool(
+                            "show_recipe", {"recipe": recipe}
+                        )
+                        assert invalid.is_error
                         inspect_tool = next(
                             t for t in listed.tools if t.name == "inspect_image"
                         )

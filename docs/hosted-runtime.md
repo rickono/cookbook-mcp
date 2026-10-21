@@ -199,3 +199,115 @@ Machine configuration and health, refreshed ChatGPT metadata, and visually check
 the actual compact card and Source disclosure opening/closing. Publication data
 was unchanged. Private deployment and rollback evidence is in
 `setup/cutover-20260912/image-viewer-v6/`.
+
+## ChatGPT renewal diagnosis — October 3, 2026
+
+The original connection requested only `library:read`. On September 21, the user
+approved and enabled Auth0 offline access for the API and rotating refresh tokens
+for the ChatGPT client, with a 30-day idle lifetime and 90-day maximum lifetime.
+Reconnecting showed success, but refresh-token issuance was not verified then.
+
+On October 3, the current ChatGPT connection again required authentication.
+Auth0's displayed recent history contained authorization-code exchanges and full
+sign-ins, with no refresh exchanges. The user's Authorized Applications entry
+showed only `library:read`, and Devices showed no linked devices/refresh tokens.
+The issuer discovery document advertises `offline_access` and the refresh-token
+grant. These observations point to the connection not requesting offline access;
+enabling issuance at Auth0 alone did not establish renewable access.
+
+Created and connected [Cookbook Library (renewable)](https://chatgpt.com/plugins/plugin_asdk_app_6ac13c66cad0819185e8c3769581109b)
+using the existing issuer, client, and private MCP endpoint. In Advanced OAuth
+settings, select User-Defined OAuth Client and `client_secret_post`; keep
+`library:read` selected as a default scope and set base scopes to `library:read`
+and `offline_access` (one per line). Base scopes ensure renewal is requested even
+when tool-specific scope selection is used. OIDC remains disabled.
+
+The Auth0 consent screen explicitly requested offline access. The first setup
+attempt failed its token exchange as Unauthorized; that unconnected app is labeled
+`Cookbook Library (incomplete setup)`. A replacement using the verified existing
+client credential connected successfully. No credential was rotated or saved to
+disk. ChatGPT shows the connected account and ten read tools, and Auth0 Devices
+now shows one refresh token for ChatGPT Cookbook Library / Mac Chrome, compared
+with none before. The 30-day idle and 90-day maximum lifetimes and rotation were
+also confirmed in the client settings.
+
+Refresh-token issuance and initial connection are verified. Automatic renewal
+after access-token expiry has not yet been observed; verify a successful refresh
+exchange before claiming that long-term behavior is tested. On web and mobile,
+select the new renewable app. At the user's request, the three superseded entries
+(`Cookbook Library`, `Cookbook Library (previous)`, and
+`Cookbook Library (incomplete setup)`) were uninstalled. Only the renewable app
+remains installed; its connected account remains active. Private screenshots are in
+`/Users/rick/cookbook-mcp-data/setup/auth-renewal-20261003/` outside Git.
+
+Do not add `offline_access` to the server's required access-token scopes: resource
+authorization still requires `library:read`, and refresh issuance is a separate
+authorization-server concern. The Mac publisher client is unchanged.
+
+The reported iOS error is “Failed to connect to Cookbook Library. Please try again
+later.” OpenAI's current [developer MCP help page](https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt)
+states that these apps are web-only, and recommends recreating the app when
+refresh tokens are not being issued. However, the user confirms that this
+connection works in the iOS app after authentication on the web. Treat that
+observed behavior as evidence: mobile use itself is not blocked, and the failure
+may concern starting or renewing authentication. After completing renewable
+authorization on the web, verify continued use from iOS; do not infer that the
+generic mobile error proves a platform limitation.
+
+## Grok Bot connection — October 18, 2026
+
+Connected the personal Grok Bot desktop app to
+`https://cookbook-agent.fly.dev/mcp` as `cookbook-library`. Its chat installation
+card shows **Connected · 1 Account**. Installed connectors are account-wide in
+Grok Bot; use `@cookbook-library` to select it explicitly.
+
+Created the separate Auth0 application **Grok Bot Cookbook Library**, public
+client ID `tpc_tX1bQogNTi1yAVYM5Qa92z`, Native type with strict third-party
+controls. The observed authorization request uses S256 PKCE. Registered only
+the callback actually requested by the desktop app:
+`https://www.cursor.com/agents/mcp/oauth/callback`.
+
+Granted only the existing Cookbook Library API's user-delegated `library:read`
+permission. Management API, machine-to-machine, and anonymous permissions remain
+ungranted. Authorization Code and Refresh Token grants are enabled, with refresh
+rotation, a 15-day idle lifetime and 30-day maximum lifetime. Grok requests
+`library:read offline_access` and no client secret. Auth0 Devices shows one
+refresh token for Grok Bot Cookbook Library / Mac Chrome. Automatic renewal
+after access-token expiry has not yet been observed.
+
+**Reconnect caveat:** this Grok Bot version normalizes the OAuth resource to
+`https://cookbook-agent.fly.dev/`, while the existing Auth0 API identifier is
+exactly `https://cookbook-agent.fly.dev`. Auth0 rejects the normalized value with
+`access_denied: Service not found: https://cookbook-agent.fly.dev/`. For this
+initial connection, corrected only the `resource` parameter in the app-generated
+authorization URL to remove the trailing slash, retaining its client ID,
+callback, state and PKCE challenge. Google sign-in, consent, token exchange and
+the desktop loopback completion then succeeded. A future full reauthorization
+may require the same correction; no persistent connector override was verified.
+The server, canonical audience, tenant defaults, ChatGPT client and publisher
+client were not changed.
+
+Live Grok acceptance: publication information reported 59 books; catalog search
+returned books; a Chop Chop lookup found Ozoz Sokoh's book, and an in-book search
+returned Classic Nigerian Jollof Rice with a source-bound citation. This verifies
+authenticated discovery and search, not a complete recipe read, image/card UI,
+or refresh exchange. No ingestion, OCR, book publication or deployment was run.
+
+## Transcription reports — not deployed
+
+Code only, 2026-10-20; see [transcription-reports.md](transcription-reports.md).
+The service accepts agent reports when three secrets name a reports-only bucket:
+
+- `REPORTS_S3_BUCKET`, `REPORTS_AWS_ACCESS_KEY_ID`, `REPORTS_AWS_SECRET_ACCESS_KEY`;
+- optionally `REPORTS_S3_ENDPOINT_URL`, which defaults to `S3_ENDPOINT_URL`.
+
+With none of them set, `report_transcription_issue` returns `reporting_unavailable`.
+The service refuses to start when they are set only partly, or when they name the
+library bucket or the library access key. The library runtime key stays read-only.
+
+The reports key should be scoped to the reports bucket alone. R2's object tokens are
+read-only or read & write. I am not aware of a write-only scope, so it will be
+read & write on that one bucket. The server only creates objects, conditionally, and
+never reads or deletes them. The Mac reads reports with a separate key for that
+bucket. Creating the bucket and keys, adding the Fly secrets and deploying each need
+the owner's approval. None of them has been done.

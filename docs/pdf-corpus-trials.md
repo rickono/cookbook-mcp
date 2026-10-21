@@ -4,6 +4,35 @@ These scripts collect research evidence and candidate text. They do not modify
 the extraction policy, approve OCR, or publish books. Source files, specifications,
 reference transcriptions, images and results belong outside Git.
 
+`scripts/pdf_recall_trial.py` scores private frozen recipe transcriptions and
+query labels against candidate page text. It compares physical-page and manually
+assembled recipe search units with the same FTS5 all-token query rule, and checks
+ingredient/instruction phrases and table values at frozen cell coordinates.
+Manual boundaries are experiment controls, not an automatic recipe extractor.
+Run it through the same sandbox with private `--reference` and `--candidates`
+paths; `--exclusions` accepts a digest-bound audit of invalid reference controls.
+It never accepts OCR, changes an extraction policy, or publishes a book.
+
+The private October 11 follow-up at
+`~/cookbook-mcp-data/poc/pdf-layout-20261011/report.md` compares pinned RapidOCR
+English PP-OCRv5 models against that same frozen sample. Model files are staged
+and hash-checked separately; inference uses the launcher with no network. It
+also records a separate geometry-only reading-order diagnostic. Text detection
+and word coordinates do not establish semantic recipe boundaries, automatic
+table reconstruction, or complete instruction order. Original and audited
+scores are retained, including the scorer's serving-count boundary correction.
+
+The separate four-experiment follow-up is recorded privately at
+`~/cookbook-mcp-data/poc/pdf-next-20261011/report.md`. It isolates render density
+and recognition, document layout/table associations, automatic recipe assembly
+on frozen fresh page windows, and source-supported agent review. Recipe ownership
+and negative associations are measured separately from raw query presence;
+unresolved quantities remain explicit. Structured output must retain nested
+picture text, enumeration markers and original source geometry. The report
+records scorer audits, a separately enrolled continuation sample, resource
+evidence and review timing exclusions. These sampled results do not establish
+EPUB parity or approve transcription for publication.
+
 Read [OCR resource isolation](ocr-resource-isolation.md) before running any trial.
 All parsing, rendering and recognition requires `scripts/ocr_sandbox.py`; native
 execution fails closed. Each job mounts only the needed private inputs. Use a new

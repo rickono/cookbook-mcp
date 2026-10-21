@@ -15,6 +15,7 @@ import httpx
 
 from .library import Library
 from .publication import Runtime
+from .reports import ReportSink
 from .server import JWTVerifier, create_app
 from .storage import S3Store
 from .telemetry import event
@@ -34,10 +35,26 @@ def https_url(value):
     return value
 
 
-def store_from_environment():
+def s3_store(endpoint_url, bucket, access_key_id, secret_access_key):
     import boto3
     from botocore.config import Config
 
+    client = boto3.client(
+        "s3",
+        endpoint_url=https_url(endpoint_url),
+        aws_access_key_id=access_key_id,
+        aws_secret_access_key=secret_access_key,
+        region_name=os.environ.get("AWS_DEFAULT_REGION", "auto"),
+        config=Config(
+            connect_timeout=5,
+            read_timeout=20,
+            retries={"mode": "standard", "total_max_attempts": 2},
+        ),
+    )
+    return S3Store(client, bucket)
+
+
+def store_from_environment():
     # Explicit credentials prevent accidental fallback to another AWS account/profile.
     names = (
         "S3_ENDPOINT_URL",
@@ -47,19 +64,34 @@ def store_from_environment():
     )
     if any(not os.environ.get(name) for name in names):
         raise ValueError("storage configuration required")
-    client = boto3.client(
-        "s3",
-        endpoint_url=https_url(os.environ["S3_ENDPOINT_URL"]),
-        aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
-        aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
-        region_name=os.environ.get("AWS_DEFAULT_REGION", "auto"),
-        config=Config(
-            connect_timeout=5,
-            read_timeout=20,
-            retries={"mode": "standard", "total_max_attempts": 2},
-        ),
+    return s3_store(*(os.environ[name] for name in names))
+
+
+REPORT_NAMES = (
+    "REPORTS_S3_BUCKET",
+    "REPORTS_AWS_ACCESS_KEY_ID",
+    "REPORTS_AWS_SECRET_ACCESS_KEY",
+)
+
+
+def reports_store_from_environment():
+    """The reports-only bucket and its own key, or None when reporting is not configured.
+
+    It is never the library bucket or key: the library credential stays read-only.
+    """
+    present = [name for name in REPORT_NAMES if os.environ.get(name)]
+    if not present:
+        return None
+    if len(present) != len(REPORT_NAMES):
+        raise ValueError("incomplete reports storage configuration")
+    if os.environ["REPORTS_S3_BUCKET"] == os.environ.get("S3_BUCKET") or os.environ[
+        "REPORTS_AWS_ACCESS_KEY_ID"
+    ] == os.environ.get("AWS_ACCESS_KEY_ID"):
+        raise ValueError("reports storage must be separate from the library")
+    return s3_store(
+        os.environ.get("REPORTS_S3_ENDPOINT_URL") or os.environ["S3_ENDPOINT_URL"],
+        *(os.environ[name] for name in REPORT_NAMES),
     )
-    return S3Store(client, os.environ["S3_BUCKET"])
 
 
 class PublicationUpdater:
@@ -107,8 +139,9 @@ class PublicationUpdater:
             self.thread.join(timeout=1)
 
 
-def create_hosted_app(runtime, verifier, *, poll_seconds=60):
-    app = create_app(Library(runtime), verifier)
+def create_hosted_app(runtime, verifier, *, poll_seconds=60, reports_store=None):
+    reports = ReportSink(reports_store) if reports_store is not None else None
+    app = create_app(Library(runtime), verifier, reports)
     original_lifespan = app.router.lifespan_context
     updater = PublicationUpdater(runtime, poll_seconds)
 
@@ -146,7 +179,9 @@ def serve():
         jwks_url=https_url(os.environ["COOKBOOK_JWKS_URL"]),
     )
     uvicorn.run(
-        create_hosted_app(runtime, verifier),
+        create_hosted_app(
+            runtime, verifier, reports_store=reports_store_from_environment()
+        ),
         host="0.0.0.0",
         port=int(os.environ.get("PORT", "8000")),
         access_log=False,
