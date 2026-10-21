@@ -142,11 +142,13 @@ def label_page(reader, out, pages, page, cache):
     return out_rec
 
 
-def build(book, pages, labels, cfg, model, outdir):
-    images = {
-        p["physical_page"]: p
-        for p in json.loads((EXP / f"inputs/books/{book}/images.json").read_text())
-    }
+def frozen_images(book):
+    return json.loads((EXP / f"inputs/books/{book}/images.json").read_text())
+
+
+def build(book, pages, labels, cfg, model, outdir, images=None):
+    """images: the book's page image records; by default the frozen benchmark's images.json."""
+    images = {p["physical_page"]: p for p in images or frozen_images(book)}
     sections, order, ids = {}, [], set()
     page_sections = {p: [] for p in images}
     printed = {}
@@ -562,10 +564,12 @@ def build(book, pages, labels, cfg, model, outdir):
     }
 
 
-def assemble(reader, name, pipe, book, outdir, cfg, workers=4, allow_missing=False):
+def assemble(
+    reader, name, pipe, book, outdir, cfg, workers=4, allow_missing=False, images=None
+):
     """reader: the sample label that sections (READERS[0]); name: how report.md names the reader.
-    allow_missing only after the page run's retry pass has finished."""
-    images = json.loads((EXP / f"inputs/books/{book}/images.json").read_text())
+    allow_missing only after the page run's retry pass has finished. images: as in build."""
+    images = images or frozen_images(book)
     pages = {}
     for p in images:
         f = pipe / "pages" / f"b{book}-p{p['physical_page']:03d}.json"
@@ -600,6 +604,6 @@ def assemble(reader, name, pipe, book, outdir, cfg, workers=4, allow_missing=Fal
         json.dumps({"book": book, "labelled": len(labels), "label_failures": failed}),
         flush=True,
     )
-    result = {"book": book, **build(book, pages, labels, cfg, name, outdir)}
+    result = {"book": book, **build(book, pages, labels, cfg, name, outdir, images)}
     print(json.dumps(result), flush=True)
     return result
