@@ -21,6 +21,9 @@ from .scanned import (
 )
 from .storage import IntegrityError, atomic_write, canonical, digest_file
 
+BUILD_INPUTS = "quality/build-inputs.json"
+BUILD_INPUTS_VERSION = "build-inputs.v1"
+
 SCHEMA = """
 CREATE TABLE info(publication_id TEXT NOT NULL, extraction_version TEXT NOT NULL);
 CREATE TABLE books(id TEXT PRIMARY KEY, calibre_id INTEGER, title TEXT, authors TEXT, tags TEXT, source_id TEXT);
@@ -345,6 +348,31 @@ def build_snapshot(
             output / BUILD_REPORT,
             canonical(build_report(imported.values())),
         )
+    # What a refresh needs to rebuild this publication with a new ledger: the same
+    # snapshot (by its proof), approved selection, OCR choices and candidate set.
+    record = {
+        "version": BUILD_INPUTS_VERSION,
+        "snapshot": {
+            "path": str(snapshot),
+            "proof_sha256": digest_file(snapshot.parent / "snapshot-manifest.json")[0],
+        },
+        "ocr_cache": str(Path(cache).resolve()),
+        "approved_ids": list(approved_ids),
+        "force_ocr_ids": sorted(force_ocr_ids),
+        "legacy_ocr_ids": sorted(legacy_ocr_ids - force_ocr_ids),
+        "scanned": [
+            {
+                "source_sha256": imported[s]["summary"]["source_sha256"],
+                "physical_pages": scanned[imported[s]["summary"]["source_sha256"]][
+                    "physical_pages"
+                ],
+                "candidate_sha256": imported[s]["candidate_sha256"],
+            }
+            for s in sorted(imported)
+        ],
+    }
+    atomic_write(output / "build-inputs.json", canonical(record))
+    inputs[BUILD_INPUTS] = output / "build-inputs.json"
     inputs["runtime/index.sqlite"] = index
     entries = []
     for logical, p in sorted(inputs.items()):

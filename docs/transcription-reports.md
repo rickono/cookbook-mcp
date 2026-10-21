@@ -85,8 +85,9 @@ A crop failure or a timed-out reading is not recorded, so the report is retried 
 the next run. A provider content-filter refusal is a result: the report goes to the
 owner queue and is not worked around. A usage limit stops the run.
 
-Each run rebuilds `corrections.jsonl` and `owner-queue.jsonl` from all decisions.
-Sources not registered with the helper, and DjVu sources, go to the owner queue.
+Each run rebuilds `corrections.jsonl`, `owner-queue.jsonl` and `owner-queue.md` from
+all decisions. Sources not registered with the helper, and DjVu sources, go to the
+owner queue.
 
 ```sh
 python3 scripts/triage_reports.py --reports-s3 --dry-run   # list pending reports
@@ -129,6 +130,75 @@ and ambiguous corrections and holds the owner queue of ambiguous ones; it is not
 published. The library changes only when a new publication is built and activated.
 Earlier publications stay as they were.
 
+Every build also records what it was built from, as `quality/build-inputs.json` in the
+publication (`build-inputs.v1`). The record holds:
+
+- the snapshot path and the sha256 of its `snapshot-manifest.json`;
+- the OCR cache;
+- the approved Calibre ids, in order;
+- the forced and legacy OCR ids;
+- for each imported scanned source, its digest, physical page count and the sha256 of
+  its `candidate.json`.
+
+## 4. The refresh command closes the loop
+
+`scripts/refresh_library.py` runs steps 2 and 3 in one go. It runs on the Mac, by
+hand, and nothing schedules it. One run:
+
+1. reads the stored reports (`--reports DIR`, or `--reports-s3` with the Mac's
+   reports key) and finds those without a decision;
+2. if any are pending, runs `ocr_sandbox.py doctor`, and stops before triage if it
+   fails;
+3. blind-triages up to `--limit` (default 20) of them, exactly as in step 2. Reports
+   over the limit stay pending for the next run;
+4. regenerates `corrections.jsonl` from every decision;
+5. compares the ledger's rows for each scanned source with the `ledger_sha256` the
+   active publication's transcription summary records. If none differ, for example
+   when there were no new decisions or only rejections, it publishes nothing and
+   reports `"status": "unchanged"`;
+6. otherwise rebuilds from the active publication's `quality/build-inputs.json`, with
+   the new ledger. It uses the same snapshot, which must still match its recorded
+   proof, the same approved selection and OCR choices, and the same candidates. The
+   candidates are restored from the publication's `quality/scanned/<sha256>/`
+   inventory and checked against the recorded digests. The build goes under `--work`
+   (default `$COOKBOOK_DATA/refresh`);
+7. publishes and activates the rebuild through the usual lifecycle and records it in
+   `control/successful.json`, then prints a JSON report:
+   - the new and previous publication ids;
+   - the triage counts;
+   - the applied, stale and ambiguous corrections;
+   - the new and total owner-queue items, and the queue file.
+
+A publication with no recorded build inputs is refused; build and publish it once
+with `cookbook build`. A failed build or publish leaves the active publication
+unchanged, and earlier publications are kept for rollback. Publishing uses the
+Mac's publisher credential, which never goes to Fly. With `--s3`, the run uploads
+with the library bucket's write key from the `S3_*` and `AWS_*` env, the same env as
+`cookbook publish-s3`, with `COOKBOOK_AUDIENCE` set. It then waits for the
+hosted readiness acknowledgement, signing in with `--browser-login` or using
+`--token-file`, as `cookbook publish-s3` does.
+
+```sh
+uv run python scripts/refresh_library.py --reports DIR --store STORE --runtime RUNTIME
+uv run python scripts/refresh_library.py --reports-s3 --s3 \
+    --state-directory STATE --readiness-url https://HOST/readyz --browser-login
+```
+
+The owner queue is `owner-queue.md` under `--out`, a readable file the owner works
+through. It holds every report the blind re-read did not settle, including
+content-filter refusals, which are kept as they are. It also holds every accepted
+correction that the active publication's build could not place unambiguously; the
+refresh writes these to `ambiguous-corrections.jsonl` after each activation. Each item
+shows:
+
+- the report: id, publication, book, source, page, section, region, library text,
+  proposed text and note;
+- each blind reading, marked when the provider's filter refused it or the read
+  failed;
+- the reason.
+
+Resolving an item stays a manual owner step.
+
 ## Not done yet
 
 - **No scanned book is published yet.** The build can now import a scanned PDF from a
@@ -137,9 +207,9 @@ Earlier publications stay as they were.
   Only synthetic candidates have been built so far. A PDF without a registered
   candidate is refused unless it is named in `--legacy-ocr-books`, which keeps the old
   OCR path and its assessments.
-- **Refreshing a publication** when the ledger changes is a separate command; for
-  now the owner rebuilds with `--ledger`. Ambiguous corrections wait in the build
-  report's owner queue; nothing resolves them yet.
+- **The owner queue has no resolution tooling.** Items in `owner-queue.md` wait for
+  the owner; nothing records an owner decision back into the ledger yet. The refresh
+  runs only by hand.
 - **Hosting is not configured.** See
   [hosted-runtime.md](hosted-runtime.md#transcription-reports--not-deployed). The
   bucket, its keys, the Fly secrets and the deploy each need the owner's approval.

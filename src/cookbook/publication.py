@@ -191,6 +191,41 @@ def publish(
     return {"status": "active", **pointer}
 
 
+HISTORY = "control/successful.json"
+
+
+def read_build(build: Path):
+    """The manifest and logical inputs a build directory holds (manifest.json, inputs.json)."""
+    m = Manifest.model_validate_json((build / "manifest.json").read_bytes())
+    inputs = {
+        k: Path(v) for k, v in json.loads((build / "inputs.json").read_bytes()).items()
+    }
+    return m, inputs
+
+
+def publish_build(store, build: Path, *, activate, **options):
+    """Publish a build directory against the store's current pointer; caller holds the lock.
+
+    The pointer moves only by compare-and-swap, so a concurrent activation makes this fail
+    with nothing changed. A confirmed activation goes to the front of the successful
+    history (``control/successful.json``), which keeps earlier publications for rollback.
+    """
+    m, inputs = read_build(build)
+    _, version = store.read_version("control/active.json")
+    result = publish(
+        store, m, inputs, expected_version=version, activate=activate, **options
+    )
+    if result["status"] == "active":
+        raw, history_version = store.read_version(HISTORY)
+        history = json.loads(raw) if raw else []
+        pointer = {k: result[k] for k in ("publication_id", "manifest_sha256")}
+        history = [pointer] + [
+            v for v in history if v["publication_id"] != m.publication_id
+        ]
+        store.put_bytes(HISTORY, canonical(history), expected=history_version)
+    return result
+
+
 def restore(store, pointer, destination: Path, *, runtime_only=False):
     m = load_manifest(store, pointer)
     if destination.exists():
