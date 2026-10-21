@@ -1,13 +1,14 @@
 """Small streaming object-store seam. Local backend is private, not an HTTP server."""
 
 from __future__ import annotations
+
 import contextlib
 import fcntl
 import hashlib
 import json
 import os
-from pathlib import Path
 import tempfile
+from pathlib import Path
 from typing import BinaryIO
 
 CHUNK = 1024 * 1024
@@ -40,6 +41,23 @@ def digest_file(path: Path) -> tuple[str, int]:
             h.update(chunk)
             size += len(chunk)
     return h.hexdigest(), size
+
+
+def check_bytes(data: bytes, sha256: str, size: int, message: str) -> bytes:
+    """``data`` if it has the recorded size and sha256; IntegrityError(message) if not."""
+    if len(data) != size or hashlib.sha256(data).hexdigest() != sha256:
+        raise IntegrityError(message)
+    return data
+
+
+def has_table(db, name: str) -> bool:
+    """Whether a SQLite database has the table; additive tables are absent in old ones."""
+    return (
+        db.execute(
+            "select 1 from sqlite_master where type='table' and name=?", (name,)
+        ).fetchone()
+        is not None
+    )
 
 
 def canonical(value) -> bytes:

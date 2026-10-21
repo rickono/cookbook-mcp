@@ -9,7 +9,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from .ocr import POLICY, ReviewRequired, effective, load_record
-from .storage import IntegrityError, atomic_write, canonical, digest_file
+from .storage import (
+    IntegrityError,
+    atomic_write,
+    canonical,
+    check_bytes,
+    digest_file,
+    has_table,
+)
 
 QUALITY_PATH = "quality/ocr-review.json"
 
@@ -129,10 +136,14 @@ def check_publish_quality(manifest, inputs):
         check_transcription(manifest, inputs, db)
 
 
-def _table(db, name):
-    return db.execute(
-        "select 1 from sqlite_master where type='table' and name=?", (name,)
-    ).fetchone()
+def _inventory_bytes(files_by_path, inputs, logical, what):
+    """A backed-up inventory file's bytes, checked against its manifest entry."""
+    e = files_by_path.get(logical)
+    if e is None or logical not in inputs:
+        raise ReviewRequired(f"missing {what}")
+    return check_bytes(
+        inputs[logical].read_bytes(), e.sha256, e.size, f"{what} changed"
+    )
 
 
 def _stored_ledger(files_by_path, inputs, sha):
@@ -141,13 +152,9 @@ def _stored_ledger(files_by_path, inputs, sha):
     from .scanned import INVENTORY
 
     logical = f"{INVENTORY}/{sha}/{ledger.FILE}"
-    e = files_by_path.get(logical)
-    if e is None or logical not in inputs:
-        raise ReviewRequired("missing scanned correction ledger")
-    data = inputs[logical].read_bytes()
-    if (hashlib.sha256(data).hexdigest(), len(data)) != (e.sha256, e.size):
-        raise IntegrityError("scanned correction ledger changed")
-    return ledger.parse(data)
+    return ledger.parse(
+        _inventory_bytes(files_by_path, inputs, logical, "scanned correction ledger")
+    )
 
 
 def _check_bindings(db, rows, item, source_id):
@@ -247,7 +254,9 @@ def check_transcription(manifest, inputs, db):
         raise ReviewRequired(
             "transcription summary does not cover the transcription text"
         )
-    if not (_table(db, "transcription_sources") and _table(db, "transcription_units")):
+    if not (
+        has_table(db, "transcription_sources") and has_table(db, "transcription_units")
+    ):
         raise IntegrityError("scanned index lacks transcription tables")
     labelled = {
         r[0]
@@ -269,16 +278,12 @@ def check_transcription(manifest, inputs, db):
         original = files_by_path.get(row["original_path"])
         if original is None or original.sha256 != sha:
             raise IntegrityError("source digest mismatch")
-        files = {}
-        for name in (CANDIDATE, *FILES):
-            logical = f"{INVENTORY}/{sha}/{name}"
-            e = files_by_path.get(logical)
-            if e is None or logical not in inputs:
-                raise ReviewRequired("missing scanned candidate")
-            data = inputs[logical].read_bytes()
-            if (hashlib.sha256(data).hexdigest(), len(data)) != (e.sha256, e.size):
-                raise IntegrityError("scanned candidate changed")
-            files[name] = data
+        files = {
+            name: _inventory_bytes(
+                files_by_path, inputs, f"{INVENTORY}/{sha}/{name}", "scanned candidate"
+            )
+            for name in (CANDIDATE, *FILES)
+        }
         if hashlib.sha256(files[CANDIDATE]).hexdigest() != item.get("candidate_sha256"):
             raise IntegrityError("scanned candidate changed")
         rows = _stored_ledger(files_by_path, inputs, sha)
@@ -343,7 +348,6 @@ def check_transcription(manifest, inputs, db):
                 "select * from transcription_units where source_id=?", (source_id,)
             )
         }
-        t = "transcription"
         if (
             stored is None
             or json.loads(stored[0]) != item
@@ -355,7 +359,11 @@ def check_transcription(manifest, inputs, db):
             )
             or labels
             != {
-                u["id"]: (u[t]["label"], u[t]["check_regions"], u[t]["corrections"])
+                u["id"]: (
+                    u["transcription"]["label"],
+                    u["transcription"]["check_regions"],
+                    u["transcription"]["corrections"],
+                )
                 for u in units
             }
         ):
