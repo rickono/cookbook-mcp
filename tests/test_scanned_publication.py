@@ -7,6 +7,8 @@ import pytest
 from conftest import fixture_build
 from synthetic_scanned import (
     RECIPE,
+    SIDEBAR,
+    SIDEBAR_TEXT,
     correction,
     pack,
     pdf_sha256,
@@ -21,6 +23,7 @@ from cookbook.library import Library
 from cookbook.ocr import ReviewRequired
 from cookbook.publication import Entry, Runtime, publish
 from cookbook.quality import check_publish_quality
+from cookbook.scanned import section_unit_id
 from cookbook.storage import IntegrityError, LocalStore, digest_file
 
 SUMMARY = "quality/transcription-summary.json"
@@ -375,6 +378,33 @@ def test_gate_refuses_corrected_text_the_ledger_does_not_explain(tmp_path):
     m, inputs, _ = corrected_build(tmp_path)
     edit_index(inputs, "update sections set text=replace(text,'2 tbsp','3 tbsp')")
     with pytest.raises(IntegrityError, match="scanned index"):
+        check_publish_quality(reseal(m, inputs), inputs)
+
+
+def sidebar_reworded():
+    """The sidebar's text part reads differently from its page row (the page lacks it)."""
+    data = rows()
+    sidebar = next(s for s in data["sections"] if s["id"] == SIDEBAR)
+    sidebar["parts"][1]["text"] = SIDEBAR_TEXT.replace("shape.", "shape well.")
+    return data
+
+
+def test_gate_accepts_a_correction_applied_only_to_its_cited_section(tmp_path):
+    sidebar = section_unit_id("pdf:" + pdf_sha256(), SIDEBAR)
+    c = correction(1, "shape well", "form well", page=2, section_id=sidebar)
+    m, inputs, stats = build(
+        tmp_path, registry(tmp_path, sidebar_reworded()), ledger=[c]
+    )
+    assert stats[0]["corrections"] == {"applied": 1, "stale": 0, "ambiguous": 0}
+    check_publish_quality(m, inputs)
+
+
+def test_gate_refuses_a_section_only_correction_moved_to_another_section(tmp_path):
+    sidebar = section_unit_id("pdf:" + pdf_sha256(), SIDEBAR)
+    c = correction(1, "shape well", "form well", page=2, section_id=sidebar)
+    m, inputs, _ = build(tmp_path, registry(tmp_path, sidebar_reworded()), ledger=[c])
+    rewrite_ledger(inputs, section_id=section_unit_id("pdf:" + pdf_sha256(), RECIPE))
+    with pytest.raises(IntegrityError, match="does not bind to its page"):
         check_publish_quality(reseal(m, inputs), inputs)
 
 

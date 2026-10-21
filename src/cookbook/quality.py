@@ -1,12 +1,13 @@
 """Publisher-level OCR gate and a new-build finalizer; no mutation of published versions."""
 
-from datetime import datetime, timezone
 import hashlib
 import json
-from pathlib import Path
 import shutil
 import sqlite3
 import uuid
+from datetime import UTC, datetime
+from pathlib import Path
+
 from .ocr import POLICY, ReviewRequired, effective, load_record
 from .storage import IntegrityError, atomic_write, canonical, digest_file
 
@@ -152,8 +153,10 @@ def _stored_ledger(files_by_path, inputs, sha):
 def _check_bindings(db, rows, item, source_id):
     """Every stored correction names this source; every applied one sits on its page.
 
-    The summary's applied ids must be ledger rows whose page is in the source, whose page
-    unit records the id, and every unit recording the id must come from that page.
+    The summary's applied ids must be ledger rows whose page is in the source, and every
+    unit recording the id must come from that page. The page unit records it, unless the
+    quote was found only in the cited section's text from that page: then the cited
+    section is the only unit that does.
     """
     by_id = {r["id"]: r for r in rows}
     for r in rows:
@@ -172,19 +175,25 @@ def _check_bindings(db, rows, item, source_id):
         locator = json.loads(locator)
         pages = locator.get("physical_pages") or [locator.get("physical_page")]
         for c in json.loads(value):
-            recorded.setdefault(c.get("id"), []).append((locator["kind"], pages))
+            recorded.setdefault(c.get("id"), []).append(
+                (unit_id, locator["kind"], pages)
+            )
     for cid in applied:
         if cid not in by_id:
             raise IntegrityError(
                 f"applied correction {cid} is not in the stored ledger"
             )
-        page = by_id[cid]["physical_page"]
+        page, cited = by_id[cid]["physical_page"], by_id[cid]["section_id"]
         units = recorded.get(cid, [])
         if (
             not isinstance(item.get("pages_total"), int)
             or page > item["pages_total"]
-            or ("page", [page]) not in units
-            or any(page not in pages for _, pages in units)
+            or not units
+            or any(page not in pages for _, _, pages in units)
+            or (
+                ("page", [page]) not in [(kind, pages) for _, kind, pages in units]
+                and {unit for unit, _, _ in units} != {cited}
+            )
         ):
             raise IntegrityError(f"correction {cid} does not bind to its page")
 
@@ -354,7 +363,7 @@ def check_transcription(manifest, inputs, db):
 
 
 def finalize(build: Path, cache: Path, output: Path):
-    from .publication import Manifest, Entry
+    from .publication import Entry, Manifest
 
     if output.exists():
         raise IntegrityError("finalized build directory must be new")
@@ -429,7 +438,7 @@ def finalize(build: Path, cache: Path, output: Path):
         update={
             "publication_id": pub,
             "files": entries,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
         }
     )
     check_publish_quality(m, inputs)
