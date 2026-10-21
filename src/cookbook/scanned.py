@@ -940,13 +940,20 @@ def correction_counts(summary):
 def build_report(results):
     """The build report for scanned imports (``import_candidate`` results, any order).
 
-    Totals and per-source correction counts, plus the owner queue of ambiguous corrections.
-    It stays in the build directory; it is not part of the publication.
+    Totals and, per source, its Calibre ids, page coverage, section, unresolved and
+    correction counts, plus the owner queue of ambiguous corrections. It stays in the
+    build directory; it is not part of the publication.
     """
     results = sorted(results, key=lambda r: r["summary"]["source_id"])
     sources = [
         {
             "source_id": r["summary"]["source_id"],
+            "calibre_ids": sorted(r.get("calibre_ids", [])),
+            "pages": {
+                "total": r["summary"]["pages_total"],
+                **r["summary"]["coverage"],
+            },
+            "sections": r["summary"]["sections"],
             "ledger_sha256": r["summary"]["ledger_sha256"],
             "corrections": correction_counts(r["summary"]),
             "unresolved": r["summary"]["unresolved"],
