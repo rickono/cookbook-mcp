@@ -434,7 +434,14 @@ def test_expanded_index_reload_waits_but_remains_bounded(
         def wait(self, timeout):
             return 0
 
-    monkeypatch.setattr(book_search.subprocess, "Popen", lambda *a, **k: Child())
+    monkeypatch.setenv("REPORTS_AWS_SECRET_ACCESS_KEY", "synthetic-reports-secret")
+    monkeypatch.setenv("REPORTS_S3_BUCKET", "synthetic-reports")
+
+    def spawn(*args, **kwargs):
+        assert not any(name.startswith("REPORTS_") for name in kwargs["env"])
+        return Child()
+
+    monkeypatch.setattr(book_search.subprocess, "Popen", spawn)
     monkeypatch.setattr(book_search.time, "monotonic", lambda: clock[0])
     monkeypatch.setattr(
         book_search.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds)

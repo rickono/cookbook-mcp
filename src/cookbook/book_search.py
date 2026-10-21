@@ -57,7 +57,7 @@ class BookSearch:
         env = {
             k: v
             for k, v in os.environ.items()
-            if not k.startswith(("TYPESENSE_", "AWS_", "S3_", "COOKBOOK_"))
+            if not k.startswith(("TYPESENSE_", "AWS_", "S3_", "COOKBOOK_", "REPORTS_"))
         }
         try:
             self.process = subprocess.Popen(
