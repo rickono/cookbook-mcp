@@ -312,19 +312,11 @@ def tool(client, headers, name, arguments):
     return r["structuredContent"]
 
 
-@pytest.fixture
-def mcp(tmp_path, monkeypatch, keys, mint):
-    from PIL import Image
+def serve(lib, keys, mint):
     from starlette.testclient import TestClient
 
-    import cookbook.library as library_module
     from cookbook.server import JWTVerifier, create_app
 
-    def fake_render(path, fmt, page, destination, edge=1600):
-        Image.new("RGB", (round(edge * 0.75), edge), "white").save(destination, "PNG")
-
-    monkeypatch.setattr(library_module, "render_page", fake_render)
-    lib = publish_build(tmp_path, *build(tmp_path, registry(tmp_path))[:2])
     verifier = JWTVerifier(
         issuer="https://issuer.example/",
         audience="https://service.example",
@@ -332,7 +324,31 @@ def mcp(tmp_path, monkeypatch, keys, mint):
         public_key=keys[1],
     )
     headers = {"Authorization": "Bearer " + mint(aud="https://service.example")}
-    with TestClient(create_app(lib, verifier), base_url="https://service.example") as c:
+    client = TestClient(create_app(lib, verifier), base_url="https://service.example")
+    return client, headers
+
+
+@pytest.fixture
+def mcp(tmp_path, monkeypatch, keys, mint):
+    from PIL import Image
+
+    import cookbook.library as library_module
+
+    def fake_render(path, fmt, page, destination, edge=1600):
+        Image.new("RGB", (round(edge * 0.75), edge), "white").save(destination, "PNG")
+
+    monkeypatch.setattr(library_module, "render_page", fake_render)
+    lib = publish_build(tmp_path, *build(tmp_path, registry(tmp_path))[:2])
+    client, headers = serve(lib, keys, mint)
+    with client as c:
+        yield c, headers
+
+
+@pytest.fixture
+def epub_mcp(tmp_path, keys, mint):
+    lib = publish_build(tmp_path, *fixture_build(tmp_path / "epub"))
+    client, headers = serve(lib, keys, mint)
+    with client as c:
         yield c, headers
 
 
@@ -351,6 +367,7 @@ def test_instructions_explain_the_unapproved_label_and_markers(mcp):
     text = init["instructions"]
     assert "agent transcription, unapproved" in text
     assert "[unresolved" in text and "get_page" in text
+    assert "check_regions" in text and "crop_confirmed" in text
 
 
 def test_agent_reads_a_scanned_recipe_through_the_mcp(mcp):
@@ -415,3 +432,97 @@ def test_agent_reads_a_scanned_recipe_through_the_mcp(mcp):
         },
     )
     assert card["recipe"]["source"]["citations"][0]["physical_pages"] == [1, 2]
+
+
+# -- check regions and publication counts (#50) ------------------------------------------
+
+
+def ids_of(citation):
+    return {k: citation[k] for k in ("publication_id", "book_id", "source_id")}
+
+
+def find(client, headers, query):
+    return tool(client, headers, "search_library", {"query": query})["results"][0][
+        "citation"
+    ]
+
+
+def read(client, headers, citation):
+    return tool(
+        client,
+        headers,
+        "read_section",
+        {**ids_of(citation), "section_id": citation["section_id"]},
+    )
+
+
+def test_read_section_returns_a_check_region_per_review_box_and_unresolved_item(mcp):
+    client, headers = mcp
+    regions = read(client, headers, find(client, headers, "plain soup"))[
+        "check_regions"
+    ]
+    assert sorted((r["state"], r["physical_page"], r["box"]) for r in regions) == [
+        ("crop_confirmed", 1, [0.1, 0.4, 0.9, 0.7]),
+        ("unresolved", 1, [0.1, 0.4, 0.9, 0.7]),
+    ]
+    unresolved = next(r for r in regions if r["state"] == "unresolved")
+    assert unresolved["unresolved_id"] == "u1" and unresolved["code"] == "amount"
+
+
+def test_each_check_region_zooms_through_get_page_unchanged(mcp):
+    client, headers = mcp
+    citation = find(client, headers, "plain soup")
+    for region in read(client, headers, citation)["check_regions"]:
+        page = tool(
+            client,
+            headers,
+            "get_page",
+            {
+                **ids_of(citation),
+                "physical_page": region["physical_page"],
+                "region": region["box"],
+            },
+        )
+        assert page["region"] == region["box"]
+        assert page["citation"]["locator"]["physical_page"] == region["physical_page"]
+
+
+def test_a_scanned_section_without_quantities_has_no_check_regions(mcp):
+    client, headers = mcp
+    citation = find(client, headers, "green lentils")
+    assert citation["section_title"] == "ON LENTILS"
+    assert read(client, headers, citation)["check_regions"] == []
+
+
+def test_epub_read_section_response_is_unchanged(epub_mcp):
+    client, headers = epub_mcp
+    section = read(client, headers, find(client, headers, "bean"))
+    assert set(section) == {
+        "citation",
+        "text",
+        "text_offset",
+        "next_offset",
+        "kind",
+        "image_ids",
+    }
+    assert set(section["citation"]["extraction"]) == {"provenance", "version"}
+
+
+def test_publication_info_counts_scanned_books_corrections_and_unresolved_items(mcp):
+    client, headers = mcp
+    info = tool(client, headers, "get_publication_info", {})
+    assert info["counts"] == {
+        "scanned_books": 1,
+        "applied_corrections": 0,
+        "unresolved_items": 1,
+    }
+
+
+def test_publication_info_counts_are_zero_without_scanned_books(epub_mcp):
+    client, headers = epub_mcp
+    info = tool(client, headers, "get_publication_info", {})
+    assert info["counts"] == {
+        "scanned_books": 0,
+        "applied_corrections": 0,
+        "unresolved_items": 0,
+    }

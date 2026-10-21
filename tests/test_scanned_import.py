@@ -68,7 +68,7 @@ def test_unresolved_quantity_is_a_marker_and_raw_crop_readings_never_appear():
 def test_check_regions_keep_review_and_unresolved_boxes():
     recipe = by_title(run())["LENTIL SOUP"]
     regions = recipe["transcription"]["check_regions"]
-    assert {r["state"] for r in regions} == {"crop_reviewed", "unresolved"}
+    assert {r["state"] for r in regions} == {"crop_confirmed", "unresolved"}
     unresolved = next(r for r in regions if r["state"] == "unresolved")
     assert unresolved["unresolved_id"] == "u1"
     assert unresolved["code"] == "amount"
