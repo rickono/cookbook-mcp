@@ -58,32 +58,17 @@ def refresh(
     store,
     activate,
     work: Path,
-    limit=20,
-    reader=tr.READER,
-    admission=tr.doctor,
-    books=tr.registered_books,
-    crop=None,
-    call=None,
     ocr_cache=None,
     log=print,
+    **triage_options,
 ):
     """One refresh run; the caller holds the publisher lock. Returns its JSON summary.
 
-    admission, books, crop and call are the triage's injectable sandbox check, helper
-    registry, guarded crop and reader (see triage_reports.run).
+    ``triage_options`` (limit, reader, and the injectable admission, books, crop and
+    call) go to triage_reports.run unchanged; its defaults apply.
     """
     before = _keys(out)
-    triage = tr.run(
-        reports,
-        out,
-        limit=limit,
-        reader=reader,
-        admission=admission,
-        books=books,
-        crop=crop or tr.fp.guarded_crop,
-        call=call or tr.rd.call,
-        log=log,
-    )
+    triage = tr.run(reports, out, log=log, **triage_options)
     rows = ledger.read(out / ledger.FILE)
     published = republish(
         store,
