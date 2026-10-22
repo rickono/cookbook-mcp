@@ -38,8 +38,9 @@ HELPER = (
 )  # runs scripts/ocr_sandbox.py
 
 READERS = []  # set by bench.py: e.g. ["claude:claude-haiku-5-5#1", "...#2", "...#3"]
-FALLBACK = None  # set by bench.py --fallback: page reader used only when READERS[0]'s page read
-# is refused by a provider output filter, e.g. "codex:gpt-6-luna@low#fallback"
+FALLBACK = (
+    None  # Historical config metadata only; refusals never dispatch another reader.
+)
 
 PAGE_PROMPT = (
     "Transcribe every word printed on the attached cookbook page image exactly as printed, "
@@ -392,7 +393,11 @@ def run_page(out, book, page, meta=None):
     guarded helper's render)."""
     dest = out / "pages" / f"b{book}-p{page:03d}.json"
     if dest.exists():
-        return json.loads(dest.read_text())
+        saved = json.loads(dest.read_text())
+        if rd.has_refusal(saved):
+            saved.update(refused=True, failed=True, final_text="", corrections=[])
+            saved["page_read"]["text"] = None
+        return saved
     meta = meta or image_meta(book, page)
     t0 = time.time()
     rec = {
@@ -400,17 +405,30 @@ def run_page(out, book, page, meta=None):
         "page": page,
         "image": meta["image"],
         "image_sha256": meta["sha256"],
+        "regions": {"by_model": {}, "calls": [], "merged": []},
+        "crops": [],
     }
+
+    def preserve_refusal():
+        rec.update(refused=True, failed=True, final_text="", corrections=[])
+        rec["page_read"]["text"] = None
+        rec["seconds"] = round(time.time() - t0)
+        dest.parent.mkdir(exist_ok=True)
+        dest.write_text(json.dumps(rec, ensure_ascii=False, indent=1))
+        return rec
+
     text, c = rd.call(out, READERS[0], PAGE_PROMPT, meta["image"])
     tried = [c]
-    if text is None and FALLBACK and rd.filtered(c):
-        text, c = rd.call(out, FALLBACK, PAGE_PROMPT, meta["image"])
-        tried.append({**c, "fallback_for": "output filter"})
     rec["page_read"] = {"text": text, "calls": tried}
+    if rd.refused(c):
+        return preserve_refusal()
     boxes, calls = {}, []
     for m in READERS:
         t, c = rd.call(out, m, REGION_PROMPT, meta["image"])
         calls.append({**c, "raw": t})
+        if rd.refused(c):
+            rec["regions"] = {"by_model": boxes, "calls": calls, "merged": []}
+            return preserve_refusal()
         boxes[m] = parse_regions(t)
     rec["regions"] = {"by_model": boxes, "calls": calls, "merged": cluster(boxes)}
     crops, voted_all = [], []
@@ -422,6 +440,11 @@ def run_page(out, book, page, meta=None):
             for m in READERS:
                 t, c = rd.call(out, m, CROP_PROMPT, crop["image"])
                 ccalls.append(c)
+                if rd.refused(c):
+                    crop["calls"] = ccalls
+                    crops.append(crop)
+                    rec["crops"] = crops
+                    return preserve_refusal()
                 if t:
                     readings[m] = t
             crop["readings"], crop["calls"] = readings, ccalls

@@ -51,7 +51,8 @@ def test_actual_reader_refusals_remain_failed_calls(tmp_path, monkeypatch, text)
     monkeypatch.setattr(readers.time, "sleep", lambda seconds: None)
     result, record = readers.call(tmp_path, R[0], "Transcribe this page.", "page.jpg")
     assert result is None
-    assert len(record["errors"]) == 3
+    assert len(record["errors"]) == 1
+    assert record["refused"] is True
     assert all(error.startswith("refusal:") for error in record["errors"])
 
 
@@ -161,11 +162,11 @@ def test_list_cost_uses_price_table_and_refuses_unknown_readers():
 @pytest.mark.parametrize(
     ("error", "used"),
     [
-        ("API Error: Output blocked by content filtering policy", True),
+        ("API Error: Output blocked by content filtering policy", False),
         ("timeout 300s", False),
     ],
 )
-def test_fallback_reads_only_pages_the_output_filter_refused(
+def test_fallback_never_retries_a_provider_policy_refusal(
     tmp_path, monkeypatch, error, used
 ):
     def call(out, reader, prompt, image, **kw):

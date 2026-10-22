@@ -9,8 +9,9 @@ generalised from the frozen benchmark page list to a registered book's full page
   production.py seed     BOOK... [--from WORK]           copy pages this config already read (the
                                                          benchmark cell by default); reads EXP only
 
-The reader is fixed to the production config: Claude Haiku 5.5 x3, with Codex Luna low reading only
-pages Anthropic's output filter refuses. Everything is written under
+The historical config label records Claude Haiku 5.5 x3 with a Codex Luna fallback.
+Provider refusals are now terminal: no fallback, alternate prompt or later pass retries them.
+Everything is written under
 $COOKBOOK_DATA/production/transcription/<config>/, never to the frozen benchmark (EXP, reader-bench
 work dirs, baseline.json). `run` refuses to start unless scripts/ocr_sandbox.py doctor passes, and
 page images and crops come only from the registered-book helper, which runs each job through the
@@ -143,12 +144,22 @@ def blank(n, book, page):
     return candidate.blank_evidence(json.loads(f.read_text()), BLANK_ROUNDS) is not None
 
 
+def refused(n, book, page):
+    """A recorded refusal remains a failed page across resume passes."""
+    return any(
+        f.exists() and rd.has_refusal(json.loads(f.read_text()))
+        for f in (failure_file(n, book, page), page_file(n, book, page))
+    )
+
+
 def run_book(n, book, images, workers):
     meta = {r["physical_page"]: r for r in images}
     jobs = [
         p
         for p in sorted(meta)
-        if not page_file(n, book, p).exists() and not blank(n, book, p)
+        if not page_file(n, book, p).exists()
+        and not blank(n, book, p)
+        and not refused(n, book, p)
     ]
 
     def one(page):
@@ -180,12 +191,16 @@ def run_book(n, book, images, workers):
 def progress(n, book, reg):
     """Pages transcribed, blank, failed and not yet tried, and list-price cost so far."""
     pages = range(1, reg["physical_pages"] + 1)
-    done = [p for p in pages if page_file(n, book, p).exists()]
+    done = [
+        p for p in pages if page_file(n, book, p).exists() and not refused(n, book, p)
+    ]
     blanks = [p for p in pages if blank(n, book, p)]
     failed = [
         p
         for p in pages
-        if p not in done and p not in blanks and failure_file(n, book, p).exists()
+        if p not in done
+        and p not in blanks
+        and (failure_file(n, book, p).exists() or refused(n, book, p))
     ]
     paid = sorted((n["work"] / "pages").glob(f"b{book}-p*.json")) + sorted(
         (n["work"] / "failures").glob(f"b{book}-p*.json")
@@ -309,7 +324,10 @@ def assemble_book(n, book, reg, workers=4, allow_missing=False):
     images = page_images(n, book, reg, no_render)
     pages = range(1, reg["physical_pages"] + 1)
     lost = [
-        p for p in pages if not page_file(n, book, p).exists() and not blank(n, book, p)
+        p
+        for p in pages
+        if (not page_file(n, book, p).exists() and not blank(n, book, p))
+        or refused(n, book, p)
     ]
     if lost and not allow_missing:
         sys.exit(

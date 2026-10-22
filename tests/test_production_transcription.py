@@ -113,11 +113,6 @@ class Fakes:
             if page == self.stop_on:
                 readers.STOP.set()
                 return None, {"model": reader, "errors": ["usage limit reached"]}
-            if page == 2 and reader != LUNA:
-                return None, {
-                    "model": reader,
-                    "errors": ["API Error: Output blocked by content filtering policy"],
-                }
             if page == 3:
                 return None, {"model": reader, "errors": ["empty response"] * 3}
             if page == 4:
@@ -171,8 +166,8 @@ def test_any_registered_book_is_transcribed_over_its_full_page_range(world):
     p1 = json.loads((pages / "b7-p001.json").read_text())
     assert p1["final_text"] == "BREAD\n1⅓ cups flour\n¾ cup sugar"
     p2 = json.loads((pages / "b7-p002.json").read_text())
-    assert p2["page_read"]["calls"][-1]["model"] == LUNA
-    # page calls: p1 1+3+3, p2 3 haiku + 1 luna, p3 and p4 3 region calls on each of 2 passes
+    assert p2["page_read"]["calls"][-1]["model"] == HAIKU[0]
+    # page calls: p1 1+3+3, p2 1+3, p3 and p4 3 region calls on each of 2 passes
     assert progress == {
         "book": BOOK,
         "pages": 4,
@@ -206,6 +201,57 @@ def test_rerun_retries_failed_pages_but_not_blank_ones(world):
     [progress] = transcribe(world)
     assert {p for _, _, p in world.calls} == {4}
     assert (progress["blank"], progress["failed"]) == (1, 1)
+
+
+def test_refused_page_is_failed_in_candidate_and_never_retried(world, monkeypatch):
+    call = world.call
+    blocked_calls = []
+
+    def refuse(out, reader, prompt, image, **kwargs):
+        if prompt == pipeline.PAGE_PROMPT and image.endswith("-p2.jpg"):
+            blocked_calls.append(reader)
+            return None, {
+                "model": reader,
+                "errors": ["API Error: Output blocked by content filtering policy"],
+            }
+        return call(out, reader, prompt, image, **kwargs)
+
+    monkeypatch.setattr(pipeline.rd, "call", refuse)
+    out = assembled(world, monkeypatch)
+    [progress] = transcribe(world)
+    assert blocked_calls == [HAIKU[0]]
+    assert (progress["transcribed"], progress["blank"], progress["failed"]) == (1, 1, 2)
+    page = rows(out / "pages.jsonl")[1]
+    assert page["status"] == "failed" and page["text"] == ""
+    assert page["unresolved_ids"] and not page["section_ids"]
+
+
+def test_historical_fallback_record_is_excluded_by_offline_assembly(world, monkeypatch):
+    out = assembled(world, monkeypatch)
+    path = production.page_file(world.n, BOOK, 2)
+    raw = json.loads(path.read_text())
+    raw["page_read"]["calls"].insert(
+        0,
+        {
+            "model": HAIKU[0],
+            "errors": ["API Error: Output blocked by content filtering policy"],
+        },
+    )
+    path.write_text(json.dumps(raw))
+    preserved = path.read_bytes()
+    world.calls = []
+    try:
+        cli(world, monkeypatch, "assemble", str(BOOK), "--allow-missing", "--offline")
+    finally:
+        readers.OFFLINE.clear()
+    assert world.calls == [] and path.read_bytes() == preserved
+    page = rows(out / "pages.jsonl")[1]
+    assert page["status"] == "failed" and page["text"] == ""
+    assert not any(
+        part["source_page"] == 2
+        for section in rows(out / "sections.jsonl")
+        for part in section["parts"]
+    )
 
 
 def cli(world, monkeypatch, *argv):
@@ -320,7 +366,7 @@ def test_candidate_pages_account_for_every_physical_page(world, monkeypatch):
     assert (p1["printed_page"], p1["section_ids"], p1["unresolved_ids"]) == (
         "12", ["7:bread"], ["u3"],
     )  # fmt: skip
-    assert (p1["page_reader"], p2["page_reader"]) == (HAIKU[0], LUNA)
+    assert (p1["page_reader"], p2["page_reader"]) == (HAIKU[0], HAIKU[0])
     assert p1["vote_correction_ids"] == ["7:p001:c0", "7:p001:c1"]
     assert p1["image_sha256"] == f"{1:064x}"
     assert p3["blank_evidence"] == {
@@ -503,7 +549,7 @@ def test_seeded_work_area_assembles_offline_without_repaying_any_page(
     m = json.loads((world.n["work"] / "manifest.json").read_text())
     assert m["seeded"][0]["from"] == str(other["work"])
     assert m["seeded"][0]["books"] == {
-        str(BOOK): {"pages": 2, "labels": 4, "failures": 2}
+        str(BOOK): {"pages": 2, "labels": 2, "failures": 2}
     }
 
 

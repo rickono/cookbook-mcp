@@ -268,6 +268,29 @@ def filtered(record):
     return any(FILTER_RE.search(e) for e in record["errors"])
 
 
+def refused(record):
+    """Identify actual provider refusals, including saved records from older runners."""
+    return bool(record.get("refused")) or any(
+        FILTER_RE.search(error)
+        or (
+            error.startswith("refusal: ")
+            and REFUSAL_RE.search(error.removeprefix("refusal: "))
+        )
+        for error in record.get("errors", [])
+    )
+
+
+def has_refusal(value):
+    """Inspect call records only; authored page text is never a refusal signal."""
+    if isinstance(value, dict):
+        if "model" in value and "errors" in value:
+            return refused(value)
+        return any(has_refusal(v) for v in value.values())
+    if isinstance(value, list):
+        return any(has_refusal(v) for v in value)
+    return False
+
+
 def call(out, reader, prompt, image, attempts=3, timeout=300):
     """One reader sample. Returns (text or None, call record); the record is what costs.py prices."""
     backend, model, effort = parse(reader)
@@ -286,6 +309,12 @@ def call(out, reader, prompt, image, attempts=3, timeout=300):
             )
             if text.strip() and REFUSAL_RE.search(text[:400]):
                 err, text = "refusal: " + text[:200], ""
+            if err and refused({"errors": [err]}):
+                return None, {
+                    "model": reader,
+                    "errors": errors + [err],
+                    "refused": True,
+                }
             if text.strip() and "NO_IMAGE" not in text:
                 return text, {
                     "model": reader,

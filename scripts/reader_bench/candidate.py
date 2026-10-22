@@ -19,6 +19,7 @@ import shutil
 
 import assemble as asm
 import pipeline as fp
+import readers as rd
 
 from cookbook.scanned import BLANK_RULE, EMPTY_RESPONSE, VERSION
 from cookbook.storage import canonical
@@ -172,7 +173,7 @@ def write(assembly, work, images, failures, out, blank_rounds):
     for p in universe:
         f = work / "pages" / f"b{book}-p{p:03d}.json"
         rec = json.loads(f.read_text()) if f.exists() else None
-        if rec and rec.get("final_text"):  # the assembler's own test for a failed page
+        if rec and rec.get("final_text") and not rd.has_refusal(rec):
             records[p], status[p] = rec, "transcribed"
         else:
             evidence[p] = blank_evidence(failures.get(p), blank_rounds)
