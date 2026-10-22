@@ -170,6 +170,20 @@ def patch(page_text, voted, page_model=None):
     Wording and each quantity position are voted separately, so formatting differences
     between readers ('2¾ lb (4)' vs '2¾ lb | (4)') no longer split a quantity vote.
     A change needs a strict majority of all ballots; missing readings count against."""
+    return _patch(page_text, voted, page_model, reviewed=False)
+
+
+def reviewed_patch(page_text, voted, page_model=None):
+    """Replay saved votes for review, preserving headings and existing occurrences.
+
+    This is separate from the frozen benchmark and production page reader. It makes
+    no calls and writes nothing; reviewed derivatives need their own admission and
+    provenance before a build can use them.
+    """
+    return _patch(page_text, voted, page_model, reviewed=True)
+
+
+def _patch(page_text, voted, page_model, *, reviewed):
     lines = page_text.splitlines()
     used, corrections = set(), []
     for v in voted:
@@ -177,7 +191,11 @@ def patch(page_text, voted, page_model=None):
         page_votes = page_model not in v.get("readers", by_model)
         voters = v["of"] + page_votes
         for i, line in enumerate(lines):
-            if i in used or not similar(key(clean_line(line)), v["key"]):
+            if (
+                i in used
+                or (reviewed and not qty(line))
+                or not similar(key(clean_line(line)), v["key"])
+            ):
                 continue
             used.add(i)
             new, why = line, []
@@ -218,6 +236,13 @@ def patch(page_text, voted, page_model=None):
                 )
             break
         else:
+            # Overlapping crops can vote for the same source occurrence. Once its
+            # existing amount line has been used, another vote is not evidence of
+            # missing text. Keep authored repetitions already present in `lines`.
+            if reviewed and any(
+                qty(line) and similar(key(clean_line(line)), v["key"]) for line in lines
+            ):
+                continue
             if not v["tie"] and v["support"] * 2 > voters - page_votes:
                 corrections.append(
                     {
