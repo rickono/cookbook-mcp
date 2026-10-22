@@ -15,6 +15,46 @@ import readers
 R = [f"claude:claude-haiku-5-5#{k}" for k in (1, 2, 3)]
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "A cook's note\n\nI can't wait to share this simple soup.\n2 onions",
+        "Copyrighted 2026 by Imaginary Kitchen.\nAll rights reserved.",
+    ],
+)
+def test_authored_prose_is_not_a_reader_refusal(tmp_path, monkeypatch, text):
+    monkeypatch.setitem(
+        readers.BACKENDS,
+        "claude",
+        lambda *args: (text, None, None, None),
+    )
+    monkeypatch.setattr(readers.time, "sleep", lambda seconds: None)
+    result, record = readers.call(tmp_path, R[0], "Transcribe this page.", "page.jpg")
+    assert result == text
+    assert record["errors"] == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "I can't continue that transcription.",
+        "Sorry, I cannot reproduce this page.",
+        "A heading\nI am not able to provide the requested transcription.",
+    ],
+)
+def test_actual_reader_refusals_remain_failed_calls(tmp_path, monkeypatch, text):
+    monkeypatch.setitem(
+        readers.BACKENDS,
+        "claude",
+        lambda *args: (text, None, None, None),
+    )
+    monkeypatch.setattr(readers.time, "sleep", lambda seconds: None)
+    result, record = readers.call(tmp_path, R[0], "Transcribe this page.", "page.jpg")
+    assert result is None
+    assert len(record["errors"]) == 3
+    assert all(error.startswith("refusal:") for error in record["errors"])
+
+
 def test_crop_majority_corrects_quantity_and_supersedes_own_page_read():
     voted = pipeline.vote(
         {R[0]: "1⅓ cups flour", R[1]: "1⅓ cups flour", R[2]: "1½ cups flour"}

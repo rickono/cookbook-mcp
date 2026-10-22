@@ -64,7 +64,12 @@ LIMIT_RE = re.compile(
     r"usage limit|rate.?limit|quota|429|overloaded|too many requests", re.IGNORECASE
 )
 REFUSAL_RE = re.compile(
-    r"^(I can['’]t|I cannot|I'm not able|I am not able|Sorry)|copyrighted",
+    # First-person prose and copyright notices also occur in the source books.
+    # Reject an explicit refusal to perform the task, not those words alone.
+    r"^(?:(?:I['’]m\s+)?sorry[,.!]?\s*(?:but\s+)?)?"
+    r"(?:I\s+(?:can(?:not|['’]t)|won['’]t)|I['’]m not able to|"
+    r"I am not able to|I['’]m unable to|I am unable to|I must decline to)\s+"
+    r"(?:help|assist|transcribe|continue|provide|reproduce|comply|fulfill)\b",
     re.IGNORECASE | re.MULTILINE,
 )
 FILTER_RE = re.compile(r"content filtering policy", re.IGNORECASE)
