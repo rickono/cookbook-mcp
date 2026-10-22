@@ -254,6 +254,68 @@ def test_historical_fallback_record_is_excluded_by_offline_assembly(world, monke
     )
 
 
+@pytest.mark.parametrize("evidence", ["page_record", "failure_sidecar"])
+def test_writer_refuses_a_stale_assembly_with_refused_page_text(
+    world, monkeypatch, evidence
+):
+    out = assembled(world, monkeypatch)
+    path = production.page_file(world.n, BOOK, 2)
+    record = json.loads(path.read_text())
+    record["page_read"]["calls"].insert(
+        0,
+        {
+            "model": HAIKU[0],
+            "errors": ["API Error: Output blocked by content filtering policy"],
+        },
+    )
+    if evidence == "page_record":
+        path.write_text(json.dumps(record))
+    else:
+        production.record_failure(world.n, BOOK, 2, record)
+    images = json.loads((out.parent / "images.json").read_text())
+    failures = {
+        p: json.loads(production.failure_file(world.n, BOOK, p).read_text())
+        for p in range(1, 5)
+        if production.failure_file(world.n, BOOK, p).exists()
+    }
+    with pytest.raises(SystemExit, match="refused page"):
+        production.candidate.write(
+            out.parent / "assembly",
+            world.n["work"],
+            images,
+            failures,
+            out.parent / "stale-candidate",
+            2,
+        )
+    assert not (out.parent / "stale-candidate").exists()
+
+
+def test_offline_assembly_respects_a_refusal_in_an_older_failure_sidecar(
+    world, monkeypatch
+):
+    out = assembled(world, monkeypatch)
+    rec = json.loads(production.page_file(world.n, BOOK, 2).read_text())
+    rec["page_read"]["calls"] = [
+        {
+            "model": HAIKU[0],
+            "errors": ["API Error: Output blocked by content filtering policy"],
+        }
+    ]
+    production.record_failure(world.n, BOOK, 2, rec)
+    world.calls = []
+    try:
+        cli(world, monkeypatch, "assemble", str(BOOK), "--allow-missing", "--offline")
+    finally:
+        readers.OFFLINE.clear()
+    assert world.calls == []
+    assert rows(out / "pages.jsonl")[1]["status"] == "failed"
+    assert not any(
+        part["source_page"] == 2
+        for section in rows(out / "sections.jsonl")
+        for part in section["parts"]
+    )
+
+
 def cli(world, monkeypatch, *argv):
     monkeypatch.setattr(production, "REGISTRY", world.registry)
     monkeypatch.setattr(production, "PROD", world.n["root"].parent)

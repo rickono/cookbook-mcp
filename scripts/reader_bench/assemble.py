@@ -634,7 +634,11 @@ def assemble(
         f = pipe / "pages" / f"b{book}-p{p['physical_page']:03d}.json"
         if f.exists():
             saved = json.loads(f.read_text())
-            if not rd.has_refusal(saved):
+            failure = pipe / "failures" / f.name
+            old_refusal = failure.exists() and rd.has_refusal(
+                json.loads(failure.read_text())
+            )
+            if not rd.has_refusal(saved) and not old_refusal:
                 pages[p["physical_page"]] = saved
     missing = [p["physical_page"] for p in images if p["physical_page"] not in pages]
     if missing and not allow_missing:
