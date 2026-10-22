@@ -146,8 +146,14 @@ def frozen_images(book):
     return json.loads((EXP / f"inputs/books/{book}/images.json").read_text())
 
 
-def build(book, pages, labels, cfg, model, outdir, images=None):
-    """images: the book's page image records; by default the frozen benchmark's images.json."""
+def build(
+    book, pages, labels, cfg, model, outdir, images=None, *, review_failures=False
+):
+    """images: the book's page image records; by default the frozen benchmark's images.json.
+
+    Review derivatives opt into explicit missing-crop checks. The frozen assembly
+    path stays unchanged; neither path retries a crop or makes a model call.
+    """
     images = {p["physical_page"]: p for p in images or frozen_images(book)}
     sections, order, ids = {}, [], set()
     page_sections = {p: [] for p in images}
@@ -398,6 +404,26 @@ def build(book, pages, labels, cfg, model, outdir, images=None):
         }
         page_lines = lines_of(rec)
         for n, c in enumerate(rec.get("crops") or []):
+            if review_failures and (
+                "image" not in c or len(c.get("readings") or {}) < 2
+            ):
+                # A failed render or insufficient readings never confirms a
+                # quantity. Review derivatives retain that missing check without
+                # retrying it or inventing a crop-image receipt.
+                for sid in qty_secs or [None]:
+                    n_unres += 1
+                    unresolved.append(
+                        {
+                            "id": f"u{n_unres}",
+                            "section_id": sid,
+                            "physical_page": page,
+                            "source_fragment": None,
+                            "field": "amount",
+                            "reason": "quantity crop unavailable or unconfirmed; page read kept",
+                            "proposed_value": None,
+                            "box": c.get("box") or [0, 0, 1, 1],
+                        }
+                    )
             if "image" not in c:
                 continue
             reviewed, uncertain = [], []

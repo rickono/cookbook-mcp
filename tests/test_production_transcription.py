@@ -399,6 +399,47 @@ def test_candidate_unresolved_items_carry_code_box_and_review_link(world, monkey
     ]  # fmt: skip
 
 
+@pytest.mark.parametrize("failure", ["render", "readings"])
+def test_unavailable_quantity_crop_remains_explicitly_unresolved(
+    world, monkeypatch, failure
+):
+    build = assemble.build
+    monkeypatch.setattr(
+        assemble,
+        "build",
+        lambda *args, **kwargs: build(*args, **kwargs, review_failures=True),
+    )
+    if failure == "render":
+        monkeypatch.setattr(
+            pipeline, "guarded_crop", lambda *args: {"error": "sandbox slot busy"}
+        )
+    else:
+        call = world.call
+
+        def fail_crop(out, reader, prompt, image, **kwargs):
+            if prompt == pipeline.CROP_PROMPT:
+                return None, {"model": reader, "errors": ["provider refused crop"]}
+            return call(out, reader, prompt, image, **kwargs)
+
+        monkeypatch.setattr(pipeline.rd, "call", fail_crop)
+    out = assembled(world, monkeypatch)
+    unresolved = [u for u in rows(out / "unresolved.jsonl") if u["physical_page"] == 1]
+    assert len(unresolved) == 1
+    [item] = unresolved
+    assert item["code"] == "other" and item["field"] == "amount"
+    assert item["box"] == [0.08, 0.18, 0.62, 0.52]
+    assert item["section_id"] == "7:bread"
+    from cookbook.scanned import import_candidate, read_candidate
+
+    imported = import_candidate(
+        read_candidate(out), source_id="pdf:" + SHA, source_sha256=SHA, physical_pages=4
+    )
+    section_units = [
+        u for u in imported["units"] if u["locator"]["kind"] == "scanned-section"
+    ]
+    assert any("[unresolved " in u["text"] for u in section_units)
+
+
 def test_reassembly_from_the_caches_is_offline_and_byte_identical(world, monkeypatch):
     out = assembled(world, monkeypatch)
     first = {f.name: f.read_bytes() for f in out.iterdir()}

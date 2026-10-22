@@ -183,10 +183,28 @@ def reviewed_patch(page_text, voted, page_model=None):
     return _patch(page_text, voted, page_model, reviewed=True)
 
 
-def _patch(page_text, voted, page_model, *, reviewed):
+def patch_origins(page_text, voted, page_model=None, *, reviewed=False):
+    """Replay with stable origins for nonblank output lines, without model calls.
+
+    Each origin names an original page-read line or an appended crop vote. They
+    let a review remap cached line labels by identity rather than fuzzy text matches.
+    The ordinary patch API and its frozen behavior are unchanged.
+    """
+    origins = [("page", i) for i in range(len(page_text.splitlines()))]
+    text, corrections = _patch(
+        page_text, voted, page_model, reviewed=reviewed, origins=origins
+    )
+    return (
+        text,
+        corrections,
+        [origin for origin, line in zip(origins, text.splitlines()) if line.strip()],
+    )
+
+
+def _patch(page_text, voted, page_model, *, reviewed, origins=None):
     lines = page_text.splitlines()
     used, corrections = set(), []
-    for v in voted:
+    for vote_index, v in enumerate(voted):
         by_model = v["readings"]
         page_votes = page_model not in v.get("readers", by_model)
         voters = v["of"] + page_votes
@@ -261,6 +279,8 @@ def _patch(page_text, voted, page_model, *, reviewed):
                     }
                 )
                 lines.append(v["line"])
+                if origins is not None:
+                    origins.append(("vote", vote_index))
     return "\n".join(lines), corrections
 
 

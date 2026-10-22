@@ -30,6 +30,7 @@ CODES = {
     "crop readers did not reach a majority": "amount",
     "crop majority not confirmed per quantity; page read kept": "amount",
     "crop majority not matched to a page-read line; not applied": "amount",
+    "quantity crop unavailable or unconfirmed; page read kept": "other",
 }
 FAILED = "page transcription failed"
 ASSEMBLY = [
@@ -147,7 +148,7 @@ def link_unresolved(unresolved, reviews, keep):
                 "code": CODES[u["reason"]],
                 "reason": u["reason"],
                 "source_fragment": u["source_fragment"],
-                "box": r["request"]["box"] if r else WHOLE_PAGE,
+                "box": r["request"]["box"] if r else u.get("box", WHOLE_PAGE),
                 "review_id": r["id"] if r else None,
                 "crop_readings": u.get("crop_readings") or [],
             }
