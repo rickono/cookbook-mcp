@@ -106,6 +106,23 @@ def test_crop_majority_still_adds_a_missing_distinct_ingredient():
     assert corrections[0]["added"]
 
 
+def test_review_crop_fragment_does_not_duplicate_part_of_an_instruction():
+    sentence = "1. Add 7g synthetic herb and stir for 3 minutes."
+    page = sentence + " Cook until fragrant and serve in warm bowls."
+    voted = pipeline.vote(dict.fromkeys(R, sentence))
+    text, corrections = pipeline.reviewed_patch(page, voted, R[0])
+    assert text == page
+    assert corrections == []
+
+
+def test_review_crop_fragment_does_not_match_inside_another_number():
+    page = "Mix 12g synthetic herb with onions and simmer until fragrant."
+    voted = pipeline.vote(dict.fromkeys(R, "2g synthetic herb"))
+    text, corrections = pipeline.reviewed_patch(page, voted, R[0])
+    assert text == page + "\n2g synthetic herb"
+    assert corrections[0]["added"]
+
+
 @pytest.mark.parametrize("patcher", [pipeline.patch, pipeline.reviewed_patch])
 def test_missing_reading_counts_against_change(patcher):
     voted = pipeline.vote({R[1]: "2 eggs", R[2]: "2 eggs"})

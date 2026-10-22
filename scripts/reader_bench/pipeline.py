@@ -237,10 +237,18 @@ def _patch(page_text, voted, page_model, *, reviewed):
             break
         else:
             # Overlapping crops can vote for the same source occurrence. Once its
-            # existing amount line has been used, another vote is not evidence of
-            # missing text. Keep authored repetitions already present in `lines`.
-            if reviewed and any(
-                qty(line) and similar(key(clean_line(line)), v["key"]) for line in lines
+            # existing amount line has been used, or the crop shows only part of
+            # an existing paragraph, another vote is not evidence of missing text.
+            # Keep authored repetitions already present in `lines`.
+            if reviewed and (
+                any(
+                    qty(line) and similar(key(clean_line(line)), v["key"])
+                    for line in lines
+                )
+                or re.search(
+                    r"(?<!\w)" + re.escape(norm(v["line"])) + r"(?!\w)",
+                    norm(" ".join(lines)),
+                )
             ):
                 continue
             if not v["tie"] and v["support"] * 2 > voters - page_votes:
