@@ -61,7 +61,8 @@ OFFLINE = (
     threading.Event()
 )  # set by --offline: any model call is an error (cache-only rebuilds)
 LIMIT_RE = re.compile(
-    r"usage limit|rate.?limit|quota|429|overloaded|too many requests", re.IGNORECASE
+    r"(?:usage|session)\s+limit|rate.?limit|quota|429|overloaded|too many requests",
+    re.IGNORECASE,
 )
 REFUSAL_RE = re.compile(
     # First-person prose and copyright notices also occur in the source books.
