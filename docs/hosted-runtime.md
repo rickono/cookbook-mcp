@@ -1,14 +1,14 @@
 # Hosted trial runtime
 
-Current status, October 21, 2026: service revision `96612b4` is deployed on the
-existing Fly Machine. It combines scanned transcription/report support with the
-live whole-book recipe features and the bounded manifest cache. The active
-publication remains `e4c84953d6ae46bca9cc31ba37171f15`, with 59 native source books
-and 7,266 candidate recipe records across 55 books. Authenticated publication,
-search and section reads pass. Hosted whole-book checks pass for all 59 source
-roots and title retrieval in all 55 recipe books. The active publication has no
-scanned books yet; scanned publication and its end-to-end acceptance remain pending.
-See the rollout record below and [native recipe interpretation](native-recipe-interpretation.md).
+Current status, October 26, 2026 (owner local time): publication
+`d6e1fc69113c4571bf68e842fd031edf` is active on the existing Fly Machine, with
+59 native EPUB books and 12 scanned PDF books. The native model retains 7,266
+candidate recipe records and 627,907 keyword documents. Exact authenticated
+readiness, catalog, search and reading checks pass. Hosted page and region zoom
+checks pass for all 12 PDFs, including the largest selected file and the book
+with the most pages. Scanned text remains unapproved with 4,329 explicit unresolved
+items. Blind report triage and a changed-ledger refresh remain unverified.
+See the publication records below and [native recipe interpretation](native-recipe-interpretation.md).
 
 Image selection update, September 13: the existing service now exposes
 `list_images` and `inspect_image` before the final `get_image` display. Live
@@ -427,3 +427,53 @@ and retrieved with the Mac reports-only read key. It remains pending independent
 review, with no correction applied. Issue 54 retains the remaining-corpus rendering
 and refresh/triage acceptance work; this publication does not claim a render of
 the unpublished 136 MB PDF or completed blind triage.
+
+## October 26 expanded scanned publication
+
+The owner-authorized 71-book selection is active as publication
+`d6e1fc69113c4571bf68e842fd031edf`, manifest SHA-256
+`b701de975745cbf2cefc587ca95bcca2b785eece81c4f24019d1184b4609f31a`.
+Authenticated acknowledgement and post-activation checks completed on October 27
+UTC (October 26 owner local time). The six owner-held books remain excluded.
+All 15 private production assemblies completed; the nine accepted new books and
+the refusal-safe replacement for Calibre 81 use exact reviewed candidates.
+Calibre 6 and 79 and all 59 native EPUB editions are preserved. The native edition
+with EPUB and AZW3 retains both original formats and counts once.
+
+The 12 PDFs account for 5,143 physical pages: 4,998 transcribed, one blank and
+144 explicitly failed. Failed pages remain empty and unavailable content is
+identified in neighboring served sections. The 4,329 unresolved items remain
+explicit; limited source sampling does not establish whole-book accuracy or
+content approval. No model calls or OCR were made during publication.
+
+The exact source/native-parent audit, publication gate and full native-model
+validation passed under the unchanged resource guard. The native snapshot,
+7,266 recipes and all 627,907 keyword documents are retained. All 11,680 unique
+objects (9,969,025,004 bytes) passed fresh full checksum readback. The three
+runtime files (3,481,621,311 bytes) passed complete checksums and the genuine
+Linux validator. The service image and Machine configuration are unchanged
+from the three-book publication; publisher credentials stayed on the Mac.
+
+Authenticated staged and active checks confirmed the exact 71-book catalog,
+held-book exclusion, searches and section reads for all 12 PDFs, unapproved
+provenance, check regions, native keyword search and native source reading.
+All 24 hosted full-page and region images were visually inspected before
+activation. Calibre 34 is the largest selected PDF by bytes (81,314,309);
+Calibre 61 has the most pages (1,272; 80,326,576 bytes). Both render and zoom.
+The 136 MB PDF is owner-held and is not claimed as published or rendered.
+The 512 MiB original cache and 2,400-pixel render ceiling are unchanged.
+
+Exact authenticated publication/manifest acknowledgement and the active MCP
+checks passed before recording successful history. An independent readback
+confirmed the active pointer and successful-history entry match, with the
+previous mixed publication retained for rollback. The temporary processing
+monitor is disabled and all owned publication jobs have exited.
+
+The Mac's guarded refresh entry point read the existing genuine hosted report
+and passed an unchanged-ledger, zero-triage readiness check with native retention.
+The report remains pending: blind triage and a changed-ledger rebuild/activation
+have not been accepted. Issue 54 remains open for that outstanding work.
+Private receipts, source reviews and hosted images remain outside Git under
+`~/cookbook-mcp-data/publications/scanned-all-20261022/` and the private production
+operations directory. Final model costs were $31.1006 list and $52.3729
+CLI-reported; these are not an invoice.
