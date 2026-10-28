@@ -82,8 +82,12 @@ A decision is written once, to `decisions/<report_id>.json` under `--out` (defau
 `$COOKBOOK_DATA/report-triage`, outside Git), and is never redone.
 
 A crop failure or a timed-out reading is not recorded, so the report is retried on
-the next run. A provider content-filter refusal is a result: the report goes to the
-owner queue and is not worked around. A usage limit stops the run.
+the next run. A provider refusal ends that report's remaining samples immediately.
+The report goes to the owner queue even if earlier samples would form a majority,
+and is never retried or worked around. This includes explicit task refusals and
+provider content-filter errors. A usage, session or rate limit ends sampling and
+stops the run, leaving the report pending. If a refusal also carries limit
+metadata, the refusal is recorded permanently while the run still stops.
 
 Each run rebuilds `ledger.jsonl`, `owner-queue.jsonl` and `owner-queue.md` from
 all decisions. Sources not registered with the helper, and DjVu sources, go to the
@@ -203,23 +207,27 @@ shows:
 
 Resolving an item stays a manual owner step.
 
-## Not done yet
+## Current acceptance and remaining work
 
-- **No scanned book is hosted yet.** The build imports a scanned PDF from a frozen
-  `scanned-candidate.v1` candidate (`cookbook build --scanned-registry registry.json`);
-  the gate accepts its text only through the transcription summary. A PDF without a
-  registered candidate is refused unless it is named in `--force-ocr-books`, which
-  keeps native page OCR and its assessments; a book cannot have both. The three production-transcribed books
-  (#49) are built and published to a local store only; hosted activation waits for the
-  owner. `get_page` renders with poppler's `pdftoppm`. The hosted image installs it;
-  on the Mac it is not on `PATH`, so for local checks put Calibre's bundled copy
-  (`/Applications/calibre.app/Contents/utils.app/Contents/MacOS`) on `PATH`.
+- **The scanned publication is hosted.** The active selection contains 59 native
+  EPUB editions and 12 scanned PDFs. Exact authenticated readiness, catalog,
+  search, reading and all 12 PDFs' page/region renders passed. A genuine hosted
+  report reached the separate reports bucket and the guarded Mac refresh path
+  read it. An unchanged-ledger check published nothing. Blind triage and a
+  changed-ledger rebuild/activation remain unverified; see the current
+  [hosted publication record](hosted-runtime.md#october-26-expanded-scanned-publication).
+- **Build admission remains fail-closed.** The build imports a scanned PDF from a
+  frozen `scanned-candidate.v1` candidate, and the gate accepts its text only
+  through the transcription summary. A PDF without a registered candidate is
+  refused unless explicitly named in `--force-ocr-books`; no native OCR or PDF
+  ingestion bypass is authorized by the report workflow.
 - **The owner queue has no resolution tooling.** Items in `owner-queue.md` wait for
   the owner; nothing records an owner decision back into the ledger yet. The refresh
   runs only by hand.
-- **Hosting is not configured.** See
-  [hosted-runtime.md](hosted-runtime.md#transcription-reports--not-deployed). The
-  bucket, its keys, the Fly secrets and the deploy each need the owner's approval.
+- **Hosting is configured.** The approved reports bucket, separate credentials,
+  Fly settings and deployment are recorded in [hosted-runtime.md](hosted-runtime.md).
+  Publisher credentials remain on the Mac. Future external changes still require
+  the approvals applicable to their scope.
 
 For a mixed publication that also contains a native EPUB whole-book model, refresh
 carries that verified model forward after rebuilding the scanned content. Native

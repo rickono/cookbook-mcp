@@ -147,6 +147,46 @@ def test_a_failed_reading_counts_against_and_is_retried(tmp_path):
     assert d["outcome"] == "owner_queue" and not triage.unsettled(d)
 
 
+@pytest.mark.parametrize(
+    "error",
+    [
+        "API Error: Output blocked by content filtering policy",
+        "refusal: I cannot transcribe this image.",
+    ],
+)
+@pytest.mark.parametrize("refused_sample", [0, 1, 2])
+def test_a_refusal_stops_sampling_and_cannot_produce_a_correction(
+    tmp_path, error, refused_sample
+):
+    readings = ["2 tbsp salt"] * 3
+    readings[refused_sample] = None
+
+    d, seen = run(tmp_path, readings, errors=[error])
+
+    assert len(seen[1:]) == refused_sample + 1
+    assert d["outcome"] == "owner_queue" and not triage.unsettled(d)
+    assert "refused" in d["reason"]
+    (tmp_path / "decisions").mkdir()
+    (tmp_path / "decisions" / "refused.json").write_text(json.dumps(d))
+    assert triage.rebuild(tmp_path)["correction"] == 0
+    assert not (tmp_path / "ledger.jsonl").read_bytes()
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        "Claude AI usage limit reached",
+        "You've hit your session limit · resets later",
+        "429 too many requests",
+    ],
+)
+def test_a_limit_stops_before_another_sample(tmp_path, error):
+    d, seen = run(tmp_path, [None, "2 tbsp salt", "2 tbsp salt"], errors=[error])
+
+    assert len(seen[1:]) == 1
+    assert triage.limited(d) and triage.unsettled(d)
+
+
 def test_whole_page_read_without_region(tmp_path):
     d, seen = run(
         tmp_path, ["…\n2 tbsp salt\n…"] * 3, report={**REPORT, "region": None}

@@ -161,18 +161,30 @@ def triage(report, out, *, books, reader=READER, crop=fp.guarded_crop, call=rd.c
     prompt = fp.CROP_PROMPT if report["region"] else fp.PAGE_PROMPT
     readings, calls = [], []
     for k in range(1, SAMPLES + 1):
+        if rd.STOP.is_set():
+            break
         text, c = call(out, f"{reader}#{k}", prompt, image["image"])
         readings.append(text)
         calls.append(c)
+        if (
+            rd.refused(c)
+            or rd.STOP.is_set()
+            or any(rd.LIMIT_RE.search(e) for e in c.get("errors", []))
+        ):
+            break
     outcome, votes = decide(report, readings)
     reason = f"blind re-read votes {votes}"
-    if outcome == "owner_queue" and any(
-        t is None and rd.filtered(c) for t, c in zip(readings, calls)
-    ):
+    if any(rd.refused(c) for c in calls):
+        outcome = "owner_queue"
         reason = (
-            "the reader's provider refused a reading with its content filter; "
+            "the reader's provider refused a reading; "
             f"not retried or worked around ({reason})"
         )
+    elif rd.STOP.is_set() or any(
+        rd.LIMIT_RE.search(e) for c in calls for e in c.get("errors", [])
+    ):
+        outcome = "owner_queue"
+        reason = "blind re-read stopped on a usage, session or rate limit"
     return {
         **base,
         "outcome": outcome,
@@ -194,8 +206,10 @@ def unsettled(d):
         return False
     if d["reason"] == "guarded crop failed":
         return True
+    if any(rd.refused(c) for c in d.get("calls", [])):
+        return False
     return any(
-        t is None and not rd.filtered(c)
+        t is None and not rd.refused(c)
         for t, c in zip(d.get("readings", []), d.get("calls", []))
     )
 
@@ -340,8 +354,12 @@ def _readings(d):
     for n, (text, call) in enumerate(zip(d["readings"], d["calls"]), 1):
         if text is not None:
             got = json.dumps(text, ensure_ascii=False)
-        elif rd.filtered(call):
-            got = "refused by the provider's content filter"
+        elif rd.refused(call):
+            got = (
+                "refused by the provider's content filter"
+                if rd.filtered(call)
+                else "refused by the reader's provider"
+            )
         else:
             got = "no reading (" + "; ".join(call.get("errors") or ["failed"]) + ")"
         lines.append(f"  {n}. `{call.get('model', d['reader'])}`: {got}")
@@ -421,9 +439,12 @@ def run(
         admission()
         registered = books()
     for r in batch:
+        if rd.STOP.is_set():
+            break
         d = triage(r, out, books=registered, reader=reader, crop=crop, call=call)
         stop = rd.STOP.is_set() or limited(d)
-        if stop or unsettled(d):
+        refused = any(rd.refused(c) for c in d.get("calls", []))
+        if (stop and not refused) or unsettled(d):
             log(
                 json.dumps(
                     {
@@ -449,6 +470,8 @@ def run(
                 }
             )
         )
+        if stop:
+            break
     return {
         "decided": decided,
         "pending": len(pending) - sum(decided.values()),
