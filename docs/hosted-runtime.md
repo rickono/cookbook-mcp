@@ -1,14 +1,17 @@
 # Hosted trial runtime
 
-Current status, October 27, 2026 (owner local time): publication
-`d6e1fc69113c4571bf68e842fd031edf` is active on the existing Fly Machine, with
+Current status, October 28, 2026 (UTC): publication
+`31f4716be96146c984875e890b9d5b0c` is active on the existing Fly Machine, with
 59 native EPUB books and 12 scanned PDF books. The native model retains 7,266
 candidate recipe records and 627,907 keyword documents. Exact authenticated
 readiness, catalog, search and reading checks pass. Hosted page and region zoom
 checks pass for all 12 PDFs, including the largest selected file and the book
 with the most pages. Scanned text remains unapproved with 4,329 explicit unresolved
-items. One real report has completed blind triage into the owner queue; an
-unchanged-ledger refresh passes. A changed-ledger refresh remains unverified.
+items and one applied source-reviewed correction. One real report remains in the
+owner queue; a separate report completed the changed-ledger rebuild and hosted
+correction check. A repeated refresh publishes nothing. A higher-resolution zoom
+stall remains under investigation in [issue 67](https://github.com/rickono/cookbook-mcp/issues/67);
+smaller hosted zoom requests passed after recovery.
 See the publication records below and [native recipe interpretation](native-recipe-interpretation.md).
 
 Image selection update, September 13: the existing service now exposes
@@ -508,6 +511,49 @@ The real review added $0.0014 list / $0.0024 CLI-reported cost, not an invoice.
 Private decision, readings, owner queue and guarded refresh receipts are under
 `~/cookbook-mcp-data/production/transcription/ops54-20261027/`. The report's section
 boundary remains an owner-queue item; no new publication is warranted by this
-decision. Issue 54 still tracks the unverified changed-ledger rebuild and hosted
-correction acceptance. No additional source reading is authorized by the completed
-one-crop exception, and the temporary monitor remains disabled.
+decision. At that checkpoint, the changed-ledger hosted check was still unverified
+and the temporary monitor was disabled. The separate review below completes that
+check; this first decision and its consumed one-crop exception remain unchanged.
+
+## October 28 supported correction refresh
+
+The owner separately authorized one precise quantity report and at most three
+fresh stateless Haiku 5.5 calls through the existing Mac CLI, with no retries and
+an immediate stop on refusal or limit. The existing guarded crop was reused.
+All three readings supported the proposed correction; no further model calls are
+authorized by this exception. This review added $0.0014 list / $0.0021 CLI-reported,
+not an invoice.
+
+The actual refresh path rebuilt the active publication's recorded snapshot,
+71-book selection and 12 frozen scanned candidates with the new ledger row.
+Exactly one correction applied, with none stale or ambiguous. The separate
+owner-queue item remains unchanged. Native retention and full validation passed
+under the official resource guard: 59 editions, 7,266 recipe records, 627,907
+keyword documents, the model snapshot and keyword fingerprint are preserved.
+The source books and admitted candidate bytes did not change. A second guarded
+refresh returned `unchanged` without review, rebuilding or publishing.
+
+All 11,681 unique immutable objects passed full checksum readback. The runtime
+files were staged and hashed on Fly using the measured old/new model byte delta
+and the genuine manifest- and Linux-validator-bound receipt. Fresh publisher
+authentication, exact readiness acknowledgement, catalog, scanned search and
+reading, correction/reviewer provenance, native keyword search and reading, and
+active-publication checks passed. The prior publication and successful history
+remain available for rollback. Publisher credentials stayed on the Mac; no token
+was saved.
+
+Rendering acceptance included 21 byte-identical renders from the prior visually
+reviewed publication, three newly inspected smaller region zooms, and a visibly
+inspected full page and zoom for the correction. An earlier edge1600 region zoom
+(render ceiling2400) timed out and coincided with failed health checks. One
+controlled restart recovered the same Machine and image. Edge800 zoom requests
+(render1600) then passed. The cause of the larger-request stall is not established,
+and the smaller successes do not establish a fix; [issue 67](https://github.com/rickono/cookbook-mcp/issues/67)
+tracks that limitation separately. No resource ceilings were increased.
+
+Publication `31f4716be96146c984875e890b9d5b0c`, manifest
+`24ed35bf15211e8ce17172ac274f95fde83edd776d508c2ec796934167de07fc`, completes
+the supported-correction rollout check in issue 54. Scanned content remains
+unapproved with 4,329 explicit unresolved items; this is no whole-book accuracy
+claim. Private receipts are under
+`~/cookbook-mcp-data/publications/scanned-correction-20261028/`.

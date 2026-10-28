@@ -216,8 +216,16 @@ Resolving an item stays a manual owner step.
   read it. One real report then received three successful blind readings, none
   matching either claim. It is recorded in the owner queue with no correction.
   Two guarded refresh runs skipped that completed decision and published nothing.
-  A changed-ledger rebuild/activation remains unverified; see the current
-  [hosted publication record](hosted-runtime.md#october-26-expanded-scanned-publication).
+  A separately authorized quantity report then received three supporting blind
+  readings. The actual changed-ledger refresh rebuilt the exact selection and
+  candidates, retained the native model, and applied one correction. Full checksum
+  readback, authenticated activation, corrected page/section/search and reviewer
+  provenance, rollback history, and a repeated unchanged refresh passed. The
+  original owner-queue item remains. See the
+  [supported correction publication record](hosted-runtime.md#october-28-supported-correction-refresh).
+  A higher-resolution zoom stall found during acceptance remains a separate
+  [investigation](https://github.com/rickono/cookbook-mcp/issues/67); smaller hosted
+  requests passed after recovery and do not establish a fix for that incident.
 - **Build admission remains fail-closed.** The build imports a scanned PDF from a
   frozen `scanned-candidate.v1` candidate, and the gate accepts its text only
   through the transcription summary. A PDF without a registered candidate is
