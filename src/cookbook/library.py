@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import math
+import os
 import re
 import sqlite3
 import tempfile
@@ -14,7 +15,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from .extract import render_page
+from .rendering import RenderError, render_page
 from .reports import check_region
 from .scanned import LABEL
 from .storage import IntegrityError, digest_file, has_table, verify
@@ -37,6 +38,7 @@ class Library:
         self.runtime = runtime
         self.cache_bytes = cache_bytes
         self.asset_lock = threading.Lock()
+        self.render_lock = threading.Lock()
         self.search_engine = search_engine
 
     def model(self, publication_id):
@@ -624,6 +626,19 @@ class Library:
     def get_page(
         self, publication_id, book_id, source_id, physical_page, edge=1600, region=None
     ):
+        # Refuse concurrent work rather than accumulating blocked tool threads.
+        if not self.render_lock.acquire(blocking=False):
+            raise RenderError("renderer busy")
+        try:
+            return self._get_page(
+                publication_id, book_id, source_id, physical_page, edge, region
+            )
+        finally:
+            self.render_lock.release()
+
+    def _get_page(
+        self, publication_id, book_id, source_id, physical_page, edge=1600, region=None
+    ):
         pub = self.publication(publication_id)
         if not 256 <= edge <= 1600:
             raise IntegrityError("invalid rendering bounds")
@@ -640,11 +655,12 @@ class Library:
         with self.db(pub) as db:
             b = self.book(db, book_id, source_id)
             s = self.page_row(db, source_id, physical_page)
-            with (
-                self.asset_lock,
-                tempfile.TemporaryDirectory(dir=self.runtime.root) as d,
-            ):
-                original = self.cached(pub, b["original_path"])
+            with tempfile.TemporaryDirectory(dir=self.runtime.root) as d:
+                # Pin the verified original while holding the cache lock. Rendering
+                # then cannot block image reads or race cache eviction.
+                original = Path(d) / "original"
+                with self.asset_lock:
+                    os.link(self.cached(pub, b["original_path"]), original)
                 png = Path(d) / "page.png"
                 render_page(original, b["format"], physical_page, png, render_edge)
                 with Image.open(png) as im:

@@ -19,6 +19,7 @@ from starlette.responses import FileResponse, JSONResponse
 from starlette.routing import Route
 
 from .recipe import RecipeCard
+from .rendering import RenderError
 from .storage import IntegrityError
 
 
@@ -180,22 +181,25 @@ def create_app(library, verifier, reports=None):
             return result(*value) if isinstance(value, tuple) else result(value)
         except Exception as error:  # noqa: BLE001 - every tool error becomes a coded result
             code = (
-                "unavailable_publication"
+                "render_unavailable"
+                if isinstance(error, RenderError)
+                else "unavailable_publication"
                 if isinstance(error, IntegrityError)
                 and str(error) == "unavailable publication"
                 else "unavailable_or_invalid"
             )
+            message = (
+                "Page rendering is busy or exceeds serving limits."
+                if isinstance(error, RenderError)
+                else "Request unavailable or invalid."
+            )
             # Stable redacted error; SDK must not include book text or internal paths in traces.
             return types.CallToolResult(
-                content=[
-                    types.TextContent(
-                        type="text", text="Request unavailable or invalid."
-                    )
-                ],
+                content=[types.TextContent(type="text", text=message)],
                 structuredContent={
                     "error": {
                         "code": code,
-                        "message": "Request unavailable or invalid.",
+                        "message": message,
                     }
                 },
                 isError=True,

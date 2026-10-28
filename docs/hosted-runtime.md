@@ -557,3 +557,41 @@ the supported-correction rollout check in issue 54. Scanned content remains
 unapproved with 4,329 explicit unresolved items; this is no whole-book accuracy
 claim. Private receipts are under
 `~/cookbook-mcp-data/publications/scanned-correction-20261028/`.
+
+## Bounded page rendering — October 28, 2026
+
+The serving renderer admits one page request at a time. A concurrent request
+returns `render_unavailable` immediately instead of waiting behind the renderer.
+The verified original is pinned with a temporary hard link, allowing unrelated
+image-cache access during rendering; text reads and health checks remain available.
+The source cache stays at 512 MiB, requested output edges at 256–1600 pixels and
+region rendering at a maximum of 2400 pixels.
+
+On Linux, a fresh decoder process receives hard limits of 128 MiB address space,
+10 CPU seconds, 16 MiB per output file and no core dumps. A 15-second wall deadline
+kills its process group, including remaining descendants on both success and
+failure. These are per-process serving limits, not a whole-workload cgroup or a
+replacement for the required OCR VM and sandbox. Ingestion and offline OCR retain
+their existing guarded entry points and ceilings. Native non-Linux serving renders
+are refused; synthetic rendering replacements remain available to tests.
+
+Nonzero exits, decoder warnings, invalid output and deadline failures return a
+redacted `render_unavailable` tool error, never a partially decoded or blank image.
+This is a deliberate supported bound: some published pages with expensive embedded
+images cannot currently be rendered, even at a smaller output edge. Their source
+text remains readable. The largest selected PDF by file size still passes page and
+zoom rendering; the sampled page from the longest PDF and the incident page are
+refused within the decoder budget. Supporting those pages requires separate work
+within the existing capacity or a separately reviewed capacity change.
+
+An isolated replay of the incident page at render edge 2400 used about 210 MiB
+peak decoder RSS and succeeded under a 256 MiB cgroup; a 192 MiB cgroup recorded an
+OOM kill. The bounded renderer refused that page in about one second, including
+rejecting Poppler's decode warnings. This establishes a memory-exhaustion hazard
+and its bounded behavior, but does not establish the historical production stall's
+cause: no process/stack evidence was captured during that incident.
+
+Synthetic enforcement checks cover inherited hard limits, excessive allocation,
+file growth, decoder warnings, timeouts, descendant cleanup and concurrent health
+and text reads. The full guarded suite passed: 459 tests. Private inputs, images
+and probe evidence remain outside Git under `poc/zoom-stall-67`.
