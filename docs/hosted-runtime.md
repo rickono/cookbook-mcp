@@ -595,3 +595,12 @@ Synthetic enforcement checks cover inherited hard limits, excessive allocation,
 file growth, decoder warnings, timeouts, descendant cleanup and concurrent health
 and text reads. The full guarded suite passed: 459 tests. Private inputs, images
 and probe evidence remain outside Git under `poc/zoom-stall-67`.
+
+Deployed image `sha256:c4487fffb3495def3f788e27398b7304697513f93007dba4e2ec5f577ed08af4`
+is healthy on the existing Machine. Its configuration is unchanged except for the
+image. Authenticated hosted acceptance passed: the incident zoom returned a
+bounded error, the largest-source page and zoom were byte-identical to their
+previously reviewed images, and concurrent section reads, catalog search and
+native keyword search/read succeeded. All 90 concurrent health probes passed.
+The active publication and its counts are unchanged. No token was saved, model
+called, publication activated or resource ceiling increased.
