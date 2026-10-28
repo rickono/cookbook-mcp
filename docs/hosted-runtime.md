@@ -1,13 +1,14 @@
 # Hosted trial runtime
 
-Current status, October 26, 2026 (owner local time): publication
+Current status, October 27, 2026 (owner local time): publication
 `d6e1fc69113c4571bf68e842fd031edf` is active on the existing Fly Machine, with
 59 native EPUB books and 12 scanned PDF books. The native model retains 7,266
 candidate recipe records and 627,907 keyword documents. Exact authenticated
 readiness, catalog, search and reading checks pass. Hosted page and region zoom
 checks pass for all 12 PDFs, including the largest selected file and the book
 with the most pages. Scanned text remains unapproved with 4,329 explicit unresolved
-items. Blind report triage and a changed-ledger refresh remain unverified.
+items. One real report has completed blind triage into the owner queue; an
+unchanged-ledger refresh passes. A changed-ledger refresh remains unverified.
 See the publication records below and [native recipe interpretation](native-recipe-interpretation.md).
 
 Image selection update, September 13: the existing service now exposes
@@ -477,3 +478,36 @@ Private receipts, source reviews and hosted images remain outside Git under
 `~/cookbook-mcp-data/publications/scanned-all-20261022/` and the private production
 operations directory. Final model costs were $31.1006 list and $52.3729
 CLI-reported; these are not an invoice.
+
+## October 27 real report review
+
+The owner authorized one prepared crop to be sent through the existing Mac
+Haiku 5.5 CLI, limited to three stateless calls with no retries and an immediate
+stop on refusal or limit. This was a narrow exception to the model-execution
+rule, not a general authorization for future host model jobs. The source-bound
+crop was produced by the registered helper under the unchanged official sandbox
+and shared scheduler lock. Credentials and all report/source content stayed
+private.
+
+Exactly three calls completed with no errors, refusals or retries. None matched
+either the current or proposed report claim, so the immutable decision is an
+owner-queue item. No correction was added to the ledger. The actual refresh
+entry point then ran twice inside the official sandbox with the saved decision.
+Both runs skipped further review, retained the empty ledger and reported
+`unchanged`, with no crop, model, rebuild, upload or activation. Independent
+readback confirmed that the live pointer and successful history were unchanged;
+the 71-book selection, six holds and native inventory are preserved.
+
+Before this review, commit `0b0e6ea` fixed report sampling after terminal reader
+responses. Refusals now stop remaining samples and cannot be overridden by an
+earlier majority; limits stop the run, and mixed refusal/limit metadata cannot
+cause a refused report to be retried. All 71 targeted report, refresh and reader
+checks passed inside the official sandbox, with Ruff and formatting checks passing.
+
+The real review added $0.0014 list / $0.0024 CLI-reported cost, not an invoice.
+Private decision, readings, owner queue and guarded refresh receipts are under
+`~/cookbook-mcp-data/production/transcription/ops54-20261027/`. The report's section
+boundary remains an owner-queue item; no new publication is warranted by this
+decision. Issue 54 still tracks the unverified changed-ledger rebuild and hosted
+correction acceptance. No additional source reading is authorized by the completed
+one-crop exception, and the temporary monitor remains disabled.

@@ -213,8 +213,10 @@ Resolving an item stays a manual owner step.
   EPUB editions and 12 scanned PDFs. Exact authenticated readiness, catalog,
   search, reading and all 12 PDFs' page/region renders passed. A genuine hosted
   report reached the separate reports bucket and the guarded Mac refresh path
-  read it. An unchanged-ledger check published nothing. Blind triage and a
-  changed-ledger rebuild/activation remain unverified; see the current
+  read it. One real report then received three successful blind readings, none
+  matching either claim. It is recorded in the owner queue with no correction.
+  Two guarded refresh runs skipped that completed decision and published nothing.
+  A changed-ledger rebuild/activation remains unverified; see the current
   [hosted publication record](hosted-runtime.md#october-26-expanded-scanned-publication).
 - **Build admission remains fail-closed.** The build imports a scanned PDF from a
   frozen `scanned-candidate.v1` candidate, and the gate accepts its text only
