@@ -1,9 +1,10 @@
-"""Digest-bound review proposals; no IO, OCR, approval, or raw-evidence mutation."""
+"""Digest-bound proposals and persistent explicit approval of saved evidence."""
 
 import hashlib
 import json
 import re
 from copy import deepcopy
+from datetime import UTC
 from html import escape
 
 from .transcription import snapshot_digest
@@ -431,3 +432,303 @@ def render_review_report(snapshot, *, revisions=(), selections=()):
         )
         + "</pre></body></html>"
     )
+
+
+class ReviewStore:
+    """Persistent administrative decisions over saved evidence, never inference.
+
+    Candidate and decision history is append-only under a process lock. Legacy
+    revisions are retained verbatim; their reviewer is not an approval actor.
+    """
+
+    def __init__(self, path):
+        from pathlib import Path
+
+        self.path = Path(path)
+
+    def _load(self):
+        if not self.path.exists():
+            return {"version": "content-review.v1", "candidates": [], "decisions": []}
+        data = json.loads(self.path.read_bytes())
+        if data["version"] != "content-review.v1":
+            raise ValueError("unsupported content review version")
+        predecessor = None
+        for event in data["decisions"]:
+            if event["predecessor"] != predecessor or event["id"] != _digest(
+                {k: v for k, v in event.items() if k != "id"}
+            ):
+                raise ValueError("invalid decision history")
+            predecessor = event["id"]
+        for candidate in data["candidates"]:
+            if candidate["id"] != _digest(
+                {k: v for k, v in candidate.items() if k != "id"}
+            ):
+                raise ValueError("invalid candidate identity")
+            actual = reviewed_view(
+                candidate["snapshot"],
+                selections=candidate["selections"],
+                revisions=candidate["revisions"],
+            )
+            if actual != candidate["view"]:
+                raise ValueError("effective text and review metadata disagree")
+        candidates = {c["id"]: c for c in data["candidates"]}
+        applied = set()
+        for event in data["decisions"]:
+            candidate = candidates.get(event["candidate_id"])
+            if (
+                candidate is None
+                or event["snapshot_sha256"] != candidate["view"]["snapshot_sha256"]
+                or event["effective_text_sha256"] != _digest(candidate["view"])
+            ):
+                raise ValueError("decision evidence or effective text mismatch")
+            if event["action"] == "apply_draft":
+                applied.add((event["candidate_id"], event["scope"]))
+            if event["action"] == "approve":
+                if (
+                    candidate["revisions"]
+                    and (candidate["id"], event["scope"]) not in applied
+                ):
+                    raise ValueError("approval requires prior apply_draft")
+                scope = next(
+                    (s for s in candidate["selections"] if s["id"] == event["scope"]),
+                    None,
+                )
+                if (
+                    not event["complete"]
+                    or event["required_content"]
+                    or event["actor"]["kind"] != "human"
+                    or scope is None
+                    or scope["kind"] != "recipe"
+                    or scope["state"] == "unresolved"
+                    or event["evidence"]
+                    != source_evidence(candidate["snapshot"], scope["line_ids"])
+                ):
+                    raise ValueError("invalid complete-content approval")
+                ids = set(scope["line_ids"])
+                if any(
+                    l["state"] in {"proposed", "unresolved"}
+                    for l in candidate["view"]["lines"]
+                    if l["line_id"] in ids
+                ):
+                    raise ValueError("approval covers unresolved or proposed text")
+                if any(
+                    candidate["view"]["memberships"][i]["value"] != [event["scope"]]
+                    for i in ids
+                ):
+                    raise ValueError("approval ownership mismatch")
+                if any(
+                    q["state"] in {"proposed", "unresolved"}
+                    for q in candidate["view"]["quantities"].values()
+                ):
+                    raise ValueError("approval covers unresolved quantities")
+        return data
+
+    def export(self):
+        """Inspectable complete history, suitable for immutable publication backup."""
+        return self._load()
+
+    def save_candidate(self, snapshot, *, selections=(), revisions=()):
+        from .storage import atomic_write, canonical, file_lock
+
+        view = reviewed_view(snapshot, selections=selections, revisions=revisions)
+        candidate = {
+            "snapshot": deepcopy(snapshot),
+            "selections": deepcopy(list(selections)),
+            "revisions": deepcopy(list(revisions)),
+            "view": view,
+        }
+        candidate["id"] = _digest(candidate)
+        with file_lock(self.path.with_suffix(".lock")):
+            data = self._load()
+            if (
+                not data["candidates"]
+                or data["candidates"][-1]["id"] != candidate["id"]
+            ):
+                data["candidates"].append(candidate)
+                atomic_write(self.path, canonical(data))
+        return candidate["id"]
+
+    def inspect(self, selection_id):
+        data = self._load()
+        if not data["candidates"]:
+            raise ValueError("missing candidate")
+        candidate = data["candidates"][-1]
+        scope = next(
+            (s for s in candidate["selections"] if s["id"] == selection_id), None
+        )
+        if scope is None:
+            raise ValueError("unknown selection")
+        history = [e for e in data["decisions"] if e["scope"] == selection_id]
+        decisions = [
+            e
+            for e in history
+            if e["candidate_id"] == candidate["id"]
+            and e["action"] in {"approve", "revoke"}
+        ]
+        approval = (
+            decisions[-1]
+            if decisions and decisions[-1]["action"] == "approve"
+            else None
+        )
+        revoked = {e["relates_to"] for e in history if e["action"] == "revoke"}
+        if approval and approval["id"] in revoked:
+            approval = None
+        return {
+            "eligible": bool(approval),
+            "reasons": [] if approval else ["exact_complete_content_approval_required"],
+            "approval": approval,
+            "history": history,
+            "candidate": candidate,
+            "scope": scope,
+        }
+
+    def decide(
+        self,
+        selection_id,
+        action,
+        *,
+        actor,
+        reason,
+        complete=False,
+        evidence=(),
+        required_content=(),
+        relates_to=None,
+        reviewer_config="human-source-review.v1",
+        policy="standalone-content.v1",
+    ):
+        from datetime import datetime
+
+        from .storage import atomic_write, canonical, file_lock
+
+        if action not in {
+            "apply_draft",
+            "clear_flag",
+            "approve",
+            "revoke",
+            "metadata_amendment",
+        }:
+            raise ValueError("invalid decision action")
+        if (
+            not isinstance(actor, dict)
+            or actor.get("kind") not in {"human", "agent"}
+            or not _nonempty(actor.get("id"))
+        ):
+            raise ValueError("explicit actor identity and role required")
+        if not all(_nonempty(v) for v in (reason, reviewer_config, policy)):
+            raise ValueError("reason, reviewer configuration and policy required")
+        with file_lock(self.path.with_suffix(".lock")):
+            state = self.inspect(selection_id)
+            candidate, scope = state["candidate"], state["scope"]
+            if action == "approve":
+                if any(
+                    change["kind"] != "line_text"
+                    for revision in candidate["revisions"]
+                    for change in revision["changes"]
+                ):
+                    raise ValueError("unsupported correction scope remains pending")
+                if candidate["revisions"] and not any(
+                    e["action"] == "apply_draft"
+                    and e["candidate_id"] == candidate["id"]
+                    for e in state["history"]
+                ):
+                    raise ValueError("apply_draft separately before approval")
+                if actor["kind"] != "human":
+                    raise ValueError("agent approval authority is not validated")
+                if (
+                    not complete
+                    or required_content
+                    or scope["kind"] != "recipe"
+                    or scope["state"] == "unresolved"
+                ):
+                    raise ValueError(
+                        "complete standalone recipe required; supporting content remains pending"
+                    )
+                expected = source_evidence(candidate["snapshot"], scope["line_ids"])
+                if _digest(list(evidence)) != _digest(expected):
+                    raise ValueError("exact inspected source evidence required")
+                ids = set(scope["line_ids"])
+                view = candidate["view"]
+                if any(
+                    l["state"] in {"proposed", "unresolved"}
+                    for l in view["lines"]
+                    if l["line_id"] in ids
+                ):
+                    raise ValueError("unresolved or proposed content")
+                if any(
+                    q["state"] in {"proposed", "unresolved"}
+                    for q in view["quantities"].values()
+                ):
+                    raise ValueError("unresolved or proposed quantity")
+                if any(view["memberships"][i]["value"] != [selection_id] for i in ids):
+                    raise ValueError("unresolved recipe ownership")
+            data = self._load()
+            if relates_to is not None and not any(
+                e["id"] == relates_to and e["scope"] == selection_id
+                for e in data["decisions"]
+            ):
+                raise ValueError("unknown related decision")
+            event = {
+                "version": "content-decision.v1",
+                "timestamp": datetime.now(UTC).isoformat(),
+                "actor": deepcopy(actor),
+                "action": action,
+                "scope": selection_id,
+                "candidate_id": candidate["id"],
+                "snapshot_sha256": candidate["view"]["snapshot_sha256"],
+                "effective_text_sha256": _digest(candidate["view"]),
+                "evidence": deepcopy(list(evidence)),
+                "complete": complete,
+                "required_content": list(required_content),
+                "reason": reason,
+                "reviewer_config": reviewer_config,
+                "policy": policy,
+                "relates_to": relates_to,
+                "predecessor": data["decisions"][-1]["id"]
+                if data["decisions"]
+                else None,
+            }
+            event["id"] = _digest(event)
+            data["decisions"].append(event)
+            atomic_write(self.path, canonical(data))
+        return event
+
+    def publication_sections(self):
+        """Project exact approvals into immutable recipe text and page citations."""
+        data = self._load()
+        if not data["candidates"]:
+            raise ValueError("missing candidate")
+        candidate = data["candidates"][-1]
+        lines = {l["line_id"]: l for l in candidate["view"]["lines"]}
+        result = []
+        for ordinal, scope in enumerate(candidate["selections"]):
+            state = self.inspect(scope["id"])
+            selected = [lines[i] for i in scope["line_ids"]]
+            if not selected:
+                raise ValueError("empty content scope")
+            approval = state["approval"]
+            locator = {
+                "kind": "page",
+                "physical_page": selected[0]["physical_page"],
+                "physical_pages": list(
+                    dict.fromkeys(l["physical_page"] for l in selected)
+                ),
+                "content_review": {
+                    "path": "quality/content-review.json",
+                    "candidate_id": candidate["id"],
+                    "decision_id": approval["id"] if approval else None,
+                    "eligible": state["eligible"],
+                    "reasons": state["reasons"],
+                },
+            }
+            result.append(
+                {
+                    "id": scope["id"],
+                    "ordinal": ordinal,
+                    "title": selected[0]["text"] or scope["id"],
+                    "text": "\n".join(l["text"] for l in selected) if approval else "",
+                    "source_sha256": candidate["snapshot"]["edition"]["source_sha256"],
+                    "locator": locator,
+                    "eligible": state["eligible"],
+                }
+            )
+        return result

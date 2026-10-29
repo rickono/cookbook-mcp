@@ -5,9 +5,10 @@ import json
 import os
 import sys
 from pathlib import Path
-from .publication import Manifest, Runtime, publish, restore
-from .storage import LocalStore, IntegrityError, atomic_write, canonical, file_lock
+
 from .ocr_limits import OcrIsolationError
+from .publication import Manifest, Runtime, publish, restore
+from .storage import IntegrityError, LocalStore, atomic_write, canonical, file_lock
 
 
 def _main():
@@ -85,7 +86,30 @@ def _main():
     final.add_argument("--build", type=Path, required=True)
     final.add_argument("--ocr-cache", type=Path, required=True)
     final.add_argument("--output", type=Path, required=True)
+    final.add_argument("--transcription-review", type=Path)
+    transcription = sub.add_parser(
+        "review-transcription",
+        help="Record or inspect saved-evidence content decisions; no recognition",
+    )
+    transcription.add_argument("--review-store", type=Path, required=True)
+    operation = transcription.add_mutually_exclusive_group(required=True)
+    operation.add_argument("--candidate-file", type=Path)
+    operation.add_argument("--decision-file", type=Path)
+    operation.add_argument("--selection-id")
     a = p.parse_args()
+    if a.command == "review-transcription":
+        from .transcription_review import ReviewStore
+
+        store = ReviewStore(a.review_store)
+        if a.candidate_file:
+            candidate = json.loads(a.candidate_file.read_bytes())
+            result = {"candidate_id": store.save_candidate(**candidate)}
+        elif a.decision_file:
+            result = store.decide(**json.loads(a.decision_file.read_bytes()))
+        else:
+            result = store.inspect(a.selection_id)
+        print(json.dumps(result))
+        return
     if a.command == "check-publisher-login":
         from .publisher_login import LoginConfig, browser_login
 
@@ -198,8 +222,8 @@ def _main():
         print(json.dumps({"review_id": a.id, "pending": result["pending"]}))
         return
     if a.command == "review-report":
-        from .quality import read_report
         from .ocr import write_review_page
+        from .quality import read_report
 
         count = write_review_page(a.ocr_cache, read_report(a.build)["items"], a.output)
         print(json.dumps({"pending_pages": count, "report": str(a.output)}))
@@ -207,7 +231,9 @@ def _main():
     if a.command == "finalize-local":
         from .quality import finalize
 
-        m = finalize(a.build, a.ocr_cache, a.output)
+        m = finalize(
+            a.build, a.ocr_cache, a.output, transcription_review=a.transcription_review
+        )
         print(
             json.dumps(
                 {"publication_id": m.publication_id, "status": "ready_to_publish"}
@@ -225,8 +251,8 @@ def _main():
             progress=lambda d: print(json.dumps(d), flush=True),
             force_ocr_ids=a.force_ocr_books,
         )
-        from .quality import read_report
         from .ocr import write_review_page
+        from .quality import read_report
 
         pending = read_report(a.output)["pending_ids"]
         if pending:
@@ -283,6 +309,7 @@ def _main():
         print(json.dumps({"restored": m.publication_id}))
     else:
         import uvicorn
+
         from .library import Library
         from .server import JWTVerifier, create_app
 

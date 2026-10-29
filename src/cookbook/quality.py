@@ -1,12 +1,13 @@
 """Publisher-level OCR gate and a new-build finalizer; no mutation of published versions."""
 
-from datetime import datetime, timezone
 import hashlib
 import json
-from pathlib import Path
 import shutil
 import sqlite3
 import uuid
+from datetime import UTC, datetime
+from pathlib import Path
+
 from .ocr import POLICY, ReviewRequired, effective, load_record
 from .storage import IntegrityError, atomic_write, canonical, digest_file
 
@@ -121,14 +122,51 @@ def check_publish_quality(manifest, inputs):
                 raise IntegrityError("reviewed nontext page mismatch")
             if item["pending"]:
                 raise ReviewRequired("OCR review required")
+        from .transcription_review import ReviewStore
+
+        content_rows = list(
+            db.execute("select * from sections where provenance='scanned-content-v1'")
+        )
+        if content_rows:
+            path = "quality/content-review.json"
+            entry = next((e for e in manifest.files if e.path == path), None)
+            if (
+                entry is None
+                or path not in inputs
+                or digest_file(inputs[path]) != (entry.sha256, entry.size)
+            ):
+                raise IntegrityError("missing or changed content review history")
+            expected = {
+                s["id"]: s for s in ReviewStore(inputs[path]).publication_sections()
+            }
+            for row in content_rows:
+                section = expected.get(row["id"])
+                if (
+                    section is None
+                    or row["text"] != section["text"]
+                    or json.loads(row["locator"]) != section["locator"]
+                    or row["source_id"].split(":")[-1] != section["source_sha256"]
+                ):
+                    raise IntegrityError("content approval/index mismatch")
+                search = list(
+                    db.execute(
+                        "select text from search where section_id=?", (row["id"],)
+                    )
+                )
+                if [r[0] for r in search] != (
+                    [section["text"]] if section["eligible"] else []
+                ):
+                    raise IntegrityError("content approval/search mismatch")
+            if {r["id"] for r in content_rows} != set(expected):
+                raise IntegrityError("missing reviewed content")
         if seen != set(items):
             raise IntegrityError("unmatched OCR report rows")
         if not forced_sources.issubset(sources):
             raise IntegrityError("forced OCR source missing from index")
 
 
-def finalize(build: Path, cache: Path, output: Path):
-    from .publication import Manifest, Entry
+def finalize(build: Path, cache: Path, output: Path, *, transcription_review=None):
+    from .publication import Entry, Manifest
 
     if output.exists():
         raise IntegrityError("finalized build directory must be new")
@@ -189,6 +227,51 @@ def finalize(build: Path, cache: Path, output: Path):
                     **ocr,
                 }
             )
+    if transcription_review is not None:
+        from .transcription_review import ReviewStore
+
+        # Freeze one atomic store read so concurrent draft/decision writes cannot
+        # produce a publication containing mixed review versions.
+        review_path = output / "content-review.json"
+        atomic_write(review_path, canonical(ReviewStore(transcription_review).export()))
+        reviews = ReviewStore(review_path)
+        with sqlite3.connect(index) as db:
+            for section in reviews.publication_sections():
+                source = db.execute(
+                    "select * from sources where sha256=?", (section["source_sha256"],)
+                ).fetchone()
+                if source is None:
+                    raise IntegrityError("review source missing from build")
+                # Verify original bytes as well as the saved recognition identities.
+                if digest_file(inputs[source[3]])[0] != section["source_sha256"]:
+                    raise IntegrityError("review original source mismatch")
+                existing = db.execute(
+                    "select source_id from sections where id=?", (section["id"],)
+                ).fetchone()
+                if existing and existing[0] != source[0]:
+                    raise IntegrityError("selection identity belongs to another source")
+                db.execute("delete from sections where id=?", (section["id"],))
+                db.execute("delete from search where section_id=?", (section["id"],))
+                db.execute(
+                    "insert into sections values (?,?,?,?,?,?,?,?,?)",
+                    (
+                        section["id"],
+                        source[0],
+                        section["ordinal"],
+                        section["title"],
+                        section["text"],
+                        json.dumps(section["locator"]),
+                        "scanned-content-v1",
+                        "recipe",
+                        "[]",
+                    ),
+                )
+                if section["eligible"]:
+                    db.execute(
+                        "insert into search values (?,?,?,?)",
+                        (section["id"], source[0], section["title"], section["text"]),
+                    )
+        inputs["quality/content-review.json"] = review_path
     report = make_report(
         pub, items, forced_ocr_sources=report.get("forced_ocr_sources", [])
     )
@@ -199,11 +282,19 @@ def finalize(build: Path, cache: Path, output: Path):
     for e in old.files:
         sha, size = digest_file(inputs[e.path])
         entries.append(Entry(path=e.path, sha256=sha, size=size, role=e.role))
+    if transcription_review is not None:
+        sha, size = digest_file(inputs["quality/content-review.json"])
+        entries = [e for e in entries if e.path != "quality/content-review.json"]
+        entries.append(
+            Entry(
+                path="quality/content-review.json", sha256=sha, size=size, role="backup"
+            )
+        )
     m = old.model_copy(
         update={
             "publication_id": pub,
             "files": entries,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
         }
     )
     check_publish_quality(m, inputs)
