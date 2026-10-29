@@ -209,10 +209,12 @@ def test_administrative_dependency_review_finalize_publish_and_mcp(
     runtime = Runtime(objects, tmp_path / "runtime")
     lib = Library(runtime)
 
+    build_path = tmp_path / "build"
+
     def finish(name):
         out = tmp_path / name
         manifest = finalize(
-            tmp_path / "build", tmp_path / "cache", out, transcription_review=store.path
+            build_path, tmp_path / "cache", out, transcription_review=store.path
         )
         inputs = {
             k: Path(v)
@@ -260,6 +262,138 @@ def test_administrative_dependency_review_finalize_publish_and_mcp(
     assert digest_file(inputs["runtime/index.sqlite"]) == old_index
     assert inputs["backup/original.pdf"].read_bytes() == original
     assert accepted.publication_id != restored.publication_id
+
+    # Display preferences leave source approval and the working publication valid.
+    store.save_candidate(snapshot, selections=scopes, display={"theme": "large-type"})
+    assert store.inspect("stew")["eligible"]
+    assert lib.search("saffron")["results"]
+
+    # Identical extraction bytes belong to a fresh run, requiring explicit review.
+    store.save_candidate(snapshot, selections=scopes, extraction_run="synthetic-run-2")
+    assert not store.inspect("stew")["eligible"]
+    assert lib.search("saffron")["results"]
+    extraction_pending, _ = finish("extraction-pending")
+    assert not lib.search("saffron")["results"]
+    for name in ("sauce", "stew", "neighbor", "note", "herbs"):
+        approve(store, snapshot, scopes, name)
+    extracted, _ = finish("extraction-approved")
+    check_mcp(
+        lib,
+        keys,
+        mint,
+        extracted.publication_id,
+        extraction_pending.publication_id,
+        source,
+        "stew",
+    )
+
+    # A replacement has distinct opaque source bytes, but equal candidate text.
+    old_candidate = store.inspect("stew")["candidate"]["id"]
+    old_source = source
+    replacement = deepcopy(snapshot)
+    replacement["edition"]["id"] = "synthetic-replacement"
+    build_path = tmp_path / "replacement-build"
+    source, _ = scan_build(
+        build_path,
+        replacement,
+        original_bytes=b"Distinct synthetic replacement, never parsed",
+    )
+    store.save_candidate(
+        replacement,
+        selections=scopes,
+        page_correspondences=[
+            {
+                "candidate_id": old_candidate,
+                "old_page_id": "page-1",
+                "new_page_id": "page-1",
+            }
+        ],
+    )
+    assert not store.inspect("stew")["eligible"]
+    assert lib.search("saffron")["results"]
+    replacement_pending, _ = finish("replacement-pending")
+    assert not lib.search("saffron")["results"]
+    assert lib.read_section(extracted.publication_id, "book", old_source, "stew")[
+        "text"
+    ]
+    for name in ("sauce", "stew", "neighbor", "note", "herbs"):
+        approve(store, replacement, scopes, name)
+    replaced, _ = finish("replacement-approved")
+    check_mcp(
+        lib,
+        keys,
+        mint,
+        replaced.publication_id,
+        replacement_pending.publication_id,
+        source,
+        "stew",
+    )
+    citation = lib.read_section(replaced.publication_id, "book", source, "stew")[
+        "citation"
+    ]
+    assert (
+        citation["locator"]["content_review"]["edition_id"] == "synthetic-replacement"
+    )
+
+    # Restore earlier text via a checked undo, retaining the revoked decision.
+    original_approval = store.inspect("stew")["approval"]
+    changed = deepcopy(replacement)
+    changed["pages"][0]["lines"][1]["text"] = "4 cups water; 1/2 cup saffron water"
+    store.save_candidate(changed, selections=scopes)
+    store.decide(
+        "stew",
+        "revoke",
+        actor=ACTOR,
+        reason="Synthetic known defect",
+        relates_to=original_approval["id"],
+    )
+    store.save_candidate(replacement, selections=scopes)
+    store.decide(
+        "stew",
+        "undo",
+        actor=ACTOR,
+        reason="Compared restored source",
+        relates_to=original_approval["id"],
+        evidence=source_evidence(replacement, scopes[0]["line_ids"]),
+    )
+    undo_pending, _ = finish("undo-pending")
+    assert not lib.search("saffron")["results"]
+    request = {
+        "actor": ACTOR,
+        "reason": "Synthetic re-review",
+        "complete": True,
+        "reviewer_config": "human/model-2",
+        "policy": "policy-2",
+        "evidence": source_evidence(replacement, scopes[0]["line_ids"]),
+    }
+    with pytest.raises(ValueError, match="workflow validation"):
+        store.decide("stew", "approve", **request)
+    store.decide(
+        "stew",
+        "validate_workflow",
+        actor=ACTOR,
+        reason="Synthetic workflow validated",
+        reviewer_config="human/model-2",
+        policy="policy-2",
+        evidence=[{"validation": "synthetic-record"}],
+    )
+    store.decide("stew", "approve", **request)
+    undo_approved, _ = finish("undo-approved")
+    check_mcp(
+        lib,
+        keys,
+        mint,
+        undo_approved.publication_id,
+        undo_pending.publication_id,
+        source,
+        "stew",
+    )
+    review = lib.read_section(undo_approved.publication_id, "book", source, "stew")[
+        "citation"
+    ]["locator"]["content_review"]
+    assert review["reviewer_config"] == "human/model-2"
+    assert review["policy"] == "policy-2"
+    assert store.inspect("sauce")["approval"]["policy"] == "standalone-content.v1"
 
 
 def test_independent_passage_and_reference_keep_their_content_kind(tmp_path):

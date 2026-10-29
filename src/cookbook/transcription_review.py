@@ -515,6 +515,11 @@ def _scope_binding(candidate, scope, line_ids=None):
     lines = {l["line_id"]: l for l in candidate["view"]["lines"]}
     return _digest(
         {
+            **(
+                {"extraction_run": candidate["extraction_run"]}
+                if "extraction_run" in candidate
+                else {}
+            ),
             "edition": candidate["snapshot"]["edition"],
             "scope": scope
             if line_ids is None
@@ -561,6 +566,25 @@ def _scope_binding(candidate, scope, line_ids=None):
     )
 
 
+def _continuous_binding(data, candidate, event, scope, ids=None):
+    """An intervening interpretation change permanently ends old eligibility."""
+    candidates = data["candidates"]
+    start = next(
+        i for i, c in enumerate(candidates) if c["id"] == event["candidate_id"]
+    )
+    end = next(i for i, c in enumerate(candidates) if c["id"] == candidate["id"])
+    expected = _scope_binding(candidate, scope, ids)
+    for previous in candidates[start : end + 1]:
+        old_scope = next(
+            (s for s in previous["selections"] if s["id"] == scope["id"]), None
+        )
+        if old_scope is None or (ids and not set(ids) <= set(old_scope["line_ids"])):
+            return False
+        if _scope_binding(previous, old_scope, ids) != expected:
+            return False
+    return start <= end
+
+
 def _revoked_decisions(history):
     revoked = set()
     prior = []
@@ -572,6 +596,37 @@ def _revoked_decisions(history):
                 revoked.update(e["id"] for e in prior if e["scope"] == event["scope"])
         prior.append(event)
     return revoked
+
+
+def _workflow_validation(history, actor, config, policy):
+    # The original manual owner workflow remains compatible. New configurations
+    # record validation explicitly; this never enables agent approval authority.
+    if config == "human-source-review.v1" and policy == "standalone-content.v1":
+        original = next(
+            (
+                e["actor"]
+                for e in history
+                if e["action"] in {"approve", "review_portion"}
+                and e["reviewer_config"] == config
+                and e["policy"] == policy
+            ),
+            None,
+        )
+        if original is None or original == actor:
+            return None
+    revoked = _revoked_decisions(history)
+    matches = [
+        e
+        for e in history
+        if e["action"] == "validate_workflow"
+        and e["actor"] == actor
+        and e["reviewer_config"] == config
+        and e["policy"] == policy
+        and e["id"] not in revoked
+    ]
+    if not matches:
+        raise ValueError("fresh workflow validation required for reviewer/model/policy")
+    return matches[-1]["id"]
 
 
 def _support_scopes(candidate, scope):
@@ -663,6 +718,8 @@ class ReviewStore:
             )
             if actual != candidate["view"]:
                 raise ValueError("effective text and review metadata disagree")
+        for index, candidate in enumerate(data["candidates"]):
+            self._validate_lineage(data["candidates"][:index], candidate)
         candidates = {c["id"]: c for c in data["candidates"]}
         applied = set()
         for event in data["decisions"]:
@@ -751,7 +808,7 @@ class ReviewStore:
                 if event.get("scope_sha256") != _scope_binding(candidate, scope, ids):
                     raise ValueError("regional evidence mismatch")
             if (
-                event["action"] in {"approve", "review_portion"}
+                event["action"] in {"approve", "review_portion", "undo"}
                 and "scope_sha256" in event
             ):
                 bindings = []
@@ -772,14 +829,116 @@ class ReviewStore:
                     )
                 if bindings != event.get("dependency_bindings"):
                     raise ValueError("approval dependency mismatch")
+            if event["action"] == "validate_workflow" and (
+                event["actor"]["kind"] != "human" or not event["evidence"]
+            ):
+                raise ValueError("invalid workflow validation")
+            if event["action"] in {"approve", "review_portion", "undo"}:
+                validation = _workflow_validation(
+                    prior["decisions"],
+                    event["actor"],
+                    event["reviewer_config"],
+                    event["policy"],
+                )
+                if validation != event.get("workflow_validation_id"):
+                    raise ValueError("workflow validation mismatch")
+            if event["action"] == "approve":
+                self._require_undo(prior, candidate, scope)
+            if event["action"] == "undo":
+                checks = self._check_undo(
+                    prior,
+                    candidate,
+                    scope,
+                    event["actor"],
+                    event["evidence"],
+                    event["relates_to"],
+                )
+                if checks != event.get("undo_checks"):
+                    raise ValueError("undo checks mismatch")
             prior["decisions"].append(event)
         return data
+
+    def _require_undo(self, data, candidate, scope):
+        matches = [
+            e
+            for e in data["decisions"]
+            if e["scope"] == scope["id"]
+            and e["action"] in {"approve", "undo"}
+            and e.get("scope_sha256") == _scope_binding(candidate, scope)
+        ]
+        if matches and not any(
+            _continuous_binding(data, candidate, e, scope) for e in matches
+        ):
+            raise ValueError(
+                "restored interpretation requires explicit undo before approval"
+            )
+
+    def _check_undo(self, data, candidate, scope, actor, evidence, relates_to):
+        target = next(
+            (
+                e
+                for e in data["decisions"]
+                if e["id"] == relates_to
+                and e["scope"] == scope["id"]
+                and e["action"] in {"approve", "apply_draft", "undo"}
+            ),
+            None,
+        )
+        if target is None:
+            raise ValueError("undo requires an explicit prior content decision")
+        if target.get("scope_sha256") != _scope_binding(candidate, scope):
+            raise ValueError("undo source, extraction or scope mismatch")
+        self._validate_portion(candidate, scope, actor, evidence, scope["line_ids"])
+        return {
+            "target_revoked": target["id"] in _revoked_decisions(data["decisions"]),
+            "eligible_before": bool(
+                self._eligibility(data, candidate, scope, set())[0]
+            ),
+            "source_sha256": candidate["snapshot"]["edition"]["source_sha256"],
+            "scope_sha256": _scope_binding(candidate, scope),
+        }
+
+    def _validate_lineage(self, previous, candidate):
+        edition = candidate["snapshot"]["edition"]
+        for old in previous:
+            old_edition = old["snapshot"]["edition"]
+            if (
+                old_edition["id"] == edition["id"]
+                and old_edition["source_sha256"] != edition["source_sha256"]
+            ):
+                raise ValueError("replacement needs distinct book-edition identity")
+        for link in candidate.get("page_correspondences", []):
+            _exact(
+                link,
+                ("candidate_id", "old_page_id", "new_page_id"),
+                "page correspondence",
+            )
+            old = next((c for c in previous if c["id"] == link["candidate_id"]), None)
+            if (
+                old is None
+                or old["snapshot"]["edition"]["source_sha256"]
+                == edition["source_sha256"]
+                or link["old_page_id"]
+                not in {p["id"] for p in old["snapshot"]["pages"]}
+                or link["new_page_id"]
+                not in {p["id"] for p in candidate["snapshot"]["pages"]}
+            ):
+                raise ValueError("invalid replacement page correspondence")
 
     def export(self):
         """Inspectable complete history, suitable for immutable publication backup."""
         return self._load()
 
-    def save_candidate(self, snapshot, *, selections=(), revisions=()):
+    def save_candidate(
+        self,
+        snapshot,
+        *,
+        selections=(),
+        revisions=(),
+        page_correspondences=(),
+        extraction_run=None,
+        display=None,
+    ):
         from .storage import atomic_write, canonical, file_lock
 
         view = reviewed_view(snapshot, selections=selections, revisions=revisions)
@@ -789,15 +948,21 @@ class ReviewStore:
             "revisions": deepcopy(list(revisions)),
             "view": view,
         }
-        candidate["id"] = _digest(candidate)
+        if extraction_run is not None:
+            if not _nonempty(extraction_run):
+                raise ValueError("explicit extraction run identity required")
+            candidate["extraction_run"] = extraction_run
+        if display is not None:
+            candidate["display"] = deepcopy(display)
+        if page_correspondences:
+            candidate["page_correspondences"] = deepcopy(list(page_correspondences))
         with file_lock(self.path.with_suffix(".lock")):
             data = self._load()
-            if (
-                not data["candidates"]
-                or data["candidates"][-1]["id"] != candidate["id"]
-            ):
-                data["candidates"].append(candidate)
-                atomic_write(self.path, canonical(data))
+            self._validate_lineage(data["candidates"], candidate)
+            candidate["sequence"] = len(data["candidates"]) + 1
+            candidate["id"] = _digest({k: v for k, v in candidate.items() if k != "id"})
+            data["candidates"].append(candidate)
+            atomic_write(self.path, canonical(data))
         return candidate["id"]
 
     def inspect(self, selection_id):
@@ -866,6 +1031,7 @@ class ReviewStore:
             and e["action"] == "review_portion"
             and e["id"] not in revoked
             and e.get("scope_sha256") == _scope_binding(candidate, target, ids)
+            and _continuous_binding(data, candidate, e, target, ids)
         ]
         if not findings or target["id"] in visiting:
             return None
@@ -900,6 +1066,7 @@ class ReviewStore:
             e
             for e in history
             if e["action"] == "approve"
+            and _continuous_binding(data, candidate, e, scope)
             and (
                 e.get("scope_sha256") == _scope_binding(candidate, scope)
                 if "scope_sha256" in e
@@ -954,6 +1121,8 @@ class ReviewStore:
             "revoke",
             "metadata_amendment",
             "review_portion",
+            "validate_workflow",
+            "undo",
         }:
             raise ValueError("invalid decision action")
         if (
@@ -969,6 +1138,21 @@ class ReviewStore:
             candidate, scope = state["candidate"], state["scope"]
             dependency_bindings = []
             portion_ids = None
+            workflow_validation_id = None
+            undo_checks = None
+            if action == "validate_workflow":
+                if actor["kind"] != "human":
+                    raise ValueError("agent approval authority is not validated")
+                if not evidence:
+                    raise ValueError("workflow validation evidence required")
+            if action in {"approve", "review_portion", "undo"}:
+                workflow_validation_id = _workflow_validation(
+                    self._load()["decisions"], actor, reviewer_config, policy
+                )
+            if action == "undo":
+                undo_checks = self._check_undo(
+                    self._load(), candidate, scope, actor, evidence, relates_to
+                )
             if action == "review_portion":
                 portion_ids = [e["line_id"] for e in evidence]
                 self._validate_portion(candidate, scope, actor, evidence, portion_ids)
@@ -978,7 +1162,7 @@ class ReviewStore:
                     for e in state["history"]
                 ):
                     raise ValueError("apply_draft separately before regional review")
-            if action in {"approve", "review_portion"}:
+            if action in {"approve", "review_portion", "undo"}:
                 for use, target, ids in _support_scopes(candidate, scope):
                     support = self._support_decision(
                         self._load(), candidate, target, ids, {selection_id}
@@ -996,6 +1180,7 @@ class ReviewStore:
             if action == "clear_flag":
                 _check_clearance(candidate)
             if action == "approve":
+                self._require_undo(self._load(), candidate, scope)
                 if _consistency_reasons(candidate):
                     raise ValueError("quantity and effective text disagree")
                 if any(
@@ -1048,6 +1233,8 @@ class ReviewStore:
                 raise ValueError("unknown related decision")
             event = {
                 "version": "content-decision.v1",
+                "workflow_validation_id": workflow_validation_id,
+                **({"undo_checks": undo_checks} if action == "undo" else {}),
                 "scope_sha256": _scope_binding(candidate, scope, portion_ids),
                 "dependency_bindings": dependency_bindings,
                 "timestamp": datetime.now(UTC).isoformat(),
@@ -1098,6 +1285,14 @@ class ReviewStore:
                 "content_review": {
                     "path": "quality/content-review.json",
                     "candidate_id": candidate["id"],
+                    "source_sha256": candidate["snapshot"]["edition"]["source_sha256"],
+                    "edition_id": candidate["snapshot"]["edition"]["id"],
+                    "extraction_run": candidate.get("extraction_run"),
+                    "reviewer_config": approval["reviewer_config"]
+                    if approval
+                    else None,
+                    "policy": approval["policy"] if approval else None,
+                    "page_correspondences": candidate.get("page_correspondences", []),
                     "decision_id": approval["id"] if approval else None,
                     "approval_candidate_id": approval["candidate_id"]
                     if approval

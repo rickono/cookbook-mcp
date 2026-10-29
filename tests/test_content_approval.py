@@ -80,7 +80,9 @@ def test_draft_clearance_approval_and_revocation_have_distinct_durable_history(
     assert snapshot == original
 
 
-def scan_build(root, snapshot):
+def scan_build(
+    root, snapshot, *, original_bytes=b"Synthetic original evidence, never parsed"
+):
     """A saved-evidence build with opaque synthetic original bytes."""
     import hashlib
 
@@ -91,7 +93,7 @@ def scan_build(root, snapshot):
 
     root.mkdir()
     original = root / "original.bin"
-    original.write_bytes(b"Synthetic original evidence, never parsed")
+    original.write_bytes(original_bytes)
     sha = hashlib.sha256(original.read_bytes()).hexdigest()
     snapshot["edition"]["source_sha256"] = sha
     db = create_index(root / "index.sqlite", "a" * 32)
