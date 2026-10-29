@@ -148,7 +148,9 @@ def _initial(context, kind, target_id):
 def _validate_change(context, change, values):
     _exact(
         change,
-        ("kind", "target_id", "before_sha256", "state", "value", "reason", "evidence"),
+        ("kind", "target_id", "before_sha256", "state", "value", "reason", "evidence")
+        + (("occurrence",) if "occurrence" in change else ())
+        + (("readings",) if "readings" in change else ()),
         "change",
     )
     kind, target = change["kind"], change["target_id"]
@@ -188,12 +190,72 @@ def _validate_change(context, change, values):
             raise ValueError("stale source, text, render or geometry evidence")
     if not required <= seen:
         raise ValueError("evidence omits correction target lines")
+    if "readings" in change:
+        readings = change["readings"]
+        if not isinstance(readings, list) or not readings:
+            raise ValueError("competing readings required")
+        identities, selected = set(), []
+        for reading in readings:
+            _exact(reading, ("id", "value", "state", "reason", "evidence"), "reading")
+            if (
+                not _nonempty(reading["id"])
+                or reading["id"] in identities
+                or not _nonempty(reading["value"])
+                or not _nonempty(reading["reason"])
+                or reading["state"] not in {"selected", "rejected", "tied", "unmatched"}
+                or not reading["evidence"]
+            ):
+                raise ValueError("invalid competing reading identity, state or reason")
+            identities.add(reading["id"])
+            for item in reading["evidence"]:
+                if _digest(item) not in {_digest(e) for e in evidence}:
+                    raise ValueError("unmatched reading evidence")
+            if reading["state"] == "selected":
+                selected.append(reading)
+        if len(selected) > 1 or (selected and selected[0]["value"] != value):
+            raise ValueError("selected reading and effective text disagree")
+        if change["state"] == "source_reviewed" and (
+            len(selected) != 1
+            or any(r["state"] in {"tied", "unmatched"} for r in readings)
+        ):
+            raise ValueError("unresolved competing readings require source comparison")
     key = (kind, target)
     current = values.get(key, _initial(context, kind, target))
     if change["before_sha256"] != _digest(
         {"value": current["value"], "state": current["state"]}
     ):
         raise ValueError("stale correction base reading")
+    if "occurrence" in change:
+        occurrence = change["occurrence"]
+        _exact(
+            occurrence,
+            ("start", "end", "before", "selection_id", "role", "cell_id"),
+            "occurrence",
+        )
+        text = current["value"]
+        start, end = occurrence["start"], occurrence["end"]
+        if (
+            kind != "line_text"
+            or not isinstance(text, str)
+            or type(start) is not int
+            or type(end) is not int
+            or not 0 <= start < end <= len(text)
+            or not _nonempty(occurrence["before"])
+            or text[start:end] != occurrence["before"]
+        ):
+            raise ValueError("stale or missing exact occurrence; unresolved target")
+        if occurrence["selection_id"] not in context["owners"][target] or not _nonempty(
+            occurrence["role"]
+        ):
+            raise ValueError("unresolved occurrence culinary association")
+        cell_id = occurrence["cell_id"]
+        if cell_id is not None and (
+            cell_id not in context["cells"]
+            or target not in context["cells"][cell_id][1]["line_ids"]
+        ):
+            raise ValueError("unmatched occurrence cell")
+        if value is not None:
+            value = text[:start] + value + text[end:]
     values[key] = {"value": deepcopy(value), "state": change["state"]}
 
 
@@ -286,6 +348,18 @@ def reviewed_view(snapshot, *, revisions=(), selections=()):
         "quantities": {},
         "memberships": {},
     }
+    if any("readings" in c for r in revisions for c in r["changes"]):
+        result["readings"] = [
+            {
+                "revision_id": r["id"],
+                "target_id": c["target_id"],
+                "occurrence": deepcopy(c.get("occurrence")),
+                "alternatives": deepcopy(c["readings"]),
+            }
+            for r in revisions
+            for c in r["changes"]
+            if "readings" in c
+        ]
     for line_id, (page, line) in context["lines"].items():
         current = values.get(
             ("line_text", line_id), _initial(context, "line_text", line_id)
@@ -434,6 +508,36 @@ def render_review_report(snapshot, *, revisions=(), selections=()):
     )
 
 
+def _consistency_reasons(candidate):
+    view = candidate["view"]
+    lines = {l["line_id"]: l for l in view["lines"]}
+    reasons = []
+    for table in candidate["snapshot"]["tables"]:
+        for cell in table["cells"]:
+            quantity = view["quantities"][cell["id"]]
+            effective = "\n".join(lines[i]["text"] or "" for i in cell["line_ids"])
+            if (
+                quantity["state"] == "source_reviewed"
+                and quantity["value"] != effective
+            ):
+                reasons.append("quantity and effective text disagree: " + cell["id"])
+    return reasons
+
+
+def _check_clearance(candidate):
+    reasons = _consistency_reasons(candidate)
+    if reasons:
+        raise ValueError("; ".join(reasons))
+    view = candidate["view"]
+    if any(l["state"] in {"proposed", "unresolved"} for l in view["lines"]):
+        raise ValueError("unresolved or proposed content requires source comparison")
+    if any(
+        q["state"] in {"unparsed", "proposed", "unresolved"}
+        for q in view["quantities"].values()
+    ):
+        raise ValueError("unresolved quantity requires source comparison")
+
+
 class ReviewStore:
     """Persistent administrative decisions over saved evidence, never inference.
 
@@ -481,6 +585,11 @@ class ReviewStore:
                 or event["effective_text_sha256"] != _digest(candidate["view"])
             ):
                 raise ValueError("decision evidence or effective text mismatch")
+            if event["action"] in {"clear_flag", "approve"}:
+                if _consistency_reasons(candidate):
+                    raise ValueError("quantity and effective text disagree")
+                if event["action"] == "clear_flag":
+                    _check_clearance(candidate)
             if event["action"] == "apply_draft":
                 applied.add((event["candidate_id"], event["scope"]))
             if event["action"] == "approve":
@@ -575,7 +684,8 @@ class ReviewStore:
             approval = None
         return {
             "eligible": bool(approval),
-            "reasons": [] if approval else ["exact_complete_content_approval_required"],
+            "reasons": _consistency_reasons(candidate)
+            + ([] if approval else ["exact_complete_content_approval_required"]),
             "approval": approval,
             "history": history,
             "candidate": candidate,
@@ -619,7 +729,11 @@ class ReviewStore:
         with file_lock(self.path.with_suffix(".lock")):
             state = self.inspect(selection_id)
             candidate, scope = state["candidate"], state["scope"]
+            if action == "clear_flag":
+                _check_clearance(candidate)
             if action == "approve":
+                if _consistency_reasons(candidate):
+                    raise ValueError("quantity and effective text disagree")
                 if any(
                     change["kind"] != "line_text"
                     for revision in candidate["revisions"]
@@ -698,6 +812,8 @@ class ReviewStore:
         if not data["candidates"]:
             raise ValueError("missing candidate")
         candidate = data["candidates"][-1]
+        if _consistency_reasons(candidate):
+            raise ValueError("quantity and effective text disagree")
         lines = {l["line_id"]: l for l in candidate["view"]["lines"]}
         result = []
         for ordinal, scope in enumerate(candidate["selections"]):
