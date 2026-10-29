@@ -81,7 +81,11 @@ def test_draft_clearance_approval_and_revocation_have_distinct_durable_history(
 
 
 def scan_build(
-    root, snapshot, *, original_bytes=b"Synthetic original evidence, never parsed"
+    root,
+    snapshot,
+    *,
+    original_bytes=b"Synthetic original evidence, never parsed",
+    pages=(),
 ):
     """A saved-evidence build with opaque synthetic original bytes."""
     import hashlib
@@ -98,7 +102,7 @@ def scan_build(
     snapshot["edition"]["source_sha256"] = sha
     db = create_index(root / "index.sqlite", "a" * 32)
     source = "pdf:" + sha
-    add_content(db, source, "PDF", sha, "backup/original.pdf", [], [], [])
+    add_content(db, source, "PDF", sha, "backup/original.pdf", list(pages), [], [])
     db.execute(
         "insert into books values(?,?,?,?,?,?)",
         ("book", 1, "Synthetic soup", "[]", "[]", source),

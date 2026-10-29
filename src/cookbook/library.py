@@ -69,7 +69,34 @@ class Library:
         with self.db(pub) as db:
             return db.execute("select extraction_version from info").fetchone()[0]
 
+    def withdrawals(self, section):
+        from .withdrawal import current_withdrawals
+
+        locator = json.loads(section["locator"])
+        review = locator.get("content_review", {})
+        return [
+            e
+            for e in current_withdrawals(self.runtime.store)
+            if review.get("decision_id") in e["affected_decisions"]
+            or (
+                (section["kind"] == "page" or not review)
+                and any(
+                    section["source_id"].split(":", 1)[-1] == p["source_sha256"]
+                    and p["physical_page"]
+                    in locator.get("physical_pages", [locator.get("physical_page")])
+                    for p in e["affected_pages"]
+                )
+            )
+        ]
+
     def eligibility(self, section):
+        withdrawals = self.withdrawals(section)
+        if withdrawals:
+            return {
+                "eligible": False,
+                "reasons": ["confirmed_substantive_error"],
+                "withdrawals": withdrawals,
+            }
         locator = json.loads(section["locator"])
         review = locator.get("content_review")
         if review:
@@ -106,6 +133,8 @@ class Library:
                     "version": self.extraction_version(pub),
                 },
             )
+        if section:
+            d["eligibility"] = self.eligibility(section)
         if section and d["locator"]["kind"] == "page":
             d["page_id"] = section["id"]
         return d
@@ -199,6 +228,8 @@ class Library:
                     sec = db.execute(
                         "select * from sections where id=?", (r["section_id"],)
                     ).fetchone()
+                    if self.withdrawals(sec):
+                        continue
                     results.append(
                         {
                             "citation": self.citation(pub, aliases[0], sec),
@@ -249,13 +280,14 @@ class Library:
             ).fetchone()
             if s is None:
                 raise IntegrityError("unavailable identifier")
+            withdrawn = bool(self.withdrawals(s))
             return {
                 "citation": self.citation(pub, b, s),
-                "text": s["text"][offset : offset + limit],
+                "text": "" if withdrawn else s["text"][offset : offset + limit],
                 "eligibility": self.eligibility(s),
                 "text_offset": offset,
                 "next_offset": offset + limit
-                if offset + limit < len(s["text"])
+                if not withdrawn and offset + limit < len(s["text"])
                 else None,
                 "kind": s["kind"],
                 "image_ids": json.loads(s["images"])[:50],
@@ -426,8 +458,8 @@ class Library:
                     data = out.getvalue()
             meta = {
                 "citation": self.citation(pub, b, s),
-                "text": s["text"][:4000],
-                "text_truncated": len(s["text"]) > 4000,
+                "text": "" if self.withdrawals(s) else s["text"][:4000],
+                "text_truncated": not self.withdrawals(s) and len(s["text"]) > 4000,
                 "width_limit": edge,
             }
             if box is not None:
