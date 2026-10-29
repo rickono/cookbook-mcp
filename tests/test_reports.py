@@ -5,6 +5,9 @@ Rendering is replaced by a synthetic image: no PDF parser, OCR or model runs her
 
 import io
 import json
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from PIL import Image
@@ -250,3 +253,81 @@ def test_reports_store_is_separate_and_optional(monkeypatch, changes, expected):
     else:
         store = reports_store_from_environment()
         assert isinstance(store, expected) and store.bucket == "reports"
+
+
+def test_busy_zoom_is_refused_while_health_and_text_remain_available(
+    scanned, monkeypatch, keys, mint
+):
+    lib, ids, _, _ = scanned
+    render = library_module.render_page
+    entered = threading.Event()
+
+    def slow_render(*args, **kwargs):
+        entered.set()
+        time.sleep(0.8)
+        return render(*args, **kwargs)
+
+    monkeypatch.setattr(library_module, "render_page", slow_render)
+    verifier = JWTVerifier(
+        issuer="https://issuer.example/",
+        audience="https://service.example",
+        subjects=["user-1"],
+        public_key=keys[1],
+    )
+    headers = {"Authorization": "Bearer " + mint(aud="https://service.example")}
+    args = {**ids, "physical_page": 1, "edge": 1600, "region": [0, 0, 0.5, 0.5]}
+    with (
+        TestClient(
+            create_app(lib, verifier), base_url="https://service.example"
+        ) as client,
+        ThreadPoolExecutor() as pool,
+    ):
+        zoom = pool.submit(rpc, client, headers, "get_page", args)
+        assert entered.wait(2)
+        started = time.monotonic()
+        assert client.get("/healthz").status_code == 200
+        text = rpc(
+            client,
+            headers,
+            "read_section",
+            {**ids, "section_id": section_unit_id(ids["source_id"], "lentil-soup")},
+        )
+        assert not text["isError"]
+        busy = rpc(client, headers, "get_page", args)
+        elapsed = time.monotonic() - started
+        assert busy["isError"], "second render queued instead of being refused"
+        assert busy["structuredContent"]["error"]["code"] == "render_unavailable"
+        assert elapsed < 0.4, f"health/text/busy response took {elapsed:.3f}s"
+        assert not zoom.result(timeout=3)["isError"]
+
+
+def test_failed_render_releases_admission_and_returns_redacted_error(
+    scanned, monkeypatch, keys, mint
+):
+    lib, ids, _, _ = scanned
+    render = library_module.render_page
+
+    def fail(*args, **kwargs):
+        raise library_module.RenderError("private source path and decoder details")
+
+    monkeypatch.setattr(library_module, "render_page", fail)
+    verifier = JWTVerifier(
+        issuer="https://issuer.example/",
+        audience="https://service.example",
+        subjects=["user-1"],
+        public_key=keys[1],
+    )
+    headers = {"Authorization": "Bearer " + mint(aud="https://service.example")}
+    with TestClient(
+        create_app(lib, verifier), base_url="https://service.example"
+    ) as client:
+        failed = rpc(client, headers, "get_page", {**ids, "physical_page": 1})
+        assert (
+            failed["isError"]
+            and failed["structuredContent"]["error"]["code"] == "render_unavailable"
+        )
+        assert "private source" not in json.dumps(failed)
+        monkeypatch.setattr(library_module, "render_page", render)
+        assert not rpc(client, headers, "get_page", {**ids, "physical_page": 1})[
+            "isError"
+        ]

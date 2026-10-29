@@ -61,10 +61,16 @@ OFFLINE = (
     threading.Event()
 )  # set by --offline: any model call is an error (cache-only rebuilds)
 LIMIT_RE = re.compile(
-    r"usage limit|rate.?limit|quota|429|overloaded|too many requests", re.IGNORECASE
+    r"(?:usage|session)\s+limit|rate.?limit|quota|429|overloaded|too many requests",
+    re.IGNORECASE,
 )
 REFUSAL_RE = re.compile(
-    r"^(I can['’]t|I cannot|I'm not able|I am not able|Sorry)|copyrighted",
+    # First-person prose and copyright notices also occur in the source books.
+    # Reject an explicit refusal to perform the task, not those words alone.
+    r"^(?:(?:I['’]m\s+)?sorry[,.!]?\s*(?:but\s+)?)?"
+    r"(?:I\s+(?:can(?:not|['’]t)|won['’]t)|I['’]m not able to|"
+    r"I am not able to|I['’]m unable to|I am unable to|I must decline to)\s+"
+    r"(?:help|assist|transcribe|continue|provide|reproduce|comply|fulfill)\b",
     re.IGNORECASE | re.MULTILINE,
 )
 FILTER_RE = re.compile(r"content filtering policy", re.IGNORECASE)
@@ -263,6 +269,29 @@ def filtered(record):
     return any(FILTER_RE.search(e) for e in record["errors"])
 
 
+def refused(record):
+    """Identify actual provider refusals, including saved records from older runners."""
+    return bool(record.get("refused")) or any(
+        FILTER_RE.search(error)
+        or (
+            error.startswith("refusal: ")
+            and REFUSAL_RE.search(error.removeprefix("refusal: "))
+        )
+        for error in record.get("errors", [])
+    )
+
+
+def has_refusal(value):
+    """Inspect call records only; authored page text is never a refusal signal."""
+    if isinstance(value, dict):
+        if "model" in value and "errors" in value:
+            return refused(value)
+        return any(has_refusal(v) for v in value.values())
+    if isinstance(value, list):
+        return any(has_refusal(v) for v in value)
+    return False
+
+
 def call(out, reader, prompt, image, attempts=3, timeout=300):
     """One reader sample. Returns (text or None, call record); the record is what costs.py prices."""
     backend, model, effort = parse(reader)
@@ -281,6 +310,12 @@ def call(out, reader, prompt, image, attempts=3, timeout=300):
             )
             if text.strip() and REFUSAL_RE.search(text[:400]):
                 err, text = "refusal: " + text[:200], ""
+            if err and refused({"errors": [err]}):
+                return None, {
+                    "model": reader,
+                    "errors": errors + [err],
+                    "refused": True,
+                }
             if text.strip() and "NO_IMAGE" not in text:
                 return text, {
                     "model": reader,

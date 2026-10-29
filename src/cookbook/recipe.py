@@ -20,12 +20,27 @@ class RecipeCitation(RecipeModel):
     publication_id: ShortText
     book_id: ShortText
     source_id: ShortText
-    section_id: ShortText
+    section_id: ShortText | None = None
+    model_snapshot_id: ShortText | None = None
+    target_id: ShortText | None = None
+
     physical_pages: list[Annotated[int, Field(ge=1, le=100000)]] | None = Field(
         default=None,
         max_length=50,
         description="Physical pages of a scanned section. Filled from the cited section's locator; a supplied value is replaced, and dropped for a section that is not scanned.",
     )
+
+    @model_validator(mode="after")
+    def require_reading_target(self):
+        if not self.section_id and not (self.model_snapshot_id and self.target_id):
+            raise ValueError(
+                "A citation requires an exact section or whole-book reading target"
+            )
+        if bool(self.model_snapshot_id) != bool(self.target_id):
+            raise ValueError(
+                "Whole-book citations require both model snapshot and target"
+            )
+        return self
 
 
 class RecipeSource(RecipeModel):
@@ -38,7 +53,7 @@ class RecipeSource(RecipeModel):
     citations: list[RecipeCitation] = Field(
         default_factory=list,
         max_length=8,
-        description="Exact identifiers returned by read_section. Required for book/adapted recipes.",
+        description="Exact identifiers from read_section or read_book_content. Required for book/adapted recipes.",
     )
 
     @model_validator(mode="after")

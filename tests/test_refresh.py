@@ -328,6 +328,25 @@ def test_the_owner_queue_lists_filter_refusals_and_ambiguous_corrections(loop):
     assert again["owner_queue"]["new"] == 0 and again["owner_queue"]["total"] == 2
 
 
+def test_a_refusal_with_limit_metadata_is_recorded_and_never_retried(loop):
+    loop.report(*SALT)
+    fakes = Fakes(
+        readings=lambda prefix: [None] * 3,
+        errors=("Output blocked by content filtering policy; session limit reached",),
+    )
+    active = loop.active()
+
+    result = loop.refresh(fakes)
+
+    assert result["triage"]["pending"] == 0
+    assert result["triage"]["decided"]["owner_queue"] == 1
+    assert result["status"] == "unchanged" and loop.active() == active
+    assert not (loop.out / "ledger.jsonl").read_bytes()
+    again = Fakes()
+    assert loop.refresh(again)["triage"]["pending"] == 0
+    assert again.admitted == 0 and not again.crops
+
+
 def test_a_failed_build_leaves_the_active_publication_unchanged(loop):
     loop.report(*SALT)
     active, publications = loop.active(), loop.publications()

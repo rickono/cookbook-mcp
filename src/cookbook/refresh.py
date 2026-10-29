@@ -136,6 +136,24 @@ def rebuild(store, manifest, rows, work: Path, *, ocr_cache=None, progress=None)
         scanned=scanned,
         ledger=rows,
     )
+    from .book_model import MODEL_PATH, REPORT_PATH
+
+    if _manifest_entry(manifest, MODEL_PATH):
+        from .book_build import retain_native_model
+
+        previous_inputs = {}
+        for logical, filename in (
+            (MODEL_PATH, "whole-books.sqlite"),
+            (REPORT_PATH, "whole-books.json"),
+            ("runtime/index.sqlite", "index.sqlite"),
+        ):
+            destination = run / "previous-native" / filename
+            if not _restore(store, manifest, logical, destination):
+                raise RefreshError("the publication lacks its native model inventory")
+            previous_inputs[logical] = destination
+        combined = run / "combined"
+        retain_native_model(build, combined, manifest, previous_inputs)
+        build = combined
     atomic_write(run / ledger.FILE, ledger.dump(rows))
     return build
 

@@ -19,6 +19,7 @@ import shutil
 
 import assemble as asm
 import pipeline as fp
+import readers as rd
 
 from cookbook.scanned import BLANK_RULE, EMPTY_RESPONSE, VERSION
 from cookbook.storage import canonical
@@ -30,6 +31,7 @@ CODES = {
     "crop readers did not reach a majority": "amount",
     "crop majority not confirmed per quantity; page read kept": "amount",
     "crop majority not matched to a page-read line; not applied": "amount",
+    "quantity crop unavailable or unconfirmed; page read kept": "other",
 }
 FAILED = "page transcription failed"
 ASSEMBLY = [
@@ -147,7 +149,7 @@ def link_unresolved(unresolved, reviews, keep):
                 "code": CODES[u["reason"]],
                 "reason": u["reason"],
                 "source_fragment": u["source_fragment"],
-                "box": r["request"]["box"] if r else WHOLE_PAGE,
+                "box": r["request"]["box"] if r else u.get("box", WHOLE_PAGE),
                 "review_id": r["id"] if r else None,
                 "crop_readings": u.get("crop_readings") or [],
             }
@@ -168,14 +170,37 @@ def write(assembly, work, images, failures, out, blank_rounds):
         refuse("the page ledger does not cover every page exactly once")
 
     records, status, evidence = {}, {}, {}
+    refused_pages = {p for p in universe if rd.has_refusal(failures.get(p))}
     for p in universe:
         f = work / "pages" / f"b{book}-p{p:03d}.json"
         rec = json.loads(f.read_text()) if f.exists() else None
-        if rec and rec.get("final_text"):  # the assembler's own test for a failed page
+        if rd.has_refusal(rec):
+            refused_pages.add(p)
+        if rec and rec.get("final_text") and p not in refused_pages:
             records[p], status[p] = rec, "transcribed"
         else:
             evidence[p] = blank_evidence(failures.get(p), blank_rounds)
             status[p] = "blank" if evidence[p] else "failed"
+
+    if (
+        any(
+            part["source_page"] in refused_pages and part["text"] is not None
+            for section in v4["sections"]
+            for part in section["parts"]
+        )
+        or any(
+            row["physical_page"] in refused_pages
+            for name in ("quantity-review", "corrections")
+            for row in v4[name]
+        )
+        or any(
+            row["physical_page"] in refused_pages and row["source_fragment"]
+            for row in v4["unresolved"]
+        )
+    ):
+        refuse(
+            "assembly contains text or reviews from a refused page; rebuild the assembly"
+        )
 
     unresolved = link_unresolved(
         v4["unresolved"],

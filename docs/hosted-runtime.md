@@ -1,12 +1,26 @@
 # Hosted trial runtime
 
+Current status, October 28, 2026 (UTC): publication
+`31f4716be96146c984875e890b9d5b0c` is active on the existing Fly Machine, with
+59 native EPUB books and 12 scanned PDF books. The native model retains 7,266
+candidate recipe records and 627,907 keyword documents. Exact authenticated
+readiness, catalog, search and reading checks pass. Hosted page and region zoom
+checks pass for all 12 PDFs, including the largest selected file and the book
+with the most pages. Scanned text remains unapproved with 4,329 explicit unresolved
+items and one applied source-reviewed correction. One real report remains in the
+owner queue; a separate report completed the changed-ledger rebuild and hosted
+correction check. A repeated refresh publishes nothing. A higher-resolution zoom
+stall remains under investigation in [issue 67](https://github.com/rickono/cookbook-mcp/issues/67);
+smaller hosted zoom requests passed after recovery.
+See the publication records below and [native recipe interpretation](native-recipe-interpretation.md).
+
 Image selection update, September 13: the existing service now exposes
 `list_images` and `inspect_image` before the final `get_image` display. Live
 ChatGPT checks confirm candidate inspection without image cards and a single
 selected-photo viewer. Deployment details and acceptance evidence are in
 [image selection](image-selection.md).
 
-Current status, September 13, 2026: all 58 authorized EPUB records are uploaded to private R2 and active on the existing Fly Machine as publication `d9e2b701b6864ccaa4aabfd6bc04d32a`. Full remote checksum readback, hosted active-manifest/index validation, the exact 58-book inventory, and health pass. Google publisher sign-in, exact authenticated readiness acknowledgement, 293 hosted MCP calls across all 58 books, and successful-publication history verification now pass. The full build preserves the newer image captions/recipe context and resolves all EPUB TOC links; 57 books have searchable text and one is image-only. See [the full publication record](full-epub-publication.md). The full catalog has now passed authenticated transport checks. Earlier two-book ChatGPT visual acceptance and subsequent viewer deployments remain the recorded in-ChatGPT visual checks.
+Publication status on September 13, 2026: all 58 authorized EPUB records are uploaded to private R2 and active on the existing Fly Machine as publication `d9e2b701b6864ccaa4aabfd6bc04d32a`. Full remote checksum readback, hosted active-manifest/index validation, the exact 58-book inventory, and health pass. Google publisher sign-in, exact authenticated readiness acknowledgement, 293 hosted MCP calls across all 58 books, and successful-publication history verification now pass. The full build preserves the newer image captions/recipe context and resolves all EPUB TOC links; 57 books have searchable text and one is image-only. See [the full publication record](full-epub-publication.md). The full catalog has now passed authenticated transport checks. Earlier two-book ChatGPT visual acceptance and subsequent viewer deployments remain the recorded in-ChatGPT visual checks.
 
 ## Serving and updates
 
@@ -20,9 +34,9 @@ Older cached versions remain available for citation follow-ups. No real cache-ve
 
 ## Restart behavior
 
-The independent supervisor checks the worker's local `/healthz` every 30 seconds with a five-second request timeout. Failed liveness checks during the initial five minutes do not trigger a restart. Afterwards, three consecutive failures trigger worker process-group termination and replacement. Successful probes reset the failure count. Crashes are detected separately and restarted, including during startup grace. A one-second pause limits rapid crash loops. Shutdown forwards termination and escalates to kill after 15 seconds, including rendering descendants.
+The independent supervisor checks the worker's local `/healthz` every 30 seconds with a five-second request timeout. Failed liveness checks during the initial fifteen minutes do not trigger a restart. Afterwards, three consecutive failures trigger worker process-group termination and replacement. Successful probes reset the failure count. Crashes are detected separately and restarted, including during startup grace. A one-second pause limits rapid crash loops. Shutdown forwards termination and escalates to kill after 15 seconds, including rendering descendants.
 
-R2 and Auth0 are not contacted by the liveness probe, so dependency failures alone do not trigger restarts. Fly's draft Machine policy is `always`, covering a failed supervisor. The Fly routing health check has a one-minute grace because the Fly validator caps it there; this does not change the supervisor's five-minute grace.
+R2 and Auth0 are not contacted by the liveness probe, so dependency failures alone do not trigger restarts. Fly's draft Machine policy is `always`, covering a failed supervisor. The Fly routing health check has a one-minute grace because the Fly validator caps it there; this does not change the supervisor's fifteen-minute grace.
 
 ## Publisher acknowledgement
 
@@ -293,9 +307,9 @@ returned Classic Nigerian Jollof Rice with a source-bound citation. This verifie
 authenticated discovery and search, not a complete recipe read, image/card UI,
 or refresh exchange. No ingestion, OCR, book publication or deployment was run.
 
-## Transcription reports — not deployed
+## Transcription reports — service deployed
 
-Code only, 2026-10-20; see [transcription-reports.md](transcription-reports.md).
+Deployed on 2026-10-21; see [transcription-reports.md](transcription-reports.md).
 The service accepts agent reports when three secrets name a reports-only bucket:
 
 - `REPORTS_S3_BUCKET`, `REPORTS_AWS_ACCESS_KEY_ID`, `REPORTS_AWS_SECRET_ACCESS_KEY`;
@@ -309,5 +323,284 @@ The reports key should be scoped to the reports bucket alone. R2's object tokens
 read-only or read & write. I am not aware of a write-only scope, so it will be
 read & write on that one bucket. The server only creates objects, conditionally, and
 never reads or deletes them. The Mac reads reports with a separate key for that
-bucket. Creating the bucket and keys, adding the Fly secrets and deploying each need
-the owner's approval. None of them has been done.
+bucket. The owner approved bucket/key setup and the service deployment. The private
+`cookbook-reports` bucket now has a bucket-scoped read/write runtime key and a
+separate read-only Mac key. All three required settings and
+`REPORTS_S3_ENDPOINT_URL` are present on the running Machine. The endpoint is
+explicit because the reports bucket uses the default jurisdiction while the
+library bucket uses the US jurisdiction. The keyword engine child does not inherit
+`REPORTS_*` settings. The library runtime credential remains read-only, and the
+publisher credential was not sent to Fly.
+
+Uploading the PDF originals, about 1 GB, is a separate publication step governed
+by [Host the scanned books and reports bucket](https://github.com/rickono/cookbook-mcp/issues/54).
+It was not part of this service rollout. Once the scanned publication is ready and
+its upload is approved, acceptance still needs a render and region zoom of the
+largest scanned PDF on the existing 1 GB Machine, followed by a real hosted report
+and Mac reader round trip. The current EPUB-only publication correctly rejects
+transcription reports, so no synthetic report was placed in the live reports bucket.
+
+
+## October 21 service rollout
+
+The deployed image is
+`registry.fly.io/cookbook-agent@sha256:cf12a1327c58f01cad3686ae46e614e9c0b6d4eea93c58c9010754681209638b`,
+built from `96612b49d1fd81666552945f809c8ae2aebc94e0` on
+`deploy/spec46-preserve-live-20261021`. The initial preflight refused an obsolete
+volume pin before making remote changes. Fresh inspection identified the live
+recipe-structure image; its 27 packaged source files matched the recipe-structure
+branch exactly. That branch was merged before rebuilding, preserving whole-book
+retrieval and its bounded recovery behavior alongside scanned transcription support.
+
+Only the image changed on Machine `2863795a042368`. Its SJC placement, shared
+1 CPU / 1 GB guest, encrypted 20 GB volume `vol_r68yxje08mo6q3n4`, mounts,
+services, environment, metadata and restart policy match the saved before-state.
+The prior image and full configuration are retained for rollback. The active
+publication and model snapshot `32f3d7787d0cd991b26106c6e6eba6f1` are unchanged.
+
+All 395 Python checks passed through the OCR sandbox with its original resource
+ceilings; temporary test files used the private output mount. All 11 viewer checks
+passed. After adding reports-credential isolation, all 11 model/search checks
+passed again. The native x86 image build and a separate source-free, network-disabled
+service startup check passed, including UID 10001, manifest cache, renderer presence,
+complete synthetic reports settings, health HTTP 200 and anonymous HTTP 401.
+Native build execution is required on this Mac: the unchanged prior live Typesense
+binary also segfaulted under its x86 emulator.
+
+Clean post-update verification passed. Fly's routing check passes, health is OK,
+and anonymous readiness/MCP return 401. Real authenticated connected-tool checks
+confirm publication information, search and a source section read. Read-only
+hosted checks confirm 59 source roots, 7,266 recipes, title retrieval in all 55
+recipe books without query cutoffs, all 627,907 keyword search units, current and
+retained citations, source continuations, supporting work and candidate filtering.
+The running service can list the reports bucket using its separate endpoint and
+key; its keyword engine inherits no reports credentials.
+
+Private receipts, build logs, the rollback configuration and the runbook are under
+`~/cookbook-mcp-data/setup/deploy-spec46-20261021/`. Refresh ChatGPT/Grok app metadata
+to discover the report tool and updated schemas. No scanned publication, successful
+hosted report write, or largest-PDF zoom is claimed by this rollout record.
+
+## October 21 three-book publication
+
+With the owner's publication authorization, the active library is now
+`0539a03a0bdc441282a0d3391139cdcb`, manifest SHA-256
+`2c05e89ad5d159ae8942ddda6a982d13ad6ed81f1120c5878c1c31778c0f9b75`.
+It adds Calibre 6, 79 and 81 to the existing 59 native EPUB books. The scanned
+books contain 233, 247 and 392 physical pages and 226, 201 and 249 assembled
+sections. Full coverage passes, with no blank or failed pages. The 73 unresolved
+items (15, 11 and 47 respectively) remain marked, and scanned text remains
+unapproved agent transcription. No new OCR, PDF ingestion or inference ran.
+
+The service image is
+`registry.fly.io/cookbook-agent@sha256:447cd6c32230d73269c7a598f520e7a4ffd83770c55b9c0a200b5f8cd5def6db`,
+built from `2f85a3bfb16435f3644b2adb01f9a34cdf7c646b`. Only the image changed
+on the existing Machine; guest resources, volume and other configuration match
+the captured before-state. The native snapshot, 7,266 recipe records and 627,907
+keyword documents are unchanged. The combined publication reuses the original
+immutable keyword collection only after exact document, metadata, schema and
+count checks. Correction refreshes retain the native model through the same path.
+
+The publication quality gate and full native-model structural validation passed
+inside the original OCR sandbox limits. The Python suite passed 400 checks;
+93 focused checks passed after adding validator-specific receipts, and all 11
+viewer checks passed. Native service startup passed before deployment. Genuine
+full-validation receipts were staged under the exact Linux validator signature;
+file hashes and index integrity are still checked by the runtime. The original
+default receipt was retained so the prior service image remains usable for rollback.
+
+All 11,617 unique R2 objects passed fresh streamed SHA-256 readback before the
+conditional active-pointer update. The server reconstructed the new native
+SQLite bytes from its checksum-verified parent plus two changed blocks, then
+verified the complete new checksum. Its stored files and runtime validation passed.
+Authenticated MCP checks confirmed all 62 catalog books, searches and complete
+multi-page recipe reads for each scanned book, unapproved provenance, check
+regions, and page/region images. The largest PDF in this publication is about
+70 MiB and remains below the 512 MiB original cache; zoom renders remain capped
+at 2,400 pixels. Native keyword search and source reading also passed.
+
+Exact publication/manifest readiness and active MCP responses were confirmed
+before recording successful history. The prior publication remains retained.
+Publisher credentials never left the Mac. Private books, page images, transfer
+and validation evidence remain under
+`~/cookbook-mcp-data/publications/scanned-three-live-20261021/`; service image and
+rollback receipts are under `~/cookbook-mcp-data/setup/deploy-scanned-three-20261021/`.
+The remaining 15 scanned books are tracked in issue 53. Visual QA found one
+section-assembly discrepancy; a genuine report was filed through the hosted MCP
+and retrieved with the Mac reports-only read key. It remains pending independent
+review, with no correction applied. Issue 54 retains the remaining-corpus rendering
+and refresh/triage acceptance work; this publication does not claim a render of
+the unpublished 136 MB PDF or completed blind triage.
+
+## October 26 expanded scanned publication
+
+The owner-authorized 71-book selection is active as publication
+`d6e1fc69113c4571bf68e842fd031edf`, manifest SHA-256
+`b701de975745cbf2cefc587ca95bcca2b785eece81c4f24019d1184b4609f31a`.
+Authenticated acknowledgement and post-activation checks completed on October 27
+UTC (October 26 owner local time). The six owner-held books remain excluded.
+All 15 private production assemblies completed; the nine accepted new books and
+the refusal-safe replacement for Calibre 81 use exact reviewed candidates.
+Calibre 6 and 79 and all 59 native EPUB editions are preserved. The native edition
+with EPUB and AZW3 retains both original formats and counts once.
+
+The 12 PDFs account for 5,143 physical pages: 4,998 transcribed, one blank and
+144 explicitly failed. Failed pages remain empty and unavailable content is
+identified in neighboring served sections. The 4,329 unresolved items remain
+explicit; limited source sampling does not establish whole-book accuracy or
+content approval. No model calls or OCR were made during publication.
+
+The exact source/native-parent audit, publication gate and full native-model
+validation passed under the unchanged resource guard. The native snapshot,
+7,266 recipes and all 627,907 keyword documents are retained. All 11,680 unique
+objects (9,969,025,004 bytes) passed fresh full checksum readback. The three
+runtime files (3,481,621,311 bytes) passed complete checksums and the genuine
+Linux validator. The service image and Machine configuration are unchanged
+from the three-book publication; publisher credentials stayed on the Mac.
+
+Authenticated staged and active checks confirmed the exact 71-book catalog,
+held-book exclusion, searches and section reads for all 12 PDFs, unapproved
+provenance, check regions, native keyword search and native source reading.
+All 24 hosted full-page and region images were visually inspected before
+activation. Calibre 34 is the largest selected PDF by bytes (81,314,309);
+Calibre 61 has the most pages (1,272; 80,326,576 bytes). Both render and zoom.
+The 136 MB PDF is owner-held and is not claimed as published or rendered.
+The 512 MiB original cache and 2,400-pixel render ceiling are unchanged.
+
+Exact authenticated publication/manifest acknowledgement and the active MCP
+checks passed before recording successful history. An independent readback
+confirmed the active pointer and successful-history entry match, with the
+previous mixed publication retained for rollback. The temporary processing
+monitor is disabled and all owned publication jobs have exited.
+
+The Mac's guarded refresh entry point read the existing genuine hosted report
+and passed an unchanged-ledger, zero-triage readiness check with native retention.
+The report remains pending: blind triage and a changed-ledger rebuild/activation
+have not been accepted. Issue 54 remains open for that outstanding work.
+Private receipts, source reviews and hosted images remain outside Git under
+`~/cookbook-mcp-data/publications/scanned-all-20261022/` and the private production
+operations directory. Final model costs were $31.1006 list and $52.3729
+CLI-reported; these are not an invoice.
+
+## October 27 real report review
+
+The owner authorized one prepared crop to be sent through the existing Mac
+Haiku 5.5 CLI, limited to three stateless calls with no retries and an immediate
+stop on refusal or limit. This was a narrow exception to the model-execution
+rule, not a general authorization for future host model jobs. The source-bound
+crop was produced by the registered helper under the unchanged official sandbox
+and shared scheduler lock. Credentials and all report/source content stayed
+private.
+
+Exactly three calls completed with no errors, refusals or retries. None matched
+either the current or proposed report claim, so the immutable decision is an
+owner-queue item. No correction was added to the ledger. The actual refresh
+entry point then ran twice inside the official sandbox with the saved decision.
+Both runs skipped further review, retained the empty ledger and reported
+`unchanged`, with no crop, model, rebuild, upload or activation. Independent
+readback confirmed that the live pointer and successful history were unchanged;
+the 71-book selection, six holds and native inventory are preserved.
+
+Before this review, commit `0b0e6ea` fixed report sampling after terminal reader
+responses. Refusals now stop remaining samples and cannot be overridden by an
+earlier majority; limits stop the run, and mixed refusal/limit metadata cannot
+cause a refused report to be retried. All 71 targeted report, refresh and reader
+checks passed inside the official sandbox, with Ruff and formatting checks passing.
+
+The real review added $0.0014 list / $0.0024 CLI-reported cost, not an invoice.
+Private decision, readings, owner queue and guarded refresh receipts are under
+`~/cookbook-mcp-data/production/transcription/ops54-20261027/`. The report's section
+boundary remains an owner-queue item; no new publication is warranted by this
+decision. At that checkpoint, the changed-ledger hosted check was still unverified
+and the temporary monitor was disabled. The separate review below completes that
+check; this first decision and its consumed one-crop exception remain unchanged.
+
+## October 28 supported correction refresh
+
+The owner separately authorized one precise quantity report and at most three
+fresh stateless Haiku 5.5 calls through the existing Mac CLI, with no retries and
+an immediate stop on refusal or limit. The existing guarded crop was reused.
+All three readings supported the proposed correction; no further model calls are
+authorized by this exception. This review added $0.0014 list / $0.0021 CLI-reported,
+not an invoice.
+
+The actual refresh path rebuilt the active publication's recorded snapshot,
+71-book selection and 12 frozen scanned candidates with the new ledger row.
+Exactly one correction applied, with none stale or ambiguous. The separate
+owner-queue item remains unchanged. Native retention and full validation passed
+under the official resource guard: 59 editions, 7,266 recipe records, 627,907
+keyword documents, the model snapshot and keyword fingerprint are preserved.
+The source books and admitted candidate bytes did not change. A second guarded
+refresh returned `unchanged` without review, rebuilding or publishing.
+
+All 11,681 unique immutable objects passed full checksum readback. The runtime
+files were staged and hashed on Fly using the measured old/new model byte delta
+and the genuine manifest- and Linux-validator-bound receipt. Fresh publisher
+authentication, exact readiness acknowledgement, catalog, scanned search and
+reading, correction/reviewer provenance, native keyword search and reading, and
+active-publication checks passed. The prior publication and successful history
+remain available for rollback. Publisher credentials stayed on the Mac; no token
+was saved.
+
+Rendering acceptance included 21 byte-identical renders from the prior visually
+reviewed publication, three newly inspected smaller region zooms, and a visibly
+inspected full page and zoom for the correction. An earlier edge1600 region zoom
+(render ceiling2400) timed out and coincided with failed health checks. One
+controlled restart recovered the same Machine and image. Edge800 zoom requests
+(render1600) then passed. The cause of the larger-request stall is not established,
+and the smaller successes do not establish a fix; [issue 67](https://github.com/rickono/cookbook-mcp/issues/67)
+tracks that limitation separately. No resource ceilings were increased.
+
+Publication `31f4716be96146c984875e890b9d5b0c`, manifest
+`24ed35bf15211e8ce17172ac274f95fde83edd776d508c2ec796934167de07fc`, completes
+the supported-correction rollout check in issue 54. Scanned content remains
+unapproved with 4,329 explicit unresolved items; this is no whole-book accuracy
+claim. Private receipts are under
+`~/cookbook-mcp-data/publications/scanned-correction-20261028/`.
+
+## Bounded page rendering — October 28, 2026
+
+The serving renderer admits one page request at a time. A concurrent request
+returns `render_unavailable` immediately instead of waiting behind the renderer.
+The verified original is pinned with a temporary hard link, allowing unrelated
+image-cache access during rendering; text reads and health checks remain available.
+The source cache stays at 512 MiB, requested output edges at 256–1600 pixels and
+region rendering at a maximum of 2400 pixels.
+
+On Linux, a fresh decoder process receives hard limits of 128 MiB address space,
+10 CPU seconds, 16 MiB per output file and no core dumps. A 15-second wall deadline
+kills its process group, including remaining descendants on both success and
+failure. These are per-process serving limits, not a whole-workload cgroup or a
+replacement for the required OCR VM and sandbox. Ingestion and offline OCR retain
+their existing guarded entry points and ceilings. Native non-Linux serving renders
+are refused; synthetic rendering replacements remain available to tests.
+
+Nonzero exits, decoder warnings, invalid output and deadline failures return a
+redacted `render_unavailable` tool error, never a partially decoded or blank image.
+This is a deliberate supported bound: some published pages with expensive embedded
+images cannot currently be rendered, even at a smaller output edge. Their source
+text remains readable. The largest selected PDF by file size still passes page and
+zoom rendering; the sampled page from the longest PDF and the incident page are
+refused within the decoder budget. Supporting those pages requires separate work
+within the existing capacity or a separately reviewed capacity change.
+
+An isolated replay of the incident page at render edge 2400 used about 210 MiB
+peak decoder RSS and succeeded under a 256 MiB cgroup; a 192 MiB cgroup recorded an
+OOM kill. The bounded renderer refused that page in about one second, including
+rejecting Poppler's decode warnings. This establishes a memory-exhaustion hazard
+and its bounded behavior, but does not establish the historical production stall's
+cause: no process/stack evidence was captured during that incident.
+
+Synthetic enforcement checks cover inherited hard limits, excessive allocation,
+file growth, decoder warnings, timeouts, descendant cleanup and concurrent health
+and text reads. The full guarded suite passed: 459 tests. Private inputs, images
+and probe evidence remain outside Git under `poc/zoom-stall-67`.
+
+Deployed image `sha256:c4487fffb3495def3f788e27398b7304697513f93007dba4e2ec5f577ed08af4`
+is healthy on the existing Machine. Its configuration is unchanged except for the
+image. Authenticated hosted acceptance passed: the incident zoom returned a
+bounded error, the largest-source page and zoom were byte-identical to their
+previously reviewed images, and concurrent section reads, catalog search and
+native keyword search/read succeeded. All 90 concurrent health probes passed.
+The active publication and its counts are unchanged. No token was saved, model
+called, publication activated or resource ceiling increased.

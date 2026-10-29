@@ -72,3 +72,14 @@ test('template stays empty until a recipe result arrives',()=>{
  f.send({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:{structuredContent:{results:[]}}});
  assert.equal(f.elements.root.innerHTML,'');
 });
+
+
+test('whole-book citations display the immutable model and reading target',()=>{
+ const f=fixture();
+ const source={kind:'book',label:'Sample cookbook',citations:[{publication_id:'p',book_id:'b',source_id:'s',model_snapshot_id:'<model>',target_id:'<target>'}]};
+ deliver(f,{...recipe,source});
+ assert.match(f.elements.root.innerHTML,/Model: &lt;model&gt;/);
+ assert.match(f.elements.root.innerHTML,/Content: &lt;target&gt;/);
+ deliver(f,{...recipe,source:{...source,citations:[{publication_id:'p',book_id:'b',source_id:'s',target_id:'t'}]}});
+ assert.equal(f.elements.root.innerHTML,'');
+});

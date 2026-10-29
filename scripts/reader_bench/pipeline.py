@@ -38,8 +38,9 @@ HELPER = (
 )  # runs scripts/ocr_sandbox.py
 
 READERS = []  # set by bench.py: e.g. ["claude:claude-haiku-5-5#1", "...#2", "...#3"]
-FALLBACK = None  # set by bench.py --fallback: page reader used only when READERS[0]'s page read
-# is refused by a provider output filter, e.g. "codex:gpt-6-luna@low#fallback"
+FALLBACK = (
+    None  # Historical config metadata only; refusals never dispatch another reader.
+)
 
 PAGE_PROMPT = (
     "Transcribe every word printed on the attached cookbook page image exactly as printed, "
@@ -170,14 +171,50 @@ def patch(page_text, voted, page_model=None):
     Wording and each quantity position are voted separately, so formatting differences
     between readers ('2¾ lb (4)' vs '2¾ lb | (4)') no longer split a quantity vote.
     A change needs a strict majority of all ballots; missing readings count against."""
+    return _patch(page_text, voted, page_model, reviewed=False)
+
+
+def reviewed_patch(page_text, voted, page_model=None):
+    """Replay saved votes for review, preserving headings and existing occurrences.
+
+    This is separate from the frozen benchmark and production page reader. It makes
+    no calls and writes nothing; reviewed derivatives need their own admission and
+    provenance before a build can use them.
+    """
+    return _patch(page_text, voted, page_model, reviewed=True)
+
+
+def patch_origins(page_text, voted, page_model=None, *, reviewed=False):
+    """Replay with stable origins for nonblank output lines, without model calls.
+
+    Each origin names an original page-read line or an appended crop vote. They
+    let a review remap cached line labels by identity rather than fuzzy text matches.
+    The ordinary patch API and its frozen behavior are unchanged.
+    """
+    origins = [("page", i) for i in range(len(page_text.splitlines()))]
+    text, corrections = _patch(
+        page_text, voted, page_model, reviewed=reviewed, origins=origins
+    )
+    return (
+        text,
+        corrections,
+        [origin for origin, line in zip(origins, text.splitlines()) if line.strip()],
+    )
+
+
+def _patch(page_text, voted, page_model, *, reviewed, origins=None):
     lines = page_text.splitlines()
     used, corrections = set(), []
-    for v in voted:
+    for vote_index, v in enumerate(voted):
         by_model = v["readings"]
         page_votes = page_model not in v.get("readers", by_model)
         voters = v["of"] + page_votes
         for i, line in enumerate(lines):
-            if i in used or not similar(key(clean_line(line)), v["key"]):
+            if (
+                i in used
+                or (reviewed and not qty(line))
+                or not similar(key(clean_line(line)), v["key"])
+            ):
                 continue
             used.add(i)
             new, why = line, []
@@ -218,6 +255,21 @@ def patch(page_text, voted, page_model=None):
                 )
             break
         else:
+            # Overlapping crops can vote for the same source occurrence. Once its
+            # existing amount line has been used, or the crop shows only part of
+            # an existing paragraph, another vote is not evidence of missing text.
+            # Keep authored repetitions already present in `lines`.
+            if reviewed and (
+                any(
+                    qty(line) and similar(key(clean_line(line)), v["key"])
+                    for line in lines
+                )
+                or re.search(
+                    r"(?<!\w)" + re.escape(norm(v["line"])) + r"(?!\w)",
+                    norm(" ".join(lines)),
+                )
+            ):
+                continue
             if not v["tie"] and v["support"] * 2 > voters - page_votes:
                 corrections.append(
                     {
@@ -228,6 +280,8 @@ def patch(page_text, voted, page_model=None):
                     }
                 )
                 lines.append(v["line"])
+                if origins is not None:
+                    origins.append(("vote", vote_index))
     return "\n".join(lines), corrections
 
 
@@ -339,7 +393,11 @@ def run_page(out, book, page, meta=None):
     guarded helper's render)."""
     dest = out / "pages" / f"b{book}-p{page:03d}.json"
     if dest.exists():
-        return json.loads(dest.read_text())
+        saved = json.loads(dest.read_text())
+        if rd.has_refusal(saved):
+            saved.update(refused=True, failed=True, final_text="", corrections=[])
+            saved["page_read"]["text"] = None
+        return saved
     meta = meta or image_meta(book, page)
     t0 = time.time()
     rec = {
@@ -347,17 +405,30 @@ def run_page(out, book, page, meta=None):
         "page": page,
         "image": meta["image"],
         "image_sha256": meta["sha256"],
+        "regions": {"by_model": {}, "calls": [], "merged": []},
+        "crops": [],
     }
+
+    def preserve_refusal():
+        rec.update(refused=True, failed=True, final_text="", corrections=[])
+        rec["page_read"]["text"] = None
+        rec["seconds"] = round(time.time() - t0)
+        dest.parent.mkdir(exist_ok=True)
+        dest.write_text(json.dumps(rec, ensure_ascii=False, indent=1))
+        return rec
+
     text, c = rd.call(out, READERS[0], PAGE_PROMPT, meta["image"])
     tried = [c]
-    if text is None and FALLBACK and rd.filtered(c):
-        text, c = rd.call(out, FALLBACK, PAGE_PROMPT, meta["image"])
-        tried.append({**c, "fallback_for": "output filter"})
     rec["page_read"] = {"text": text, "calls": tried}
+    if rd.refused(c):
+        return preserve_refusal()
     boxes, calls = {}, []
     for m in READERS:
         t, c = rd.call(out, m, REGION_PROMPT, meta["image"])
         calls.append({**c, "raw": t})
+        if rd.refused(c):
+            rec["regions"] = {"by_model": boxes, "calls": calls, "merged": []}
+            return preserve_refusal()
         boxes[m] = parse_regions(t)
     rec["regions"] = {"by_model": boxes, "calls": calls, "merged": cluster(boxes)}
     crops, voted_all = [], []
@@ -369,6 +440,11 @@ def run_page(out, book, page, meta=None):
             for m in READERS:
                 t, c = rd.call(out, m, CROP_PROMPT, crop["image"])
                 ccalls.append(c)
+                if rd.refused(c):
+                    crop["calls"] = ccalls
+                    crops.append(crop)
+                    rec["crops"] = crops
+                    return preserve_refusal()
                 if t:
                     readings[m] = t
             crop["readings"], crop["calls"] = readings, ccalls
