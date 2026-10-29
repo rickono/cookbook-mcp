@@ -604,3 +604,43 @@ previously reviewed images, and concurrent section reads, catalog search and
 native keyword search/read succeeded. All 90 concurrent health probes passed.
 The active publication and its counts are unchanged. No token was saved, model
 called, publication activated or resource ceiling increased.
+
+## Spec68 runtime deployment (2026-10-29)
+
+Deployed immutable image
+`sha256:23aab3aa8987757182166dc3554d1b6cc37192255f78ddf99e40affe16917695`
+from source `e97bbab94e81dd18a0522245cc6b6fbc1f956c22` on
+`t3/deploy-spec68-runtime`. This combines the merged spec68 implementation with
+`fix/67-bounded-zoom`; every predeployment packaged source file matched that live
+branch. It retains the manifest cache, whole-book Typesense/native retrieval,
+scanned/report support and bounded rendering. The integration preserves terminal
+reader refusal accounting and updates the shared-index activation regression to
+expect pending activation after a committed remote pointer update.
+
+The full suite passed through the mandatory OCR sandbox with unchanged ceilings:
+546 tests, no OOM or PID-limit events. All 11 viewer tests and Ruff F checks passed.
+The broader configured Ruff rules report 97 findings; no broad cleanup is claimed.
+The existing native amd64 remote build and source-free smoke passed, including
+Typesense startup, manifest-cache presence, UID, health and anonymous auth refusal.
+All 38 packaged source files match the combined checkout.
+
+Only the image changed on existing Machine `2863795a042368`. Its exact remaining
+configuration, sole encrypted volume attachment and secret names/status are
+unchanged. Cached publication validation completed during cold startup and Fly's
+routing health passed. Public health and anonymous readiness/MCP refusal passed.
+Signed synthetic in-process MCP transport acceptance on the deployed Machine
+passed catalog search, native/legacy search and reads with citations. The real
+active publication, control pointer/version, manifest, model identity, keyword
+collection and its 627,907 documents, and transcription counts are unchanged.
+Current withdrawal state is readable with existing runtime credentials and has no
+recorded withdrawals. Nonempty withdrawal behavior is covered synthetically; no
+production content approval, withdrawal, publication or source processing ran.
+This acceptance does not claim a fresh real OAuth session or a new source-image
+inspection. The existing bounded-render behavior was retained and tested in the
+sandbox without rendering production pages.
+
+Exact rollback configuration, pullable prior image, build/source hashes, guarded
+test records, native smoke, before/after acceptance and verification scripts are
+private under `~/cookbook-mcp-data/setup/deploy-spec68-20261029/`. Rollback uses
+`python3 deploy.py rollback` there to restore the captured exact configuration on
+the same Machine. No new Machine, volume, secret or publication was created.
