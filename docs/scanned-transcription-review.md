@@ -59,3 +59,63 @@ visible source. Digests establish evidence identity, not transcription truth.
 No arithmetic or scaling recovers a missing quantity. Source-derived callers
 must run through `scripts/ocr_sandbox.py` after admission and before input reads;
 pure synthetic tests may run locally. Book data and reports stay outside Git.
+
+## Explicit standalone complete-content approval
+
+Saved scan evidence can now enter an additive administrative path without changing
+legacy OCR decisions or the unapproved EPUB export. `ReviewStore` in
+`cookbook.transcription_review` retains every candidate snapshot, selection,
+revision, effective reading and administrative decision. It performs no rendering,
+recognition or inference. Book-derived artifacts belong outside Git.
+
+Use `cookbook review-transcription --review-store /private/review.json` with one
+of these operations:
+
+- `--candidate-file /private/candidate.json`: a JSON object with `snapshot`,
+  `selections` and `revisions` (the existing canonical saved-evidence interfaces).
+  Saving a candidate is a proposal, not an approval.
+- `--decision-file /private/decision.json`: arguments to `ReviewStore.decide`:
+  `selection_id`, `action`, `actor` (`kind` and explicit `id`) and `reason`.
+  Actions are `apply_draft`, `clear_flag`, `metadata_amendment`, `approve` and
+  `revoke`. Every record has a timestamp, predecessor, exact candidate, source
+  snapshot and effective-reading identities, reviewer configuration and policy.
+  `relates_to` links superseding or revoking decisions to retained history.
+- `--selection-id ID`: inspect current eligibility, reasons, candidate evidence
+  and immutable decision history.
+
+Approval requires explicit human action, `complete: true`, and `evidence` equal
+to `source_evidence(snapshot, selection.line_ids)` for the inspected source.
+Revised candidates require a separate `apply_draft` decision before approval.
+Recording an agent actor does not grant approval authority. Proposed or unresolved
+readings and ambiguous ownership cannot qualify. `required_content` must be empty:
+this path supports a standalone recipe and line-text corrections; quantity and
+membership overlays remain pending until their consistency rules are implemented; dependencies, formulations and variations
+need the subsequent complete-content dependency work. The owner must establish
+standalone completeness rather than infer it from a boundary proposal. Flag
+clearance and metadata amendment do not constitute source comparison.
+
+Pass `--transcription-review /private/review.json` to `finalize-local`, alongside
+its existing build, cache and new output directory arguments. Original bytes must
+already be backed up in that build with the same source digest. Existing OCR
+quality checks still run. Finalization freezes the review history, adds recipe
+sections and backs up `quality/content-review.json` in the immutable manifest.
+Pending sections expose title, status and original-page citations, with empty
+read text and no full-text search row. Only exact approved recipe text enters
+search and reading. Citation `content_review` references contain candidate and
+decision identifiers and the history artifact path, not correction prose.
+Publication quality checks replay the retained evidence and verify text, citation
+and search consistency. Use the existing local publication command afterward;
+recording approval does not publish or activate anything.
+
+Search/read responses now include `eligibility`. Existing native and legacy OCR
+content keeps its previous reading behavior and provenance but gains no implied
+complete-content approval. Opening another candidate leaves immutable published
+versions alone. A revocation in this review store affects later finalization;
+live withdrawal across retained versions is a separate dependency of the parent
+spec, not a property of this standalone slice. The history uses digests and
+process locking for identity and consistency, not signatures or an authenticated
+multi-user authorization service.
+
+These JSON-only operations do not admit source processing. Any PDF/DjVu parsing,
+rendering, OCR or model work still requires the unchanged sandbox launcher and
+VM/cgroup ceilings in `ocr-resource-isolation.md`.

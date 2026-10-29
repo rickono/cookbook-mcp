@@ -1,20 +1,22 @@
 """Read-only library queries and bounded authenticated content responses."""
 
 from __future__ import annotations
-from contextlib import contextmanager
+
 import io
 import json
 import math
-from pathlib import Path
 import re
 import sqlite3
 import tempfile
 import threading
+from contextlib import contextmanager
+from pathlib import Path
+
 from PIL import Image
+
 from .extract import render_page
 from .reports import check_region
 from .storage import IntegrityError, digest_file, verify
-
 
 ZOOM_EDGE = 2400  # largest render for a region zoom; about 25 MB of RGB on a 1 GB host
 
@@ -66,6 +68,23 @@ class Library:
     def extraction_version(self, pub):
         with self.db(pub) as db:
             return db.execute("select extraction_version from info").fetchone()[0]
+
+    def eligibility(self, section):
+        locator = json.loads(section["locator"])
+        review = locator.get("content_review")
+        if review:
+            return {"eligible": review["eligible"], "reasons": review["reasons"]}
+        return (
+            {
+                "eligible": False,
+                "reasons": ["legacy_transcription_is_not_complete_content_approval"],
+            }
+            if "ocr" in section["provenance"]
+            else {
+                "eligible": False,
+                "reasons": ["complete_content_approval_not_recorded"],
+            }
+        )
 
     def citation(self, pub, book, section=None):
         d = {
@@ -185,6 +204,7 @@ class Library:
                             "citation": self.citation(pub, aliases[0], sec),
                             "aliases": [a["id"] for a in aliases],
                             "snippet": r["snippet"][:500],
+                            "eligibility": self.eligibility(sec),
                             "rank": r["rank"],
                         }
                     )
@@ -232,6 +252,7 @@ class Library:
             return {
                 "citation": self.citation(pub, b, s),
                 "text": s["text"][offset : offset + limit],
+                "eligibility": self.eligibility(s),
                 "text_offset": offset,
                 "next_offset": offset + limit
                 if offset + limit < len(s["text"])
