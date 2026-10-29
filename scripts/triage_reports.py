@@ -183,13 +183,13 @@ def _triage(report, out, *, books, reader, crop, call, ledger, attempt):
         readings.append(text)
         calls.append(c)
         ledger.record(attempt, "review", sample=k, output={"text": text, "call": c})
-        if rd.refused(c):
+        if rd.refused(c) or any(e.startswith("refusal:") for e in c.get("errors", [])):
             return {
                 **base,
                 "outcome": "owner_queue",
-                "reason": "terminal reader refusal; content filter; not retried or worked around"
+                "reason": "terminal reader refused; content filter; not retried or worked around"
                 if rd.filtered(c)
-                else "terminal reader refusal",
+                else "terminal reader refused; not retried or worked around",
                 "review_status": "terminal_unavailable",
                 "readings": readings,
                 "calls": calls,

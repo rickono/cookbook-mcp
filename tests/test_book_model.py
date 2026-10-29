@@ -681,8 +681,12 @@ def test_new_publication_reuses_identical_native_keyword_index(
             activate=runtime.activate,
         )
         if tamper:
-            with pytest.raises(IntegrityError, match="shared keyword index differs"):
-                publish_build(store, tmp_path / "combined", activate=runtime.activate)
+            result = publish_build(
+                store, tmp_path / "combined", activate=runtime.activate
+            )
+            assert result["status"] == "pending_activation"
+            assert result["activation_error"] == "IntegrityError"
+            assert result["remote_pointer"]["publication_id"] == combined.publication_id
             assert runtime.active()["publication_id"] == previous.publication_id
             return
         result = publish_build(store, tmp_path / "combined", activate=runtime.activate)
