@@ -18,7 +18,7 @@ render_review_report(snapshot, *, revisions=(), selections=()) -> str
 context; callers validate their entire boundary proposal separately. Selection
 IDs and line references must resolve. Review cannot create a new selection.
 
-Each change has exactly `kind`, `target_id`, `before_sha256`, `state`, `value`,
+Each change has required fields `kind`, `target_id`, `before_sha256`, `state`, `value`,
 `reason`, and `evidence`. Kinds are `line_text` (canonical line ID), `quantity`
 (table cell ID), or `membership` (canonical line ID). `before_sha256` comes from
 `target_digest` over the same predecessor chain. Evidence comes from
@@ -27,6 +27,42 @@ States are `proposed`, `source_reviewed`, or `unresolved`; the last requires an
 explicit null value. Resolved text/quantity values are nonempty strings;
 membership values are a list containing exactly one existing selection ID.
 `reviewer` has exactly `kind` (`agent` or `human`) and nonempty `id`.
+
+A `line_text` change may additionally carry an `occurrence` object with exactly
+`start`, `end`, `before`, `selection_id`, `role`, and `cell_id`. The half-open
+`[start, end)` range counts Unicode code points in the **current effective line**;
+`before` must equal that exact slice. `value` is then the replacement slice,
+rather than a replacement of the whole line. `selection_id` must own the target
+line, `role` names its culinary association (for example `ingredient:stock`), and
+`cell_id` is null or a table cell containing that line. The source evidence and
+snapshot binding retain physical position, geometry and candidate context.
+
+For the synthetic line `2 cups water; 2 cups stock`, targeting `[14, 15)` with
+`before: "2"` and `value: "1"` produces `2 cups water; 1 cups stock`. No string
+search chooses an occurrence. Obtain a fresh `target_digest` after each revision;
+a chained edit that shifts offsets requires a new exact range. Missing, stale,
+ambiguous or unmatched targets raise an explicit validation error and are never
+relocated or applied. Whole-line changes retain their existing semantics.
+
+Any change may additionally carry `readings`, a nonempty list of alternatives.
+Each has exactly `id` (candidate/evidence identity), `value`, `state`, `reason`,
+and `evidence` (bindings from the change's inspected source evidence). States are
+`selected`, `rejected`, `tied`, and `unmatched`. At most one reading is selected;
+its value must equal the proposed replacement. A `source_reviewed` change requires
+one selected reading and no outstanding ties or unmatched readings. To retain
+unsettled alternatives, record an `unresolved` change with null value and their
+reasons. Raw source text remains intact. Agreement between candidates does not
+turn a `proposed` change into source review. Original alternatives remain in the
+revision chain; `reviewed_view.readings` also exposes their identities, decisions
+and reasons when present, including superseded readings.
+
+Clearance refuses proposed/unresolved text and unreviewed table quantities.
+Source-reviewed quantity overlays must agree exactly with the corresponding
+effective canonical lines; metadata-only amendments cannot establish that
+agreement or clear uncertainty. Administrative inspection reports contradictions;
+clearance, approval, replay of those decisions, and finalization refuse them even
+if their stored identity hashes are recomputed. Quantity-only overlays remain
+unsupported approval scope; use an exact line occurrence to correct served text.
 
 Revisions bind the snapshot, selection context, predecessor revision, reviewer,
 and changes by SHA-256. They do not modify recognized text or the snapshot.

@@ -200,7 +200,7 @@ def test_administrative_dependency_review_finalize_publish_and_mcp(
     from cookbook.storage import LocalStore, digest_file
 
     snapshot, scopes = fixture()
-    snapshot["pages"][0]["lines"][1]["text"] = "1/2 cup saffron water"
+    snapshot["pages"][0]["lines"][1]["text"] = "2 cups water; 1/2 cup saffron water"
     source, original = scan_build(tmp_path / "build", snapshot)
     store = ReviewStore(tmp_path / "review.json")
     store.save_candidate(snapshot, selections=scopes)

@@ -131,7 +131,7 @@ def scan_build(root, snapshot):
 
 
 def test_review_finalize_publish_search_read_and_citations_preserve_evidence(
-    tmp_path, keys, mint
+    tmp_path, keys, mint, monkeypatch, capsys
 ):
     import json
     from pathlib import Path
@@ -142,6 +142,8 @@ def test_review_finalize_publish_search_read_and_citations_preserve_evidence(
     from cookbook.storage import LocalStore, digest_file
 
     snapshot, selections = candidate()
+    snapshot["pages"][0]["lines"][1]["text"] = "2 cups water; 2 cup saffron water"
+    snapshot["pages"][0]["lines"][2]["text"] = "2 cups carrots"
     source, original = scan_build(tmp_path / "build", snapshot)
     scope = selections[0]["id"]
     store = ReviewStore(tmp_path / "review.json")
@@ -155,7 +157,31 @@ def test_review_finalize_publish_search_read_and_citations_preserve_evidence(
                     snapshot, "line_text", "p1-l1", selections=selections
                 ),
                 "state": "source_reviewed",
-                "value": "1/2 cup saffron water",
+                "value": "1/2",
+                "occurrence": {
+                    "start": 14,
+                    "end": 15,
+                    "before": "2",
+                    "selection_id": scope,
+                    "role": "ingredient:saffron-water",
+                    "cell_id": None,
+                },
+                "readings": [
+                    {
+                        "id": "synthetic-engine-a",
+                        "value": "2",
+                        "state": "rejected",
+                        "reason": "Source disagrees",
+                        "evidence": source_evidence(snapshot, ["p1-l1"]),
+                    },
+                    {
+                        "id": "synthetic-engine-b",
+                        "value": "1/2",
+                        "state": "selected",
+                        "reason": "Compared source",
+                        "evidence": source_evidence(snapshot, ["p1-l1"]),
+                    },
+                ],
                 "reason": "Synthetic source comparison",
                 "evidence": source_evidence(snapshot, ["p1-l1"]),
             }
@@ -163,7 +189,27 @@ def test_review_finalize_publish_search_read_and_citations_preserve_evidence(
         selections=selections,
         reviewer={"kind": "agent", "id": "reader"},
     )
-    store.save_candidate(snapshot, selections=selections, revisions=[correction])
+    from cookbook.cli import main
+
+    request = tmp_path / "candidate-request.json"
+    request.write_text(
+        json.dumps(
+            {"snapshot": snapshot, "selections": selections, "revisions": [correction]}
+        )
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cookbook",
+            "review-transcription",
+            "--review-store",
+            str(store.path),
+            "--candidate-file",
+            str(request),
+        ],
+    )
+    main()
+    assert json.loads(capsys.readouterr().out)["candidate_id"]
     objects = LocalStore(tmp_path / "objects")
     runtime = Runtime(objects, tmp_path / "runtime")
     lib = Library(runtime)
@@ -195,6 +241,12 @@ def test_review_finalize_publish_search_read_and_citations_preserve_evidence(
         actor={"kind": "human", "id": "owner"},
         reason="Apply inspected correction",
     )
+    store.decide(
+        scope,
+        "clear_flag",
+        actor={"kind": "human", "id": "owner"},
+        reason="Source-reviewed occurrence is consistent",
+    )
     approval = store.decide(
         scope,
         "approve",
@@ -208,6 +260,7 @@ def test_review_finalize_publish_search_read_and_citations_preserve_evidence(
     before = digest_file(inputs["runtime/index.sqlite"])
     hit = lib.search("saffron")["results"][0]
     assert hit["eligibility"]["eligible"] is True
+    assert "2 cups water; 1/2 cup saffron water" in hit["snippet"]
     assert hit["citation"]["locator"]["physical_page"] == 1
     assert hit["citation"]["locator"]["content_review"]["decision_id"] == approval["id"]
     assert "1/2 cup" not in json.dumps(hit["citation"])
@@ -218,6 +271,10 @@ def test_review_finalize_publish_search_read_and_citations_preserve_evidence(
     history = json.loads(inputs["quality/content-review.json"].read_bytes())
     assert history["candidates"][0]["snapshot"] == snapshot
     assert history["candidates"][0]["revisions"] == [correction]
+    assert (
+        "2 cups water; 1/2 cup saffron water\n2 cups carrots"
+        in lib.read_section(final.publication_id, "book", source, scope)["text"]
+    )
     assert inputs["backup/original.pdf"].read_bytes() == original
     store.save_candidate(snapshot, selections=selections)
     assert store.inspect(scope)["eligible"] is False
@@ -369,6 +426,7 @@ def check_mcp(lib, keys, mint, approved, pending, source, scope):
                 assert not found.is_error
                 hit = found.structured_content["results"][0]
                 assert hit["eligibility"]["eligible"] is True
+                assert "2 cups water; 1/2 cup saffron water" in hit["snippet"]
                 assert hit["citation"]["locator"]["physical_page"] == 1
                 read = await session.call_tool(
                     "read_section",
@@ -380,7 +438,10 @@ def check_mcp(lib, keys, mint, approved, pending, source, scope):
                     },
                 )
                 assert not read.is_error
-                assert "1/2 cup saffron water" in read.structured_content["text"]
+                assert (
+                    "2 cups water; 1/2 cup saffron water\n2 cups carrots"
+                    in read.structured_content["text"]
+                )
                 draft = await session.call_tool(
                     "read_section",
                     {
