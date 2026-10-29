@@ -5,9 +5,10 @@ import json
 import os
 import sys
 from pathlib import Path
-from .publication import Manifest, Runtime, publish, restore
-from .storage import LocalStore, IntegrityError, atomic_write, canonical, file_lock
+
 from .ocr_limits import OcrIsolationError
+from .publication import Manifest, Runtime, publish, restore
+from .storage import IntegrityError, LocalStore, atomic_write, canonical, file_lock
 
 
 def _main():
@@ -42,6 +43,22 @@ def _main():
     b.add_argument("--books", type=int, nargs="+", required=True)
     b.add_argument("--output", type=Path, required=True)
     b.add_argument("--ocr-cache", type=Path, required=True)
+    structure = sub.add_parser(
+        "structure",
+        help="Add native whole-book structure to an existing verified EPUB build",
+    )
+    structure.add_argument("--build", type=Path, required=True)
+    structure.add_argument("--output", type=Path, required=True)
+    structure.add_argument(
+        "--interpretation",
+        type=Path,
+        help="Existing source-backed whole-book SQLite interpretations",
+    )
+    interpretation = sub.add_parser(
+        "interpret", help="Add candidate recipe structure from native EPUB markup"
+    )
+    interpretation.add_argument("--build", type=Path, required=True)
+    interpretation.add_argument("--output", type=Path, required=True)
     b.add_argument(
         "--force-ocr-books",
         type=int,
@@ -64,6 +81,11 @@ def _main():
     s.add_argument("--issuer", required=True)
     s.add_argument("--subject", required=True)
     s.add_argument("--port", type=int, default=8765)
+    s.add_argument(
+        "--typesense-binary",
+        type=Path,
+        help="Run an owned loopback keyword engine for whole-book search",
+    )
     review = sub.add_parser("review-ocr")
     review.add_argument("--ocr-cache", type=Path, required=True)
     review.add_argument("--id", required=True)
@@ -81,6 +103,26 @@ def _main():
     final.add_argument("--ocr-cache", type=Path, required=True)
     final.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
+    if a.command == "interpret":
+        from .book_interpret import interpretation_build
+
+        manifest, report = interpretation_build(a.build, a.output)
+        print(
+            json.dumps(
+                {"publication_id": manifest.publication_id, **report["validation"]}
+            )
+        )
+        return
+    if a.command == "structure":
+        from .book_build import structure_build
+
+        manifest, report = structure_build(a.build, a.output, a.interpretation)
+        print(
+            json.dumps(
+                {"publication_id": manifest.publication_id, **report["validation"]}
+            )
+        )
+        return
     if a.command == "check-publisher-login":
         from .publisher_login import LoginConfig, browser_login
 
@@ -193,8 +235,8 @@ def _main():
         print(json.dumps({"review_id": a.id, "pending": result["pending"]}))
         return
     if a.command == "review-report":
-        from .quality import read_report
         from .ocr import write_review_page
+        from .quality import read_report
 
         count = write_review_page(a.ocr_cache, read_report(a.build)["items"], a.output)
         print(json.dumps({"pending_pages": count, "report": str(a.output)}))
@@ -220,8 +262,8 @@ def _main():
             progress=lambda d: print(json.dumps(d), flush=True),
             force_ocr_ids=a.force_ocr_books,
         )
-        from .quality import read_report
         from .ocr import write_review_page
+        from .quality import read_report
 
         pending = read_report(a.output)["pending_ids"]
         if pending:
@@ -278,25 +320,37 @@ def _main():
         print(json.dumps({"restored": m.publication_id}))
     else:
         import uvicorn
+
         from .library import Library
         from .server import JWTVerifier, create_app
 
         store = LocalStore(a.store)
         runtime = Runtime(store, a.runtime)
-        runtime.recover()
-        verifier = JWTVerifier(
-            issuer=a.issuer,
-            audience=f"http://127.0.0.1:{a.port}/mcp",
-            subjects=[a.subject],
-            public_key=a.public_key.read_text(),
-        )
-        uvicorn.run(
-            create_app(Library(runtime), verifier),
-            host="127.0.0.1",
-            port=a.port,
-            access_log=False,
-            log_level="critical",
-        )
+        engine = None
+        try:
+            if a.typesense_binary:
+                from .book_search import BookSearch
+
+                engine = BookSearch(a.typesense_binary, runtime.root / "typesense")
+                engine.start()
+                runtime.prepare = engine.prepare
+            runtime.recover()
+            verifier = JWTVerifier(
+                issuer=a.issuer,
+                audience=f"http://127.0.0.1:{a.port}/mcp",
+                subjects=[a.subject],
+                public_key=a.public_key.read_text(),
+            )
+            uvicorn.run(
+                create_app(Library(runtime, search_engine=engine), verifier),
+                host="127.0.0.1",
+                port=a.port,
+                access_log=False,
+                log_level="critical",
+            )
+        finally:
+            if engine:
+                engine.close()
 
 
 def main():

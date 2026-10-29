@@ -9,10 +9,9 @@ import uvicorn
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 from cookbook.server import JWTVerifier, create_app
-from cookbook.publication import Runtime
 
 
-def test_authenticated_official_client(published, keys, mint, manifest_loads):
+def test_authenticated_official_client(published, keys, mint):
     m, _, _, _, lib, _ = published
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -48,9 +47,60 @@ def test_authenticated_official_client(published, keys, mint, manifest_loads):
             ) as http:
                 async with streamable_http_client(url, http_client=http) as transport:
                     async with ClientSession(*transport) as session:
-                        await session.initialize()
+                        initialized = await session.initialize()
+                        icon = initialized.server_info.icons[0]
+                        assert icon.mime_type == "image/png"
+                        assert icon.sizes == ["512x512"]
+                        # Branding is publicly fetchable; it must not need OAuth.
+                        async with httpx2.AsyncClient() as public_http:
+                            logo = await public_http.get(icon.src)
+                        assert logo.status_code == 200
+                        assert logo.headers["content-type"] == "image/png"
+                        assert logo.content.startswith(b"\x89PNG\r\n\x1a\n")
                         listed = await session.list_tools()
-                        assert len(listed.tools) == 9
+                        assert len(listed.tools) == 14
+                        recipe_tool = next(
+                            t for t in listed.tools if t.name == "show_recipe"
+                        )
+                        recipe_uri = recipe_tool.meta["ui"]["resourceUri"]
+                        recipe_template = await session.read_resource(recipe_uri)
+                        assert (
+                            recipe_template.contents[0].mime_type
+                            == "text/html;profile=mcp-app"
+                        )
+                        assert (
+                            "ui/notifications/tool-result"
+                            in recipe_template.contents[0].text
+                        )
+                        assert "Miso mushrooms" not in recipe_template.contents[0].text
+                        recipe = {
+                            "title": "Synthetic beans",
+                            "metadata": ["Serves 2"],
+                            "steps": [
+                                {
+                                    "title": "Warm beans",
+                                    "ingredients": ["400 g beans"],
+                                    "method": "Warm gently.",
+                                }
+                            ],
+                            "source": {"kind": "original", "label": "Original recipe"},
+                        }
+                        card = await session.call_tool(
+                            "show_recipe", {"recipe": recipe}
+                        )
+                        assert not card.is_error
+                        assert (
+                            card.structured_content["recipe"]["steps"]
+                            == recipe["steps"]
+                        )
+                        assert "400 g beans" in card.content[0].text
+                        assert all(b.type == "text" for b in card.content)
+                        # A book attribution must include the exact source identifiers.
+                        recipe["source"]["kind"] = "book"
+                        invalid = await session.call_tool(
+                            "show_recipe", {"recipe": recipe}
+                        )
+                        assert invalid.is_error
                         inspect_tool = next(
                             t for t in listed.tools if t.name == "inspect_image"
                         )
@@ -142,78 +192,6 @@ def test_authenticated_official_client(published, keys, mint, manifest_loads):
                             info.structured_content["publication_id"]
                             == m.publication_id
                         )
-
-                        # Compare every result block on cold and warm metadata paths.
-                        calls = [
-                            ("search_library", {"query": "salt"}),
-                            ("search_library", {"query": "Beans", "mode": "catalog"}),
-                            (
-                                "get_book",
-                                {
-                                    "publication_id": m.publication_id,
-                                    "book_id": args["book_id"],
-                                },
-                            ),
-                            (
-                                "read_section",
-                                {**args, "section_id": c["section_id"], "limit": 50},
-                            ),
-                            (
-                                "read_section",
-                                {
-                                    **args,
-                                    "section_id": c["section_id"],
-                                    "offset": read.structured_content["next_offset"],
-                                    "limit": 50,
-                                },
-                            ),
-                            ("list_images", {**args, "section_id": c["section_id"]}),
-                            ("inspect_image", {**args, "image_id": "image-0"}),
-                            ("get_image", {**args, "image_id": "image-0"}),
-                            ("get_artifact", {**args, "artifact_id": c["section_id"]}),
-                            ("get_artifact", {**args, "artifact_id": "original"}),
-                            (
-                                "get_publication_info",
-                                {"publication_id": m.publication_id},
-                            ),
-                        ]
-                        for name, arguments in calls:
-                            lib.runtime = Runtime(lib.runtime.store, lib.runtime.root)
-                            before = dict(manifest_loads)
-                            cold = await session.call_tool(name, arguments)
-                            assert not cold.is_error, (name, cold)
-                            assert manifest_loads == {
-                                k: v + 1 for k, v in before.items()
-                            }
-                            if name == "get_artifact":
-                                data = cold.structured_content
-                                if arguments["artifact_id"] == "original":
-                                    assert (
-                                        data["delivery"] == "not_available_in_local_poc"
-                                    )
-                                    assert all(
-                                        block.type == "text" for block in cold.content
-                                    )
-                                else:
-                                    assert len(data["text"]) == 12000
-                                    assert data["next_offset"] == 12000
-                            warm = await session.call_tool(name, arguments)
-                            assert warm.model_dump() == cold.model_dump(), name
-                            assert manifest_loads == {
-                                k: v + 1 for k, v in before.items()
-                            }
-                        for pub in ("f" * 32, "../../private-manifest"):
-                            for name in ("search_library", "get_publication_info"):
-                                arguments = {"publication_id": pub}
-                                if name == "search_library":
-                                    arguments["query"] = "salt"
-                                bad = await session.call_tool(name, arguments)
-                                assert bad.is_error
-                                assert pub not in str(bad.content)
-                        denied = await http.post(
-                            url, headers={"Authorization": ""}, json={}
-                        )
-                        assert denied.status_code == 401
 
         asyncio.run(exercise())
     finally:

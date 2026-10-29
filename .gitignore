@@ -19,3 +19,4 @@ __pycache__/
 *.pem
 *.key
 .DS_Store
+*.azw3
