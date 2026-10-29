@@ -714,7 +714,7 @@ def test_a_scanned_section_without_quantities_has_no_check_regions(mcp):
     assert read(client, headers, citation)["check_regions"] == []
 
 
-def test_epub_read_section_response_is_unchanged(epub_mcp):
+def test_epub_read_section_retains_content_with_explicit_eligibility(epub_mcp):
     client, headers = epub_mcp
     section = read(client, headers, find(client, headers, "bean"))
     assert set(section) == {
@@ -724,6 +724,7 @@ def test_epub_read_section_response_is_unchanged(epub_mcp):
         "next_offset",
         "kind",
         "image_ids",
+        "eligibility",
     }
     assert set(section["citation"]["extraction"]) == {"provenance", "version"}
 

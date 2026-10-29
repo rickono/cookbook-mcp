@@ -130,6 +130,80 @@ def check_publish_quality(manifest, inputs):
                 raise IntegrityError("reviewed nontext page mismatch")
             if item["pending"]:
                 raise ReviewRequired("OCR review required")
+        from .transcription_review import ReviewStore
+
+        content_rows = list(
+            db.execute("select * from sections where provenance='scanned-content-v1'")
+        )
+        path = "quality/content-review.json"
+        if (
+            content_rows
+            or path in inputs
+            or any(e.path == path for e in manifest.files)
+        ):
+            entry = next((e for e in manifest.files if e.path == path), None)
+            if (
+                entry is None
+                or path not in inputs
+                or digest_file(inputs[path]) != (entry.sha256, entry.size)
+            ):
+                raise IntegrityError("missing or changed content review history")
+            expected = {
+                s["id"]: s for s in ReviewStore(inputs[path]).publication_sections()
+            }
+            for row in content_rows:
+                section = expected.get(row["id"])
+                if (
+                    section is None
+                    or any(row[k] != section[k] for k in ("title", "kind", "ordinal"))
+                    or row["text"] != section["text"]
+                    or json.loads(row["locator"]) != section["locator"]
+                    or row["source_id"].split(":")[-1] != section["source_sha256"]
+                ):
+                    raise IntegrityError("content approval/index mismatch")
+                search = list(
+                    db.execute(
+                        "select source_id,title,text from search where section_id=?",
+                        (row["id"],),
+                    )
+                )
+                if [tuple(r) for r in search] != (
+                    [(row["source_id"], section["title"], section["text"])]
+                    if section["eligible"]
+                    else []
+                ):
+                    raise IntegrityError("content approval/search mismatch")
+            if {r["id"] for r in content_rows} != set(expected):
+                raise IntegrityError(
+                    "content approval/index mismatch: missing reviewed content"
+                )
+            candidate = ReviewStore(inputs[path]).export()["candidates"][-1]
+            changed_pages = {
+                l["physical_page"]
+                for l in candidate["view"]["lines"]
+                if l["text"] != l["raw_text"]
+            }
+            marker = {"path": path, "candidate_id": candidate["id"]}
+            for row in db.execute(
+                "select * from sections where provenance!='scanned-content-v1'"
+            ):
+                loc = json.loads(row["locator"])
+                superseded = row["source_id"].split(":")[-1] == candidate["snapshot"][
+                    "edition"
+                ]["source_sha256"] and bool(
+                    changed_pages.intersection(
+                        loc.get("physical_pages", [loc.get("physical_page")])
+                    )
+                )
+                if superseded and (
+                    loc.get("superseded_transcription") != marker
+                    or db.execute(
+                        "select 1 from search where section_id=?", (row["id"],)
+                    ).fetchone()
+                ):
+                    raise IntegrityError(
+                        "superseded transcription remains in ordinary content"
+                    )
         if seen != set(items):
             raise IntegrityError("unmatched OCR report rows")
         if not forced_sources.issubset(sources):
@@ -206,14 +280,23 @@ def _check_bindings(db, rows, item, source_id):
             raise IntegrityError(f"correction {cid} does not bind to its page")
 
 
-def _check_index(db, source, item, result):
+def _check_index(db, source, item, result, *, superseded_pages=(), marker=None):
     """The scanned index rows of one source equal a fresh import of its candidate: its
     stored summary, sections, TOC, search rows and transcription labels."""
     source_id = source["id"]
     stored = db.execute(
         "select summary from transcription_sources where source_id=?", (source_id,)
     ).fetchone()
-    units = result["units"]
+    units = []
+    for original in result["units"]:
+        unit = {**original, "locator": dict(original["locator"])}
+        pages = unit["locator"].get(
+            "physical_pages", [unit["locator"].get("physical_page")]
+        )
+        if set(superseded_pages).intersection(pages):
+            unit["locator"]["superseded_transcription"] = marker
+            unit["searchable"] = False
+        units.append(unit)
     indexed = [
         (
             r["id"],
@@ -226,7 +309,7 @@ def _check_index(db, source, item, result):
             json.loads(r["images"]),
         )
         for r in db.execute(
-            "select * from sections where source_id=? order by ordinal",
+            "select * from sections where source_id=? and provenance!='scanned-content-v1' order by ordinal",
             (source_id,),
         )
     ]
@@ -246,7 +329,8 @@ def _check_index(db, source, item, result):
     searched = sorted(
         tuple(r)
         for r in db.execute(
-            "select section_id,title,text from search where source_id=?",
+            "select section_id,title,text from search where source_id=? and section_id in "
+            "(select id from sections where provenance!='scanned-content-v1')",
             (source_id,),
         )
     )
@@ -373,10 +457,28 @@ def check_transcription(manifest, inputs, db):
         # The stored ledger re-derives every applied, stale and ambiguous outcome.
         if item != result["summary"]:
             raise IntegrityError("transcription summary mismatch")
-        _check_index(db, row, item, result)
+        superseded_pages, marker = set(), None
+        review_path = inputs.get("quality/content-review.json")
+        if review_path is not None:
+            from .transcription_review import ReviewStore
+
+            candidate = ReviewStore(review_path).export()["candidates"][-1]
+            if candidate["snapshot"]["edition"]["source_sha256"] == sha:
+                superseded_pages = {
+                    line["physical_page"]
+                    for line in candidate["view"]["lines"]
+                    if line["text"] != line["raw_text"]
+                }
+                marker = {
+                    "path": "quality/content-review.json",
+                    "candidate_id": candidate["id"],
+                }
+        _check_index(
+            db, row, item, result, superseded_pages=superseded_pages, marker=marker
+        )
 
 
-def finalize(build: Path, cache: Path, output: Path):
+def finalize(build: Path, cache: Path, output: Path, *, transcription_review=None):
     from .publication import Entry, Manifest
 
     if output.exists():
@@ -438,6 +540,77 @@ def finalize(build: Path, cache: Path, output: Path):
                     **ocr,
                 }
             )
+    if transcription_review is not None:
+        from .transcription_review import ReviewStore
+
+        # Freeze one atomic store read so concurrent draft/decision writes cannot
+        # produce a publication containing mixed review versions.
+        review_path = output / "content-review.json"
+        atomic_write(review_path, canonical(ReviewStore(transcription_review).export()))
+        reviews = ReviewStore(review_path)
+        with sqlite3.connect(index) as db:
+            # Retain legacy transcription as evidence, outside ordinary reads/search.
+            # Saved line identities cannot safely be string-matched into a page blob.
+            candidate = reviews.export()["candidates"][-1]
+            changed_pages = {
+                l["physical_page"]
+                for l in candidate["view"]["lines"]
+                if l["text"] != l["raw_text"]
+            }
+            for sid, source_id, raw_locator in db.execute(
+                "select id,source_id,locator from sections where provenance!='scanned-content-v1'"
+            ).fetchall():
+                loc = json.loads(raw_locator)
+                if source_id.split(":")[-1] == candidate["snapshot"]["edition"][
+                    "source_sha256"
+                ] and changed_pages.intersection(
+                    loc.get("physical_pages", [loc.get("physical_page")])
+                ):
+                    loc["superseded_transcription"] = {
+                        "path": "quality/content-review.json",
+                        "candidate_id": candidate["id"],
+                    }
+                    db.execute(
+                        "update sections set locator=? where id=?",
+                        (json.dumps(loc), sid),
+                    )
+                    db.execute("delete from search where section_id=?", (sid,))
+            for section in reviews.publication_sections():
+                source = db.execute(
+                    "select * from sources where sha256=?", (section["source_sha256"],)
+                ).fetchone()
+                if source is None:
+                    raise IntegrityError("review source missing from build")
+                # Verify original bytes as well as the saved recognition identities.
+                if digest_file(inputs[source[3]])[0] != section["source_sha256"]:
+                    raise IntegrityError("review original source mismatch")
+                existing = db.execute(
+                    "select source_id from sections where id=?", (section["id"],)
+                ).fetchone()
+                if existing and existing[0] != source[0]:
+                    raise IntegrityError("selection identity belongs to another source")
+                db.execute("delete from sections where id=?", (section["id"],))
+                db.execute("delete from search where section_id=?", (section["id"],))
+                db.execute(
+                    "insert into sections values (?,?,?,?,?,?,?,?,?)",
+                    (
+                        section["id"],
+                        source[0],
+                        section["ordinal"],
+                        section["title"],
+                        section["text"],
+                        json.dumps(section["locator"]),
+                        "scanned-content-v1",
+                        section["kind"],
+                        "[]",
+                    ),
+                )
+                if section["eligible"]:
+                    db.execute(
+                        "insert into search values (?,?,?,?)",
+                        (section["id"], source[0], section["title"], section["text"]),
+                    )
+        inputs["quality/content-review.json"] = review_path
     report = make_report(
         pub, items, forced_ocr_sources=report.get("forced_ocr_sources", [])
     )
@@ -448,6 +621,14 @@ def finalize(build: Path, cache: Path, output: Path):
     for e in old.files:
         sha, size = digest_file(inputs[e.path])
         entries.append(Entry(path=e.path, sha256=sha, size=size, role=e.role))
+    if transcription_review is not None:
+        sha, size = digest_file(inputs["quality/content-review.json"])
+        entries = [e for e in entries if e.path != "quality/content-review.json"]
+        entries.append(
+            Entry(
+                path="quality/content-review.json", sha256=sha, size=size, role="backup"
+            )
+        )
     m = old.model_copy(
         update={
             "publication_id": pub,

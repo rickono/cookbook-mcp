@@ -70,6 +70,64 @@ class Library:
         with self.db(pub) as db:
             return db.execute("select extraction_version from info").fetchone()[0]
 
+    def withdrawals(self, section):
+        from .withdrawal import current_withdrawals
+
+        locator = json.loads(section["locator"])
+        review = locator.get("content_review", {})
+        return [
+            e
+            for e in current_withdrawals(self.runtime.store)
+            if review.get("decision_id") in e["affected_decisions"]
+            or (
+                (section["kind"] == "page" or not review)
+                and any(
+                    section["source_id"].split(":", 1)[-1] == p["source_sha256"]
+                    and p["physical_page"]
+                    in locator.get("physical_pages", [locator.get("physical_page")])
+                    for p in e["affected_pages"]
+                )
+            )
+        ]
+
+    def suppressed(self, section):
+        return bool(self.withdrawals(section)) or bool(
+            json.loads(section["locator"]).get("superseded_transcription")
+        )
+
+    def eligibility(self, section):
+        withdrawals = self.withdrawals(section)
+        if withdrawals:
+            return {
+                "eligible": False,
+                "reasons": sorted(
+                    {
+                        "approval_revoked"
+                        if e["action"] == "revoke"
+                        else "confirmed_substantive_error"
+                        for e in withdrawals
+                    }
+                ),
+                "withdrawals": withdrawals,
+            }
+        locator = json.loads(section["locator"])
+        if locator.get("superseded_transcription"):
+            return {"eligible": False, "reasons": ["superseded_transcription"]}
+        review = locator.get("content_review")
+        if review:
+            return {"eligible": review["eligible"], "reasons": review["reasons"]}
+        return (
+            {
+                "eligible": False,
+                "reasons": ["legacy_transcription_is_not_complete_content_approval"],
+            }
+            if "ocr" in section["provenance"]
+            else {
+                "eligible": False,
+                "reasons": ["complete_content_approval_not_recorded"],
+            }
+        )
+
     def additive_row(self, db, table, key, value):
         """The row of an additive table whose ``key`` is ``value``; None without one.
 
@@ -125,6 +183,8 @@ class Library:
                 # Ledger corrections served in this unit's text: [{id, reviewer}].
                 if corrections := json.loads(unit["corrections"]):
                     d["extraction"]["corrections"] = corrections
+        if section:
+            d["eligibility"] = self.eligibility(section)
         if section and d["locator"]["kind"] == "page":
             d["page_id"] = section["id"]
         return d
@@ -218,11 +278,14 @@ class Library:
                     sec = db.execute(
                         "select * from sections where id=?", (r["section_id"],)
                     ).fetchone()
+                    if self.suppressed(sec):
+                        continue
                     results.append(
                         {
                             "citation": self.citation(pub, aliases[0], sec),
                             "aliases": [a["id"] for a in aliases],
                             "snippet": r["snippet"][:500],
+                            "eligibility": self.eligibility(sec),
                             "rank": r["rank"],
                         }
                     )
@@ -283,12 +346,14 @@ class Library:
             ).fetchone()
             if s is None:
                 raise IntegrityError("unavailable identifier")
+            withdrawn = self.suppressed(s)
             result = {
                 "citation": self.citation(pub, b, s),
-                "text": s["text"][offset : offset + limit],
+                "text": "" if withdrawn else s["text"][offset : offset + limit],
+                "eligibility": self.eligibility(s),
                 "text_offset": offset,
                 "next_offset": offset + limit
-                if offset + limit < len(s["text"])
+                if not withdrawn and offset + limit < len(s["text"])
                 else None,
                 "kind": s["kind"],
                 "image_ids": json.loads(s["images"])[:50],
@@ -479,8 +544,8 @@ class Library:
                     data = out.getvalue()
             meta = {
                 "citation": self.citation(pub, b, s),
-                "text": s["text"][:4000],
-                "text_truncated": len(s["text"]) > 4000,
+                "text": "" if self.suppressed(s) else s["text"][:4000],
+                "text_truncated": not self.suppressed(s) and len(s["text"]) > 4000,
                 "width_limit": edge,
             }
             if box is not None:

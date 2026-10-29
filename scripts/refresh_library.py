@@ -118,6 +118,13 @@ def main():
     ap.add_argument("--limit", type=int, default=20, help="most new decisions per run")
     ap.add_argument("--reader", default=tr.READER)
     ap.add_argument(
+        "--ledger",
+        type=Path,
+        default=DATA / "recovery.sqlite3",
+        help="shared owner-wide recovery ledger",
+    )
+    ap.add_argument("--actor", default="report-triage")
+    ap.add_argument(
         "--ocr-cache", type=Path, help="default: the one the active build recorded"
     )
     target = ap.add_mutually_exclusive_group(required=True)
@@ -173,6 +180,8 @@ def main():
                 limit=a.limit,
                 reader=a.reader,
                 ocr_cache=a.ocr_cache,
+                ledger=tr.RecoveryLedger(a.ledger),
+                actor={"kind": "agent", "id": a.actor},
                 log=lambda line: print(line, flush=True),
             )
         except RefreshError as error:

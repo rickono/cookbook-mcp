@@ -17,6 +17,7 @@ script settles each one without trusting it:
        otherwise       -> owner queue
 
 Decisions are written once per report under --out (outside Git) and never redone.
+All dispatched routes, failures and interruptions also remain in the shared --ledger.
 ledger.jsonl, owner-queue.jsonl and the readable owner-queue.md are rebuilt from
 the decisions on every run; owner-queue.md also lists the ambiguous corrections the last
 refresh's build reported (ambiguous-corrections.jsonl, written by refresh_library.py);
@@ -51,6 +52,7 @@ import pipeline as fp
 import readers as rd
 
 from cookbook import ledger
+from cookbook.recovery import RecoveryLedger
 from cookbook.reports import list_reports
 
 DATA = Path(os.environ.get("COOKBOOK_DATA", Path.home() / "cookbook-mcp-data"))
@@ -127,7 +129,7 @@ def doctor():
         )
 
 
-def triage(report, out, *, books, reader=READER, crop=fp.guarded_crop, call=rd.call):
+def _triage(report, out, *, books, reader, crop, call, ledger, attempt):
     """One decision record. crop and call are injectable for synthetic tests."""
     base = {
         "report_id": report["report_id"],
@@ -151,6 +153,14 @@ def triage(report, out, *, books, reader=READER, crop=fp.guarded_crop, call=rd.c
         box,
         report["report_id"][:12],
     )
+    if image.get("unavailable") is True:
+        return {
+            **base,
+            "outcome": "owner_queue",
+            "review_status": "terminal_unavailable",
+            "reason": image.get("reason", "source cannot support recovery"),
+            "crop": image,
+        }
     if "image" not in image:
         return {
             **base,
@@ -158,12 +168,32 @@ def triage(report, out, *, books, reader=READER, crop=fp.guarded_crop, call=rd.c
             "reason": "guarded crop failed",
             "crop": image,
         }
+    ledger.record(
+        attempt,
+        "extraction",
+        purpose="initial source extraction or recovery crop",
+        output=image,
+    )
     prompt = fp.CROP_PROMPT if report["region"] else fp.PAGE_PROMPT
     readings, calls = [], []
     for k in range(1, SAMPLES + 1):
         text, c = call(out, f"{reader}#{k}", prompt, image["image"])
         readings.append(text)
         calls.append(c)
+        ledger.record(attempt, "review", sample=k, output={"text": text, "call": c})
+        if text is None and (
+            rd.filtered(c) or any("refusal:" in e for e in c.get("errors", []))
+        ):
+            return {
+                **base,
+                "outcome": "owner_queue",
+                "reason": "terminal reader refusal; content filter; not retried or worked around"
+                if rd.filtered(c)
+                else "terminal reader refusal",
+                "review_status": "terminal_unavailable",
+                "readings": readings,
+                "calls": calls,
+            }
     outcome, votes = decide(report, readings)
     reason = f"blind re-read votes {votes}"
     if outcome == "owner_queue" and any(
@@ -185,11 +215,103 @@ def triage(report, out, *, books, reader=READER, crop=fp.guarded_crop, call=rd.c
     }
 
 
+def triage(
+    report,
+    out,
+    *,
+    books,
+    reader=READER,
+    crop=fp.guarded_crop,
+    call=rd.call,
+    ledger=None,
+    actor=None,
+):
+    """Administrative recovery boundary; injected crop/readers permit synthetic checks.
+
+    Production uses one owner-wide ledger independent of --out. A predefined route
+    contains the existing three blind samples; further routes consume recovery budget.
+    """
+    ledger = ledger or RecoveryLedger(DATA / "recovery.sqlite3")
+    scope = {
+        "source": report["source_sha256"],
+        "page": report["physical_page"],
+        "box": report["region"] or [0, 0, 1, 1],
+        "book": report["book_id"],
+    }
+    attempt, refused = ledger.admit(
+        **scope,
+        actor=actor or {"kind": "agent", "id": reader},
+        tool=reader,
+        configuration={
+            "samples": SAMPLES,
+            "needed": NEEDED,
+            "prompt": fp.CROP_PROMPT if report["region"] else fp.PAGE_PROMPT,
+        },
+        inputs=report,
+        purpose="blind report review",
+    )
+    if refused:
+        return {
+            "decided_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "reader": f"{reader} x{SAMPLES}",
+            "report_id": report["report_id"],
+            "report": report,
+            "outcome": "owner_queue",
+            "reason": refused,
+            "review_status": refused,
+            "recovery": ledger.status(**scope),
+        }
+    try:
+        result = _triage(
+            report,
+            out,
+            books=books,
+            reader=reader,
+            crop=crop,
+            call=call,
+            ledger=ledger,
+            attempt=attempt,
+        )
+        status = result.get("review_status") or (
+            "technical_failure"
+            if unsettled(result)
+            else "content_uncertain"
+            if result["outcome"] == "owner_queue"
+            else "review_completed"
+        )
+    except BaseException as exc:
+        status = (
+            "interrupted"
+            if not isinstance(exc, Exception)
+            else (
+                "timeout"
+                if isinstance(exc, (TimeoutError, subprocess.TimeoutExpired))
+                else "technical_failure"
+            )
+        )
+        ledger.record(attempt, "outcome", status=status, reason=repr(exc))
+        if not isinstance(exc, Exception):
+            raise
+        result = {
+            "report_id": report["report_id"],
+            "report": report,
+            "outcome": "owner_queue",
+            "reason": repr(exc),
+        }
+    else:
+        ledger.record(attempt, "outcome", status=status, evidence=result)
+    return {**result, "review_status": status, "recovery": ledger.status(**scope)}
+
+
 def unsettled(d):
-    """An owner-queue result caused by a failed crop or a timeout is retried, not recorded.
+    """A technical failure may be retried within the durable recovery allowance.
 
     A provider filter refusal is a real result: it is never retried or worked around.
     """
+    if d.get("review_status") in {"terminal_unavailable", "budget_exhausted"}:
+        return False
+    if d.get("review_status") in {"technical_failure", "timeout", "interrupted"}:
+        return True
     if d["outcome"] != "owner_queue":
         return False
     if d["reason"] == "guarded crop failed":
@@ -404,6 +526,8 @@ def run(
     crop=fp.guarded_crop,
     call=rd.call,
     log=print,
+    ledger=None,
+    actor=None,
 ):
     """Decide up to limit pending reports, then rebuild the ledger and owner queue.
 
@@ -421,7 +545,16 @@ def run(
         admission()
         registered = books()
     for r in batch:
-        d = triage(r, out, books=registered, reader=reader, crop=crop, call=call)
+        d = triage(
+            r,
+            out,
+            books=registered,
+            reader=reader,
+            crop=crop,
+            call=call,
+            ledger=ledger,
+            actor=actor,
+        )
         stop = rd.STOP.is_set() or limited(d)
         if stop or unsettled(d):
             log(
@@ -430,6 +563,8 @@ def run(
                         "report_id": r["report_id"],
                         "outcome": "retry later",
                         "reason": d["reason"],
+                        "review_status": d["review_status"],
+                        "recovery": d["recovery"],
                     }
                 )
             )
@@ -489,6 +624,13 @@ def main():
     )
     ap.add_argument("--out", type=Path, default=OUT)
     ap.add_argument("--reader", default=READER)
+    ap.add_argument(
+        "--ledger",
+        type=Path,
+        default=DATA / "recovery.sqlite3",
+        help="shared owner-wide recovery ledger; retain across output directories",
+    )
+    ap.add_argument("--actor", default="report-triage")
     ap.add_argument("--publication", help="only reports against this publication id")
     ap.add_argument(
         "--limit", type=int, default=20, help="at most this many new decisions per run"
@@ -501,19 +643,28 @@ def main():
     a = ap.parse_args()
     rd.parse(a.reader)
     if a.dry_run:
+        recovery = RecoveryLedger(a.ledger)
         pending = pending_reports(reports_store(a), a.out, a.publication)[: a.limit]
         for r in pending:
             print(
                 json.dumps(
                     {
-                        k: r[k]
-                        for k in (
-                            "report_id",
-                            "book_id",
-                            "physical_page",
-                            "kind",
-                            "region",
-                        )
+                        **{
+                            k: r[k]
+                            for k in (
+                                "report_id",
+                                "book_id",
+                                "physical_page",
+                                "kind",
+                                "region",
+                            )
+                        },
+                        "recovery": recovery.status(
+                            source=r["source_sha256"],
+                            page=r["physical_page"],
+                            box=r["region"] or [0, 0, 1, 1],
+                            book=r["book_id"],
+                        ),
                     }
                 )
             )
@@ -525,6 +676,8 @@ def main():
         limit=a.limit,
         reader=a.reader,
         publication=a.publication,
+        ledger=RecoveryLedger(a.ledger),
+        actor={"kind": "agent", "id": a.actor},
         log=lambda line: print(line, flush=True),
     )
     print(json.dumps(result))

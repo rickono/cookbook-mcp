@@ -132,6 +132,7 @@ class Loop:
             store=self.store,
             activate=self.runtime.activate,
             work=self.tmp / "work",
+            ledger=refresh_library.tr.RecoveryLedger(self.tmp / "recovery.sqlite3"),
             admission=fakes.admission,
             books=fakes.books,
             crop=fakes.crop,
@@ -277,7 +278,7 @@ def test_reports_over_the_triage_limit_stay_pending(loop):
 )
 def test_a_failed_reading_leaves_the_report_pending(loop, errors, stops):
     first = loop.report(*SALT)
-    loop.report("Salt | 2 tsp", "Salt | 3 tsp")
+    loop.report("Salt | 2 tsp", "Salt | 3 tsp", region=(0.1, 0.75, 0.9, 0.9))
     fakes = Fakes(readings=lambda prefix: [None] * 3, errors=errors)
     active = loop.active()
 
@@ -316,7 +317,7 @@ def test_the_owner_queue_lists_filter_refusals_and_ambiguous_corrections(loop):
     page = Path(result["owner_queue"]["file"]).read_text()
     first, second = page.split("\n## ")[1:]
     assert refused in first and '"Salt | 2 tsp"' in first and '"Salt | 2 tbsp"' in first
-    assert first.count("refused by the provider's content filter") == 3
+    assert first.count("refused by the provider's content filter") == 1
     assert "content filter; not retried or worked around" in first
     assert ambiguous in second and '"lentils"' in second and '"beans"' in second
     assert "physical page 2" in second and second.count('`: "beans"') == 3
