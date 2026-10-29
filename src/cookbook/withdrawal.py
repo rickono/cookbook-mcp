@@ -17,6 +17,23 @@ def affected_decisions(history, candidate, scope, binding):
         and e["scope"] == scope["id"]
         and (e.get("scope_sha256") == binding or e["candidate_id"] == candidate["id"])
     }
+    return dependent_decisions(history, affected)
+
+
+def revoked_approvals(history, scope, relates_to):
+    return dependent_decisions(
+        history,
+        {
+            e["id"]
+            for e in history
+            if e["scope"] == scope
+            and e["action"] in {"approve", "review_portion"}
+            and (relates_to is None or e["id"] == relates_to)
+        },
+    )
+
+
+def dependent_decisions(history, affected):
     while True:
         expanded = affected | {
             e["id"]
@@ -63,9 +80,9 @@ def current_withdrawals(store):
 
 def validate(event):
     if (
-        event.get("action") != "confirm_error"
+        event.get("action") not in {"confirm_error", "revoke"}
         or event.get("actor", {}).get("kind") != "human"
-        or not event.get("evidence")
+        or (event.get("action") == "confirm_error" and not event.get("evidence"))
         or not isinstance(event.get("affected_decisions"), list)
         or event.get("id")
         != hashlib.sha256(

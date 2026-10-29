@@ -94,7 +94,14 @@ class Library:
         if withdrawals:
             return {
                 "eligible": False,
-                "reasons": ["confirmed_substantive_error"],
+                "reasons": sorted(
+                    {
+                        "approval_revoked"
+                        if e["action"] == "revoke"
+                        else "confirmed_substantive_error"
+                        for e in withdrawals
+                    }
+                ),
                 "withdrawals": withdrawals,
             }
         locator = json.loads(section["locator"])

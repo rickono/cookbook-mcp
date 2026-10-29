@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 
+import pytest
 from test_content_approval import scan_build
 from test_content_dependencies import ACTOR, approve, fixture
 
@@ -13,8 +14,9 @@ from cookbook.storage import LocalStore
 from cookbook.transcription_review import ReviewStore, source_evidence
 
 
+@pytest.mark.parametrize("decision_action", ["confirm_error", "revoke"])
 def test_confirmed_error_withdraws_published_content_and_required_dependents(
-    tmp_path, keys, mint, monkeypatch
+    tmp_path, keys, mint, monkeypatch, decision_action
 ):
     snapshot, scopes = fixture()
     pages = [
@@ -97,7 +99,7 @@ def test_confirmed_error_withdraws_published_content_and_required_dependents(
     # Administrative action, separate from the read-only content/report interface.
     event = reviews.decide(
         "sauce",
-        "confirm_error",
+        decision_action,
         actor=ACTOR,
         reason="Confirmed wrong quantity",
         withdrawal_store=objects,
@@ -201,20 +203,90 @@ def test_confirmed_error_withdraws_published_content_and_required_dependents(
         for k, v in json.loads((repaired_out / "inputs.json").read_bytes()).items()
     }
     _, version = objects.read_version("control/active.json")
-    publish(
+
+    def activation_outage(pointer):
+        raise OSError("Injected runtime outage")
+
+    pending = publish(
         objects,
         repaired,
         repaired_inputs,
         expected_version=version,
-        activate=runtime.activate,
+        activate=activation_outage,
     )
+    assert pending["status"] == "pending_activation"
+    assert (
+        runtime.status()["remote_pointer"]["publication_id"] == repaired.publication_id
+    )
+    assert runtime.status()["runtime_pointer"] == accepted_pointer
+    assert not lib.search("Stew")["results"]
+    with TestClient(
+        create_app(lib, verifier), base_url="https://service.example"
+    ) as client:
+        assert (
+            rpc(client, headers, "search_library", {"query": "Stew"})[
+                "structuredContent"
+            ]["results"]
+            == []
+        )
+        assert rpc(client, headers, "search_library", {"query": "Neighbor"})[
+            "structuredContent"
+        ]["results"]
+    assert runtime.recover() == repaired.publication_id
+    assert runtime.status()["status"] == "active"
+    with TestClient(
+        create_app(lib, verifier), base_url="https://service.example"
+    ) as client:
+        assert rpc(client, headers, "search_library", {"query": "Stew"})[
+            "structuredContent"
+        ]["results"]
+        repaired_read = rpc(
+            client,
+            headers,
+            "read_section",
+            {
+                "publication_id": repaired.publication_id,
+                "book_id": "book",
+                "source_id": source,
+                "section_id": "sauce",
+            },
+        )["structuredContent"]
+        assert "4 cups water" in repaired_read["text"]
+        assert repaired_read["citation"]["locator"]["physical_page"] == 3
     assert lib.search("Stew")["results"]
     assert (
         "4 cups water"
         in lib.read_section(repaired.publication_id, "book", source, "sauce")["text"]
     )
     # Rollback and a new reader process both retain the current withdrawal.
-    runtime.activate(accepted_pointer)
+    _, version = objects.read_version("control/active.json")
+    rollback = runtime.rollback(accepted_pointer, expected_version=version)
+    assert rollback["status"] == "active"
+    with TestClient(
+        create_app(lib, verifier), base_url="https://service.example"
+    ) as client:
+        found = rpc(client, headers, "search_library", {"query": "Stew"})
+        assert found["structuredContent"]["results"] == []
+        read = rpc(
+            client,
+            headers,
+            "read_section",
+            {
+                "publication_id": manifest.publication_id,
+                "book_id": "book",
+                "source_id": source,
+                "section_id": "stew",
+                "offset": 10,
+            },
+        )
+        assert read["structuredContent"]["text"] == ""
+        assert read["structuredContent"]["citation"]["locator"]["physical_pages"] == [
+            1,
+            2,
+        ]
+        assert rpc(client, headers, "search_library", {"query": "Neighbor"})[
+            "structuredContent"
+        ]["results"]
     assert not Library(Runtime(objects, runtime.root)).search("Stew")["results"]
     assert inputs["backup/original.pdf"].read_bytes() == original
     import pytest

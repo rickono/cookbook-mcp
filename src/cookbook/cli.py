@@ -54,6 +54,12 @@ def _main():
     pub.add_argument("--build", type=Path, required=True)
     pub.add_argument("--store", type=Path, required=True)
     pub.add_argument("--runtime", type=Path, required=True)
+    for name in ("publication-status-local", "recover-local", "rollback-local"):
+        lifecycle = sub.add_parser(name)
+        lifecycle.add_argument("--store", type=Path, required=True)
+        lifecycle.add_argument("--runtime", type=Path, required=True)
+        if name == "rollback-local":
+            lifecycle.add_argument("--pointer", type=Path, required=True)
     rec = sub.add_parser("restore-local")
     rec.add_argument("--store", type=Path, required=True)
     rec.add_argument("--destination", type=Path, required=True)
@@ -114,11 +120,14 @@ def _main():
             result = {"candidate_id": store.save_candidate(**candidate)}
         elif a.decision_file:
             decision = json.loads(a.decision_file.read_bytes())
-            if decision.get("action") == "confirm_error" and not a.withdrawal_store:
+            if (
+                decision.get("action") in {"confirm_error", "revoke"}
+                and not a.withdrawal_store
+            ):
                 p.error(
-                    "confirm_error requires --withdrawal-store; use the serving object store"
+                    "withdrawal requires --withdrawal-store; use the serving object store"
                 )
-            if decision.get("action") == "confirm_error":
+            if decision.get("action") in {"confirm_error", "revoke"}:
                 decision["withdrawal_store"] = LocalStore(a.withdrawal_store)
             result = store.decide(**decision)
         elif a.withdrawal_id:
@@ -128,7 +137,10 @@ def _main():
                 (e for e in store.export()["decisions"] if e["id"] == a.withdrawal_id),
                 None,
             )
-            if result is None or result.get("action") != "confirm_error":
+            if result is None or result.get("action") not in {
+                "confirm_error",
+                "revoke",
+            }:
                 raise ValueError("unknown withdrawal decision")
         else:
             result = store.inspect(a.selection_id)
@@ -328,6 +340,18 @@ def _main():
                 ]
                 atomic_write(history_path, canonical(history))
             print(json.dumps(result))
+    elif a.command in ("publication-status-local", "recover-local", "rollback-local"):
+        store = LocalStore(a.store)
+        runtime = Runtime(store, a.runtime)
+        with file_lock(a.store / ".publisher.lock"):
+            if a.command == "recover-local":
+                runtime.recover()
+            elif a.command == "rollback-local":
+                _, version = store.read_version("control/active.json")
+                runtime.rollback(
+                    json.loads(a.pointer.read_bytes()), expected_version=version
+                )
+            print(json.dumps(runtime.status()))
     elif a.command == "restore-local":
         store = LocalStore(a.store)
         raw, _ = store.read_version("control/active.json")

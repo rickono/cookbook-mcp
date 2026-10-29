@@ -3,6 +3,7 @@
 import pytest
 from test_content_dependencies import ACTOR, approve, fixture
 
+from cookbook.storage import LocalStore
 from cookbook.transcription_review import ReviewStore, source_evidence
 
 
@@ -118,6 +119,7 @@ def test_undo_records_source_scope_dependencies_and_cannot_revive_approval(tmp_p
     store.decide(
         "stew",
         "revoke",
+        withdrawal_store=LocalStore(tmp_path / "objects"),
         actor=ACTOR,
         reason="Defect in original approval",
         relates_to=original["id"],
