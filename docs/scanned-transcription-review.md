@@ -187,3 +187,60 @@ multi-user authorization service.
 These JSON-only operations do not admit source processing. Any PDF/DjVu parsing,
 rendering, OCR or model work still requires the unchanged sandbox launcher and
 VM/cgroup ceilings in `ocr-resource-isolation.md`.
+
+### Replacement, processing changes and undo
+
+The candidate JSON accepted by `review-transcription --candidate-file` also
+accepts `extraction_run`, `display`, and `page_correspondences`. Supply a fresh,
+stable `extraction_run` identity for each new extraction, including a run whose
+output bytes match earlier output. Retain that identity when editing or reviewing
+that run. The binding includes it alongside page recognition/configuration
+identities, so a new run requires explicit source comparison and approval.
+Older records without a run identity retain their recorded evidence, without
+inventing a processing identity. `display` holds presentation preferences only;
+it is retained in history but does not change source eligibility. Text, geometry,
+reading order, ownership and support changes belong in evidence/selections and
+continue to require affected-content review.
+
+A replacement scan uses its new source digest and a distinct `edition.id`.
+Reusing an edition ID for different source bytes is refused. Optional navigation
+links have this shape:
+
+```json
+[{"candidate_id": "PRIOR_CANDIDATE_ID", "old_page_id": "page-1", "new_page_id": "page-1"}]
+```
+
+Both pages and the earlier candidate must exist, and source bytes must differ.
+Links never transfer approval. A pending candidate leaves the immutable working
+publication available. Finalizing that candidate produces pending content until
+its own exact source evidence, complete scope and required support are reviewed.
+
+New reviewer identities, reviewer/model configurations (named by
+`reviewer_config`) and policies require a human `validate_workflow` decision
+before `approve` or `review_portion`. Use the exact actor/configuration/policy
+on both decisions and provide nonempty `evidence` references to the workflow
+validation record. Approval records link to that validation decision. This is an
+inspectable owner attestation, not a software assertion of statistical accuracy.
+Agent approval remains disabled even after recording validation. The original
+manual reviewer keeps the existing `human-source-review.v1` /
+`standalone-content.v1` workflow; later reviewers cannot inherit that identity.
+Earlier decisions keep their original policy and validation reference; changing
+configuration does not invalidate them. Revoke decisions explicitly when a
+known defect undermines their evidence.
+
+To undo a correction, save the desired earlier candidate interpretation, then
+append an `undo` decision naming its earlier `approve`, `apply_draft` or `undo`
+decision through `relates_to`. Supply exact source evidence for the complete
+selection. Undo verifies the source, extraction, scope and currently eligible
+required dependencies, records whether the target was revoked and the current
+eligibility, and retains all earlier decisions. It does not approve content.
+An intervening interpretation change permanently ends the old approval's
+eligibility, even if the original bytes return. Restored interpretations need a
+checked undo before a fresh approval; revocations are never erased. Source or
+scope mismatches are refused. Unchanged portions retain reusable evidence.
+
+Finalized citation `content_review` metadata exposes the edition/source digest,
+extraction run, reviewer configuration, policy, navigation links, exact candidate
+and approval decision. The immutable history artifact retains the full evidence,
+validation and undo records. Publishing and runtime activation remain separate
+from all these administrative actions.
