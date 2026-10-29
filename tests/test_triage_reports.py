@@ -320,3 +320,17 @@ def test_admin_dry_run_exposes_shared_history_without_processing(tmp_path):
     status = json.loads(proc.stdout.splitlines()[0])["recovery"]
     assert status["region_remaining"] == 2
     assert status["attempts"][0]["events"][-1]["status"] == "technical_failure"
+
+
+def test_terminal_refusal_follows_source_alias_and_restart(tmp_path):
+    d, _ = run(tmp_path, [None], errors=["refusal: cannot transcribe this source"])
+    assert d["review_status"] == "terminal_unavailable"
+    alias = {**REPORT, "book_id": "alias-2", "report_id": "f" * 64}
+    d, seen = run(tmp_path, [], report=alias)
+    assert d["review_status"] == "terminal_unavailable"
+    assert seen == []
+
+    replacement = {**alias, "source_sha256": "c" * 64, "region": None}
+    d, seen = run(tmp_path, [], report=replacement)
+    assert d["review_status"] == "terminal_unavailable"
+    assert seen == []

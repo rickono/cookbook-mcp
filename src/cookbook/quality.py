@@ -127,8 +127,12 @@ def check_publish_quality(manifest, inputs):
         content_rows = list(
             db.execute("select * from sections where provenance='scanned-content-v1'")
         )
-        if content_rows:
-            path = "quality/content-review.json"
+        path = "quality/content-review.json"
+        if (
+            content_rows
+            or path in inputs
+            or any(e.path == path for e in manifest.files)
+        ):
             entry = next((e for e in manifest.files if e.path == path), None)
             if (
                 entry is None
@@ -143,6 +147,7 @@ def check_publish_quality(manifest, inputs):
                 section = expected.get(row["id"])
                 if (
                     section is None
+                    or any(row[k] != section[k] for k in ("title", "kind", "ordinal"))
                     or row["text"] != section["text"]
                     or json.loads(row["locator"]) != section["locator"]
                     or row["source_id"].split(":")[-1] != section["source_sha256"]
@@ -150,15 +155,47 @@ def check_publish_quality(manifest, inputs):
                     raise IntegrityError("content approval/index mismatch")
                 search = list(
                     db.execute(
-                        "select text from search where section_id=?", (row["id"],)
+                        "select source_id,title,text from search where section_id=?",
+                        (row["id"],),
                     )
                 )
-                if [r[0] for r in search] != (
-                    [section["text"]] if section["eligible"] else []
+                if [tuple(r) for r in search] != (
+                    [(row["source_id"], section["title"], section["text"])]
+                    if section["eligible"]
+                    else []
                 ):
                     raise IntegrityError("content approval/search mismatch")
             if {r["id"] for r in content_rows} != set(expected):
-                raise IntegrityError("missing reviewed content")
+                raise IntegrityError(
+                    "content approval/index mismatch: missing reviewed content"
+                )
+            candidate = ReviewStore(inputs[path]).export()["candidates"][-1]
+            changed_pages = {
+                l["physical_page"]
+                for l in candidate["view"]["lines"]
+                if l["text"] != l["raw_text"]
+            }
+            marker = {"path": path, "candidate_id": candidate["id"]}
+            for row in db.execute(
+                "select * from sections where provenance!='scanned-content-v1'"
+            ):
+                loc = json.loads(row["locator"])
+                superseded = row["source_id"].split(":")[-1] == candidate["snapshot"][
+                    "edition"
+                ]["source_sha256"] and bool(
+                    changed_pages.intersection(
+                        loc.get("physical_pages", [loc.get("physical_page")])
+                    )
+                )
+                if superseded and (
+                    loc.get("superseded_transcription") != marker
+                    or db.execute(
+                        "select 1 from search where section_id=?", (row["id"],)
+                    ).fetchone()
+                ):
+                    raise IntegrityError(
+                        "superseded transcription remains in ordinary content"
+                    )
         if seen != set(items):
             raise IntegrityError("unmatched OCR report rows")
         if not forced_sources.issubset(sources):
@@ -236,6 +273,32 @@ def finalize(build: Path, cache: Path, output: Path, *, transcription_review=Non
         atomic_write(review_path, canonical(ReviewStore(transcription_review).export()))
         reviews = ReviewStore(review_path)
         with sqlite3.connect(index) as db:
+            # Retain legacy transcription as evidence, outside ordinary reads/search.
+            # Saved line identities cannot safely be string-matched into a page blob.
+            candidate = reviews.export()["candidates"][-1]
+            changed_pages = {
+                l["physical_page"]
+                for l in candidate["view"]["lines"]
+                if l["text"] != l["raw_text"]
+            }
+            for sid, source_id, raw_locator in db.execute(
+                "select id,source_id,locator from sections where provenance!='scanned-content-v1'"
+            ).fetchall():
+                loc = json.loads(raw_locator)
+                if source_id.split(":")[-1] == candidate["snapshot"]["edition"][
+                    "source_sha256"
+                ] and changed_pages.intersection(
+                    loc.get("physical_pages", [loc.get("physical_page")])
+                ):
+                    loc["superseded_transcription"] = {
+                        "path": "quality/content-review.json",
+                        "candidate_id": candidate["id"],
+                    }
+                    db.execute(
+                        "update sections set locator=? where id=?",
+                        (json.dumps(loc), sid),
+                    )
+                    db.execute("delete from search where section_id=?", (sid,))
             for section in reviews.publication_sections():
                 source = db.execute(
                     "select * from sources where sha256=?", (section["source_sha256"],)

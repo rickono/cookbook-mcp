@@ -82,17 +82,39 @@ class RecoveryLedger:
             boxes.extend(a["box"] for a in added)
         return same, connected
 
+    def _terminal_attempts(self, attempts, source, page, book):
+        # Persisted aliases/correspondence form a page-local lineage. A refusal
+        # cannot be escaped by alternating catalogue aliases and source scans.
+        sources, books = {source}, {book}
+        connected = []
+        while True:
+            added = []
+            for attempt in attempts:
+                if attempt in connected or attempt["page"] != page:
+                    continue
+                identities = [
+                    {"source": attempt["source"], "book": attempt["book"]}
+                ] + [e for e in attempt["events"] if e["event"] == "terminal_alias"]
+                if any(
+                    i["source"] in sources or i["book"] in books for i in identities
+                ):
+                    added.append(attempt)
+                    sources.update(i["source"] for i in identities)
+                    books.update(i["book"] for i in identities)
+            if not added:
+                break
+            connected.extend(added)
+        return [
+            a
+            for a in connected
+            if any(e.get("status") == "terminal_unavailable" for e in a["events"])
+        ]
+
     def status(self, *, source, page, box, book):
         with self._connect() as db:
             attempts = self._history(db)
         same, connected = self._scope(attempts, source, page, box)
-        terminal_attempts = [
-            a
-            for a in attempts
-            if a["book"] == book
-            and a["page"] == page
-            and any(e.get("status") == "terminal_unavailable" for e in a["events"])
-        ]
+        terminal_attempts = self._terminal_attempts(attempts, source, page, book)
         return {
             "region_remaining": max(
                 0, 2 - sum(a["route"] == "additional" for a in connected)
@@ -129,12 +151,14 @@ class RecoveryLedger:
             db.execute("BEGIN IMMEDIATE")
             attempts = self._history(db)
             same, connected = self._scope(attempts, source, page, box)
-            if any(
-                a["book"] == book
-                and a["page"] == page
-                and any(e.get("status") == "terminal_unavailable" for e in a["events"])
-                for a in attempts
-            ):
+            terminal = self._terminal_attempts(attempts, source, page, book)
+            if terminal:
+                self._append(
+                    db,
+                    terminal[0]["id"],
+                    "terminal_alias",
+                    {"source": source, "book": book, "page": page},
+                )
                 return None, "terminal_unavailable"
             route = "additional" if connected else "initial"
             if route == "additional" and (

@@ -89,6 +89,11 @@ class Library:
             )
         ]
 
+    def suppressed(self, section):
+        return bool(self.withdrawals(section)) or bool(
+            json.loads(section["locator"]).get("superseded_transcription")
+        )
+
     def eligibility(self, section):
         withdrawals = self.withdrawals(section)
         if withdrawals:
@@ -105,6 +110,8 @@ class Library:
                 "withdrawals": withdrawals,
             }
         locator = json.loads(section["locator"])
+        if locator.get("superseded_transcription"):
+            return {"eligible": False, "reasons": ["superseded_transcription"]}
         review = locator.get("content_review")
         if review:
             return {"eligible": review["eligible"], "reasons": review["reasons"]}
@@ -235,7 +242,7 @@ class Library:
                     sec = db.execute(
                         "select * from sections where id=?", (r["section_id"],)
                     ).fetchone()
-                    if self.withdrawals(sec):
+                    if self.suppressed(sec):
                         continue
                     results.append(
                         {
@@ -287,7 +294,7 @@ class Library:
             ).fetchone()
             if s is None:
                 raise IntegrityError("unavailable identifier")
-            withdrawn = bool(self.withdrawals(s))
+            withdrawn = self.suppressed(s)
             return {
                 "citation": self.citation(pub, b, s),
                 "text": "" if withdrawn else s["text"][offset : offset + limit],
@@ -465,8 +472,8 @@ class Library:
                     data = out.getvalue()
             meta = {
                 "citation": self.citation(pub, b, s),
-                "text": "" if self.withdrawals(s) else s["text"][:4000],
-                "text_truncated": not self.withdrawals(s) and len(s["text"]) > 4000,
+                "text": "" if self.suppressed(s) else s["text"][:4000],
+                "text_truncated": not self.suppressed(s) and len(s["text"]) > 4000,
                 "width_limit": edge,
             }
             if box is not None:

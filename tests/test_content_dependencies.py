@@ -558,3 +558,78 @@ def test_invalidation_propagates_through_multiple_required_uses(tmp_path):
     for name in ("herbs", "note", "sauce", "stew"):
         approve(store, snapshot, scopes, name)
     assert store.inspect("stew")["eligible"]
+
+
+def test_membership_revision_restores_ownership_and_dependents(tmp_path):
+    from cookbook.transcription_review import make_revision, target_digest
+
+    snapshot, scopes = fixture()
+    import json
+    from pathlib import Path
+
+    from test_content_approval import scan_build
+
+    from cookbook.library import Library
+    from cookbook.publication import Runtime, publish
+    from cookbook.quality import finalize
+
+    source, _ = scan_build(tmp_path / "build", snapshot)
+    store = ReviewStore(tmp_path / "review.json")
+    store.save_candidate(snapshot, selections=scopes)
+    for name in ("sauce", "stew", "neighbor", "note"):
+        approve(store, snapshot, scopes, name)
+    revision = make_revision(
+        snapshot,
+        [
+            {
+                "kind": "membership",
+                "target_id": "p3-l1",
+                "before_sha256": target_digest(
+                    snapshot, "membership", "p3-l1", selections=scopes
+                ),
+                "state": "source_reviewed",
+                "value": ["note"],
+                "reason": "Source proves note ownership",
+                "evidence": source_evidence(snapshot, ["p3-l1"]),
+            }
+        ],
+        selections=scopes,
+        reviewer=ACTOR,
+    )
+    store.save_candidate(snapshot, selections=scopes, revisions=[revision])
+    for name in ("sauce", "stew", "note"):
+        assert not store.inspect(name)["eligible"]
+    assert store.inspect("neighbor")["eligible"]
+    for name in ("note", "sauce", "stew"):
+        store.decide(
+            name, "apply_draft", actor=ACTOR, reason="Apply reviewed ownership"
+        )
+        effective_scope = store.inspect(name)["scope"]
+        approve(store, snapshot, [effective_scope], name)
+    sections = {s["id"]: s for s in ReviewStore(store.path).publication_sections()}
+    assert "2 cups water" not in sections["sauce"]["text"]
+    assert "2 cups water" in sections["note"]["text"]
+    assert sections["stew"]["eligible"]
+    out = tmp_path / "final"
+    manifest = finalize(
+        tmp_path / "build", tmp_path / "cache", out, transcription_review=store.path
+    )
+    inputs = {
+        k: Path(v) for k, v in json.loads((out / "inputs.json").read_bytes()).items()
+    }
+    objects = LocalStore(tmp_path / "objects")
+    runtime = Runtime(objects, tmp_path / "runtime")
+    publish(objects, manifest, inputs, expected_version=None, activate=runtime.activate)
+    lib = Library(runtime)
+    assert (
+        "2 cups water"
+        in lib.read_section(manifest.publication_id, "book", source, "note")["text"]
+    )
+    assert (
+        "2 cups water"
+        not in lib.read_section(manifest.publication_id, "book", source, "sauce")[
+            "text"
+        ]
+    )
+    assert lib.search("Stew")["results"]
+    assert lib.search("Neighbor")["results"]

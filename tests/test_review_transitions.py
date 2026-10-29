@@ -172,3 +172,83 @@ def test_new_reviewer_cannot_inherit_manual_workflow_identity(tmp_path):
             complete=True,
             evidence=source_evidence(snapshot, scopes[2]["line_ids"]),
         )
+
+
+def test_defective_validation_revokes_all_selections_and_dependents(tmp_path):
+    snapshot, scopes = fixture()
+    import json
+    from pathlib import Path
+
+    from test_content_approval import scan_build
+
+    from cookbook.library import Library
+    from cookbook.publication import Runtime, publish
+    from cookbook.quality import finalize
+
+    source, _ = scan_build(tmp_path / "build", snapshot)
+    store = ReviewStore(tmp_path / "review.json")
+    store.save_candidate(snapshot, selections=scopes)
+    approve(store, snapshot, scopes, "herbs")
+    validation = store.decide(
+        "sauce",
+        "validate_workflow",
+        actor=ACTOR,
+        reason="Synthetic validation",
+        reviewer_config="config2",
+        policy="policy2",
+        evidence=[{"validation": "synthetic"}],
+    )
+    approvals = []
+    for name in ("sauce", "neighbor"):
+        scope = next(s for s in scopes if s["id"] == name)
+        approvals.append(
+            store.decide(
+                name,
+                "approve",
+                actor=ACTOR,
+                reason="Reviewed",
+                complete=True,
+                reviewer_config="config2",
+                policy="policy2",
+                evidence=source_evidence(snapshot, scope["line_ids"]),
+            )
+        )
+    approvals.append(approve(store, snapshot, scopes, "stew"))
+    objects = LocalStore(tmp_path / "objects")
+    runtime = Runtime(objects, tmp_path / "runtime")
+    lib = Library(runtime)
+    out = tmp_path / "published"
+    manifest = finalize(
+        tmp_path / "build", tmp_path / "cache", out, transcription_review=store.path
+    )
+    inputs = {
+        k: Path(v) for k, v in json.loads((out / "inputs.json").read_bytes()).items()
+    }
+    publish(objects, manifest, inputs, expected_version=None, activate=runtime.activate)
+    pointer = runtime.active()
+    assert lib.search("Stew")["results"]
+    event = store.decide(
+        "sauce",
+        "revoke",
+        actor=ACTOR,
+        reason="Known validation defect",
+        relates_to=validation["id"],
+        withdrawal_store=objects,
+    )
+    assert set(event["affected_decisions"]) == {a["id"] for a in approvals}
+    for name in ("sauce", "neighbor", "stew"):
+        assert not ReviewStore(store.path).inspect(name)["eligible"]
+    assert store.inspect("herbs")["eligible"]
+
+    for name in ("sauce", "neighbor", "stew"):
+        assert (
+            lib.read_section(manifest.publication_id, "book", source, name)["text"]
+            == ""
+        )
+    assert not lib.search("Stew")["results"]
+    assert lib.search("Herbs")["results"]
+    assert runtime.recover() == manifest.publication_id
+    _, version = objects.read_version("control/active.json")
+    runtime.rollback(pointer, expected_version=version)
+    assert not lib.search("Stew")["results"]
+    assert lib.search("Herbs")["results"]

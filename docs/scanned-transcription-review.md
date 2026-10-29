@@ -123,8 +123,10 @@ Approval requires explicit human action, `complete: true`, and `evidence` equal
 to `source_evidence(snapshot, selection.line_ids)` for the inspected source.
 Revised candidates require a separate `apply_draft` decision before approval.
 Recording an agent actor does not grant approval authority. Proposed or unresolved
-readings and ambiguous ownership cannot qualify. Quantity and membership overlays
-remain pending until their consistency rules are implemented. Flag clearance and
+readings and ambiguous ownership cannot qualify. Source-reviewed membership overlays project effective ownership and require fresh
+review of both affected scopes and their dependents. Quantity overlays must match
+the effective text of their exact source cell; changed readings require a matching
+text correction. Inconsistent or unresolved overlays remain pending. Flag clearance and
 metadata amendment do not constitute source comparison.
 
 Each selection declares its complete ordered `line_ids`, including continuations,
@@ -274,3 +276,9 @@ Retry it using `--withdrawal-id DECISION_ID --withdrawal-store PATH`; repeated
 retries are idempotent. Readers fail closed if current withdrawal state cannot
 be read or validated. The shared control record must be retained independently
 of publication rollback and retention cleanup.
+
+Legacy page transcriptions superseded by a text correction remain historical
+evidence in the immutable index and source-review snapshot. Their locator names
+the review evidence; ordinary search excludes them and ordinary reads return no
+transcription. Exact corrected recipe reads remain available with source citations.
+This avoids guessing an occurrence mapping from a flattened legacy page string.
