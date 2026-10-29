@@ -76,9 +76,39 @@ store (`--reports DIR`) or from the reports bucket with the Mac's own key
 A decision is written once, to `decisions/<report_id>.json` under `--out` (default
 `$COOKBOOK_DATA/report-triage`, outside Git), and is never redone.
 
-A crop failure or a timed-out reading is not recorded, so the report is retried on
-the next run. A provider content-filter refusal is a result: the report goes to the
-owner queue and is not worked around. A usage limit stops the run.
+Every dispatch is committed before work starts in the shared SQLite ledger at
+`$COOKBOOK_DATA/recovery.sqlite3` (override with `--ledger` only to select the same
+owner-wide ledger on another invocation). Keep this file outside Git, retain it
+across output runs, and give every worker the same path. `--actor` identifies the
+worker. The ledger stores actor/tool/configuration, exact input report, physical
+source/page/region, purpose, crop evidence, each individual reading/call, timestamps
+and outcome. Initial extraction and the predefined three-sample review route are
+recorded separately from additional recovery routes. A route retains the existing
+reader retry/sample protocol; it is one recovery action, not three extra routes.
+
+The first route for a physical region is initial work. At most two additional
+routes per region and six per physical page can dispatch, regardless of worker,
+reader, report/candidate identity or restart. Normalized original-page geometry
+links overlapping renamed/split regions transitively, retaining inherited attempt
+IDs. This deliberately conservative rule may share allowance between overlapping
+scopes. Distinct nonoverlapping regions retain their regional allowance and share
+the page limit. SQLite transactions serialize admission across processes.
+
+Crop failures, timeouts and interruptions remain in the ledger. Technical failures
+may be retried only within the allowance; a worker killed without cleanup leaves
+an inspectable unfinished dispatch which still counts. Exhaustion goes to the
+owner queue without another crop or reader call. Provider refusals and explicit
+unrecoverable-source outcomes are terminal for that book/page, including a
+replacement source or reader. They stop further samples and are not worked around.
+A usage limit still stops the run. Content uncertainty, terminal unavailability,
+technical failure, timeout and unfinished dispatch are inspectable separately;
+none establishes content approval. Historical decisions without ledger provenance
+are retained without invented actors, attempts or evidence.
+
+`--dry-run` includes current remaining region/page allowance and full page attempt
+history for each pending report, without crops or model calls. Normal decision
+output and saved decisions include the same accounting. Existing settled decision
+files retain their recorded accounting and evidence.
 
 Each run rebuilds `corrections.jsonl` and `owner-queue.jsonl` from all decisions.
 Sources not registered with the helper, and DjVu sources, go to the owner queue.
