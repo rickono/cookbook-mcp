@@ -127,8 +127,12 @@ def check_publish_quality(manifest, inputs):
         content_rows = list(
             db.execute("select * from sections where provenance='scanned-content-v1'")
         )
-        if content_rows:
-            path = "quality/content-review.json"
+        path = "quality/content-review.json"
+        if (
+            content_rows
+            or path in inputs
+            or any(e.path == path for e in manifest.files)
+        ):
             entry = next((e for e in manifest.files if e.path == path), None)
             if (
                 entry is None
@@ -162,7 +166,9 @@ def check_publish_quality(manifest, inputs):
                 ):
                     raise IntegrityError("content approval/search mismatch")
             if {r["id"] for r in content_rows} != set(expected):
-                raise IntegrityError("missing reviewed content")
+                raise IntegrityError(
+                    "content approval/index mismatch: missing reviewed content"
+                )
             candidate = ReviewStore(inputs[path]).export()["candidates"][-1]
             changed_pages = {
                 l["physical_page"]

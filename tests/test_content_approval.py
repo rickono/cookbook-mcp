@@ -599,7 +599,7 @@ def test_source_reviewed_membership_can_complete_approval(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "field", ["fts_source", "fts_title", "title", "kind", "ordinal"]
+    "field", ["fts_source", "fts_title", "title", "kind", "ordinal", "provenance"]
 )
 def test_quality_gate_rejects_changed_projection_metadata(tmp_path, field):
     import json
