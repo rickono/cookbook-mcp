@@ -813,6 +813,16 @@ class ReviewStore:
                     != affected_pages(prior["decisions"], event["affected_decisions"])
                 ):
                     raise ValueError("substantive-error evidence mismatch")
+            if event["action"] == "revoke" and "affected_decisions" in event:
+                from .withdrawal import affected_pages, revoked_approvals, validate
+
+                validate(event)
+                if event["affected_decisions"] != revoked_approvals(
+                    prior["decisions"], event["scope"], event["relates_to"]
+                ) or event["affected_pages"] != affected_pages(
+                    prior["decisions"], event["affected_decisions"]
+                ):
+                    raise ValueError("revocation evidence mismatch")
             if event["action"] == "review_portion":
                 if candidate["revisions"] and (candidate["id"], event["scope"]) not in {
                     (e["candidate_id"], e["scope"])
@@ -1141,8 +1151,8 @@ class ReviewStore:
 
         from .storage import atomic_write, canonical, file_lock
 
-        if action == "confirm_error" and withdrawal_store is None:
-            raise ValueError("confirmed error requires shared publication store")
+        if action in {"confirm_error", "revoke"} and withdrawal_store is None:
+            raise ValueError("withdrawal requires shared publication store")
         if action not in {
             "apply_draft",
             "clear_flag",
@@ -1305,10 +1315,21 @@ class ReviewStore:
                 event["affected_pages"] = affected_pages(
                     data["decisions"], event["affected_decisions"]
                 )
+            if action == "revoke":
+                from .withdrawal import affected_pages, revoked_approvals
+
+                if actor["kind"] != "human":
+                    raise ValueError("revocation requires human authority")
+                event["affected_decisions"] = revoked_approvals(
+                    data["decisions"], selection_id, relates_to
+                )
+                event["affected_pages"] = affected_pages(
+                    data["decisions"], event["affected_decisions"]
+                )
             event["id"] = _digest(event)
             data["decisions"].append(event)
             atomic_write(self.path, canonical(data))
-            if action == "confirm_error":
+            if action in {"confirm_error", "revoke"}:
                 from .withdrawal import record_withdrawal
 
                 record_withdrawal(withdrawal_store, event)

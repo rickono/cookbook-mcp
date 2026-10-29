@@ -5,6 +5,7 @@ from copy import deepcopy
 import pytest
 from test_transcription_boundaries import evidence, recipe
 
+from cookbook.storage import LocalStore
 from cookbook.transcription_boundaries import propose_boundaries
 from cookbook.transcription_review import (
     ReviewStore,
@@ -70,7 +71,12 @@ def test_draft_clearance_approval_and_revocation_have_distinct_durable_history(
     assert ReviewStore(store.path).inspect(scope)["eligible"] is True
     assert approved["predecessor"] != draft["id"]
     store.decide(
-        scope, "revoke", actor=actor, reason="Known error", relates_to=approved["id"]
+        scope,
+        "revoke",
+        withdrawal_store=LocalStore(tmp_path / "objects"),
+        actor=actor,
+        reason="Known error",
+        relates_to=approved["id"],
     )
     result = store.inspect(scope)
     assert result["eligible"] is False

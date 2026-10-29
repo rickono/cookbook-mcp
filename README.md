@@ -63,7 +63,21 @@ PYTHONPATH=src uv run python -m cookbook.cli restore-local \
   --destination /Users/rick/cookbook-mcp-data/poc/restored-copy
 ```
 
-The destination must not exist. A complete restore verifies every manifest entry and reconstructs its logical tree. Runtime recovery restores only the index and lazily verifies content into a bounded cache. `Runtime.activate(pointer)` verifies/stages a chosen known pointer before switching, and is also the local rollback primitive. Administrative restore paths never become MCP resources.
+The destination must not exist. A complete restore verifies every manifest entry and reconstructs its logical tree. Runtime recovery restores only the index and lazily verifies content into a bounded cache. `Runtime.activate(pointer)` verifies/stages a chosen known pointer before switching. `Runtime.rollback(pointer, expected_version=...)` explicitly selects a retained publication, verifies its cached runtime and remote evidence, and conditionally updates the remote pointer before activation. Current withdrawals and approval revocations remain enforced when serving every retained version. Administrative restore paths never become MCP resources.
+
+Use `cookbook publication-status-local --store STORE --runtime RUNTIME` to inspect
+remote and runtime pointers separately. `recover-local` with the same arguments
+verifies and activates the recorded remote version; `rollback-local` additionally
+requires `--pointer FILE` naming the retained publication and manifest digest.
+An activation acknowledgement failure after the remote write reports
+`pending_activation`; immutable staged objects and the previous runtime remain
+available for recovery. An unavailable hosted acknowledgement leaves runtime
+identity unconfirmed; local status reports the observed, verified runtime pointer.
+Neither recovery nor rollback creates an approval or undoes a review decision.
+New administrative `revoke` and `confirm_error` decisions require the shared
+serving object store (`review-transcription --withdrawal-store STORE`). A failed
+enforcement write can be retried using `--withdrawal-id DECISION_ID`. Legacy review
+history stays inspectable without inventing shared enforcement records.
 
 The S3 adapter is exercised over HTTP against loopback Moto using **synthetic data only**. A gated `publish-s3` CLI and authenticated acknowledgement are implemented; Mac browser PKCE login is implemented and live-verified; the EPUB trial upload and authenticated hosted acknowledgement have passed. Actual R2 permissions and conditional writes have passed synthetic provider tests. Multipart files above 5 GB remain unimplemented. The adapter refuses originals above 5 GB until multipart behavior is implemented and verified.
 

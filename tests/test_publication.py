@@ -1,13 +1,14 @@
 import pytest
+from conftest import fixture_build
+
 from cookbook.publication import (
     Runtime,
+    load_manifest,
     publish,
     restore,
-    load_manifest,
     synthetic_gc_plan,
 )
 from cookbook.storage import Conflict, IntegrityError, digest_file
-from conftest import fixture_build
 
 
 def test_full_restore_and_empty_runtime(published, tmp_path):
@@ -78,8 +79,9 @@ def test_gc_shared_and_pending_fail_closed(published, tmp_path):
 
 
 def test_path_traversal_and_manifest_corruption(published, tmp_path):
-    from cookbook.publication import Entry
     from pydantic import ValidationError
+
+    from cookbook.publication import Entry
 
     with pytest.raises((IntegrityError, ValidationError)):
         Entry(path="../bad", sha256="0" * 64, size=0, role="asset")
@@ -219,3 +221,166 @@ def test_interrupted_readback_restarts_hash_verification(
     )
     assert failed and result["status"] == "active"
     assert runtime.active()["publication_id"] == m2.publication_id
+
+
+def test_activation_exception_reports_actual_remote_and_runtime_and_recovers(
+    published, tmp_path
+):
+    m, inputs, store, runtime, lib, first = published
+    m2, i2 = fixture_build(tmp_path / "activation-failure")
+    _, version = store.read_version("control/active.json")
+
+    def unavailable(pointer):
+        raise OSError("Injected activation outage")
+
+    result = publish(store, m2, i2, expected_version=version, activate=unavailable)
+    assert result["status"] == "pending_activation"
+    assert result["activation_error"] == "OSError"
+    state = runtime.status()
+    assert state["status"] == "pending_activation"
+    assert state["remote_pointer"]["publication_id"] == m2.publication_id
+    assert state["runtime_pointer"]["publication_id"] == m.publication_id
+    restore(store, first, tmp_path / "retained-working")
+    restore(store, result, tmp_path / "retained-pending")
+    fresh = Runtime(store, runtime.root)
+    assert fresh.resume_cached() == m.publication_id
+    assert fresh.recover() == m2.publication_id
+    assert fresh.status()["status"] == "active"
+
+
+def test_rollback_selects_verified_retained_publication_with_cas(published, tmp_path):
+    m, inputs, store, runtime, lib, first = published
+    m2, i2 = fixture_build(tmp_path / "next")
+    _, version = store.read_version("control/active.json")
+    publish(store, m2, i2, expected_version=version, activate=runtime.activate)
+    raw, version = store.read_version("control/active.json")
+    with pytest.raises(Conflict):
+        runtime.rollback(first, expected_version=None)
+    assert store.read("control/active.json") == raw
+    result = runtime.rollback(first, expected_version=version)
+    assert result["status"] == "active"
+    assert runtime.status()["runtime_pointer"]["publication_id"] == m.publication_id
+    assert runtime.manifest(m2.publication_id) == m2
+    with pytest.raises(IntegrityError):
+        runtime.rollback(
+            dict(first, manifest_sha256="f" * 64), expected_version=version
+        )
+
+
+def test_recovery_refuses_unreadable_current_eligibility(published, tmp_path):
+    from cookbook.withdrawal import KEY
+
+    m, inputs, store, runtime, lib, first = published
+    m2, i2 = fixture_build(tmp_path / "pending")
+    _, version = store.read_version("control/active.json")
+    pending = publish(store, m2, i2, expected_version=version, activate=lambda p: None)
+    store.put_bytes(KEY, b"[{}]")
+    with pytest.raises(IntegrityError, match="invalid"):
+        runtime.recover()
+    assert runtime.active()["publication_id"] == m.publication_id
+    assert load_manifest(store, pending) == m2
+
+
+def test_administrative_status_recovery_and_explicit_rollback(
+    published, tmp_path, monkeypatch, capsys
+):
+    import json
+
+    from cookbook.cli import main
+    from cookbook.storage import canonical
+
+    m, inputs, store, runtime, lib, first = published
+    m2, i2 = fixture_build(tmp_path / "pending-admin")
+    _, version = store.read_version("control/active.json")
+    publish(store, m2, i2, expected_version=version, activate=lambda p: None)
+    pointer_file = tmp_path / "prior.json"
+    pointer_file.write_bytes(canonical(first))
+
+    def command(name, *extra):
+        monkeypatch.setattr(
+            "sys.argv",
+            [
+                "cookbook",
+                name,
+                "--store",
+                str(store.root),
+                "--runtime",
+                str(runtime.root),
+                *extra,
+            ],
+        )
+        main()
+        return json.loads(capsys.readouterr().out)
+
+    status = command("publication-status-local")
+    assert status["status"] == "pending_activation"
+    assert status["runtime_pointer"]["publication_id"] == m.publication_id
+    assert (
+        command("recover-local")["runtime_pointer"]["publication_id"]
+        == m2.publication_id
+    )
+    result = command("rollback-local", "--pointer", str(pointer_file))
+    assert result["status"] == "active"
+    assert result["remote_pointer"]["publication_id"] == m.publication_id
+
+
+@pytest.mark.parametrize("failure", ["corrupt", "missing", "review_source"])
+def test_failed_finalization_keeps_working_evidence_and_no_new_manifest(
+    published, tmp_path, failure
+):
+    from test_content_approval import candidate, scan_build
+
+    from cookbook.quality import finalize
+    from cookbook.storage import canonical
+    from cookbook.transcription_review import ReviewStore
+
+    m, inputs, objects, runtime, lib, first = published
+    snapshot, scopes = candidate()
+    build = tmp_path / "synthetic-scan"
+    scan_build(build, snapshot)
+    reviews = ReviewStore(tmp_path / "review.json")
+    if failure == "review_source":
+        snapshot["edition"]["source_sha256"] = "f" * 64
+    reviews.save_candidate(snapshot, selections=scopes)
+    if failure == "corrupt":
+        (build / "original.bin").write_bytes(b"corrupt")
+    elif failure == "missing":
+        (build / "original.bin").unlink()
+    old_remote = objects.read("control/active.json")
+    old_index = digest_file(inputs["runtime/index.sqlite"])
+    out = tmp_path / "failed-finalization"
+    with pytest.raises((IntegrityError, FileNotFoundError)):
+        finalize(build, tmp_path / "cache", out, transcription_review=reviews.path)
+    assert not (out / "manifest.json").exists()
+    assert objects.read("control/active.json") == old_remote
+    assert runtime.active()["publication_id"] == m.publication_id
+    assert digest_file(inputs["runtime/index.sqlite"]) == old_index
+    assert objects.read(
+        "publications/" + m.publication_id + "/manifest.json"
+    ) == canonical(m.model_dump())
+    assert lib.search("beans")["results"]
+
+
+def test_atomic_runtime_switch_failure_retains_staged_and_working_versions(
+    published, tmp_path, monkeypatch
+):
+    import os
+
+    m, _, store, runtime, _, first = published
+    m2, i2 = fixture_build(tmp_path / "atomic-switch")
+    _, version = store.read_version("control/active.json")
+    replace = os.replace
+
+    def interrupted(source, destination):
+        if destination == runtime.root / "active.json":
+            raise OSError("Injected atomic switch failure")
+        return replace(source, destination)
+
+    monkeypatch.setattr(os, "replace", interrupted)
+    result = publish(store, m2, i2, expected_version=version, activate=runtime.activate)
+    assert result["status"] == "pending_activation"
+    assert runtime.status()["runtime_pointer"]["publication_id"] == m.publication_id
+    assert runtime.manifest(m2.publication_id) == m2
+    assert runtime.manifest(m.publication_id) == m
+    monkeypatch.setattr(os, "replace", replace)
+    assert Runtime(store, runtime.root).recover() == m2.publication_id

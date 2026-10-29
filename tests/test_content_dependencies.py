@@ -5,6 +5,7 @@ from copy import deepcopy
 import pytest
 from test_transcription_boundaries import evidence, recipe, region
 
+from cookbook.storage import LocalStore
 from cookbook.transcription_review import ReviewStore, source_evidence
 
 ACTOR = {"kind": "human", "id": "owner"}
@@ -343,6 +344,7 @@ def test_administrative_dependency_review_finalize_publish_and_mcp(
     store.decide(
         "stew",
         "revoke",
+        withdrawal_store=LocalStore(tmp_path / "objects"),
         actor=ACTOR,
         reason="Synthetic known defect",
         relates_to=original_approval["id"],
@@ -528,7 +530,13 @@ def test_revoking_current_support_invalidates_dependents(tmp_path):
     store.save_candidate(snapshot, selections=scopes)
     for name in ("sauce", "stew", "neighbor"):
         approve(store, snapshot, scopes, name)
-    store.decide("sauce", "revoke", actor=ACTOR, reason="Source review revoked")
+    store.decide(
+        "sauce",
+        "revoke",
+        withdrawal_store=LocalStore(tmp_path / "objects"),
+        actor=ACTOR,
+        reason="Source review revoked",
+    )
     assert not store.inspect("sauce")["eligible"]
     assert not store.inspect("stew")["eligible"]
     assert store.inspect("neighbor")["eligible"]

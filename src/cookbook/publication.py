@@ -1,13 +1,16 @@
 """Immutable publication assembly, verification, CAS activation and independent restore."""
 
 from __future__ import annotations
+
 import hashlib
 import json
-from pathlib import Path
 import re
 import shutil
 import tempfile
+from pathlib import Path
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
 from .storage import (
     IntegrityError,
     atomic_write,
@@ -81,6 +84,8 @@ def load_manifest(store, pointer):
 
 def validate_version(pointer, destination):
     """Verify cached runtime state without depending on the object store."""
+    if not re.fullmatch("[a-f0-9]{32}", pointer["publication_id"]):
+        raise IntegrityError("invalid cached publication")
     raw = (destination / "manifest.json").read_bytes()
     if hashlib.sha256(raw).hexdigest() != pointer["manifest_sha256"]:
         raise IntegrityError("cached manifest checksum mismatch")
@@ -183,12 +188,31 @@ def publish(
     transfer(manifest.files, upload, "upload")
     transfer(list({e.sha256: e for e in manifest.files}.values()), readback, "readback")
     load_manifest(store, pointer)
+    from .withdrawal import current_withdrawals
+
+    current_withdrawals(store)
     store.put_bytes(
         "control/active.json", canonical(pointer), expected=expected_version
     )
-    if activate(pointer) != mid:
-        return {"status": "pending_activation", **pointer}
-    return {"status": "active", **pointer}
+    return confirm_activation(pointer, activate)
+
+
+def confirm_activation(pointer, activate):
+    """The remote write has committed; acknowledgement failure is recoverable."""
+    try:
+        confirmed = activate(pointer) == pointer["publication_id"]
+    except Exception as error:  # noqa: BLE001 - remote commit cannot be undone by an acknowledgement error
+        return {
+            "status": "pending_activation",
+            **pointer,
+            "remote_pointer": pointer,
+            "activation_error": type(error).__name__,
+        }
+    return {
+        "status": "active" if confirmed else "pending_activation",
+        **pointer,
+        "remote_pointer": pointer,
+    }
 
 
 def restore(store, pointer, destination: Path, *, runtime_only=False):
@@ -227,8 +251,31 @@ class Runtime:
         except FileNotFoundError:
             return None
 
+    def status(self):
+        """Report observed remote intent separately from verified runtime state."""
+        raw, version = self.store.read_version("control/active.json")
+        remote = json.loads(raw) if raw else None
+        if remote is not None:
+            load_manifest(self.store, remote)
+        local = self.active()
+        if local is not None:
+            validate_version(local, self.root / "versions" / local["publication_id"])
+        return {
+            "status": "active"
+            if remote is not None and remote == local
+            else "pending_activation"
+            if remote is not None
+            else "unpublished",
+            "remote_pointer": remote,
+            "remote_version": version,
+            "runtime_pointer": local,
+        }
+
     def activate(self, pointer):
         with file_lock(self.root / ".activation.lock"):
+            from .withdrawal import current_withdrawals
+
+            current_withdrawals(self.store)
             # Validate the remote pointer before using its ID as a filesystem path.
             load_manifest(self.store, pointer)
             destination = self.root / "versions" / pointer["publication_id"]
@@ -269,6 +316,27 @@ class Runtime:
         if raw:
             return self.activate(json.loads(raw))
         raise IntegrityError("no publication")
+
+    def rollback(self, pointer, *, expected_version):
+        """Select a retained version; serving still applies current eligibility.
+
+        This changes publication selection, never source/review decisions. The
+        caller serializes publication/retention work, as for publish().
+        """
+        pointer = {k: pointer[k] for k in ("publication_id", "manifest_sha256")}
+        self.manifest(pointer["publication_id"])
+        validate_version(pointer, self.root / "versions" / pointer["publication_id"])
+        manifest = load_manifest(self.store, pointer)
+        for entry in manifest.files:
+            verify(self.store, entry.key, entry.sha256, entry.size)
+        # Fail closed on unavailable/corrupt current eligibility control state.
+        from .withdrawal import current_withdrawals
+
+        current_withdrawals(self.store)
+        self.store.put_bytes(
+            "control/active.json", canonical(pointer), expected=expected_version
+        )
+        return {**confirm_activation(pointer, self.activate), **self.status()}
 
     def manifest(self, publication_id):
         if not re.fullmatch("[a-f0-9]{32}", publication_id):
