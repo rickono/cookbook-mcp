@@ -25,7 +25,7 @@ def test_confirmed_error_withdraws_published_content_and_required_dependents(
             "title": f"Page {n}",
             "text": "Historical Sauce transcription",
             "locator": {"kind": "page", "physical_page": n},
-            "provenance": "transcription",
+            "provenance": "legacy-transcription",
             "kind": "page",
             "images": [],
         }

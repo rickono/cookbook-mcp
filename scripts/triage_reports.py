@@ -18,9 +18,15 @@ script settles each one without trusting it:
 
 Decisions are written once per report under --out (outside Git) and never redone.
 All dispatched routes, failures and interruptions also remain in the shared --ledger.
-corrections.jsonl and owner-queue.jsonl are rebuilt from the decisions on every run;
-the next scanned-book publication applies corrections.jsonl. The library itself is not
-touched here, and nothing is uploaded: reports are only read.
+ledger.jsonl, owner-queue.jsonl and the readable owner-queue.md are rebuilt from
+the decisions on every run; owner-queue.md also lists the ambiguous corrections the last
+refresh's build reported (ambiguous-corrections.jsonl, written by refresh_library.py);
+the next scanned-book publication applies ledger.jsonl (cookbook.ledger rows, in
+decision order). A correction binds to the source digest and physical page, not to the
+publication the report was filed against, so reports against older publications still
+apply; a correction decided again from a later report is kept once, at its first
+decision. The library itself is not touched here, and nothing is uploaded: reports are
+only read.
 
   python3 scripts/triage_reports.py --reports DIR            # a local reports store
   python3 scripts/triage_reports.py --reports-s3             # REPORTS_* env, the Mac's key
@@ -45,6 +51,7 @@ sys.path.insert(0, str(REPO / "src"))
 import pipeline as fp
 import readers as rd
 
+from cookbook import ledger
 from cookbook.recovery import RecoveryLedger
 from cookbook.reports import list_reports
 
@@ -180,16 +187,26 @@ def _triage(report, out, *, books, reader, crop, call, ledger, attempt):
             return {
                 **base,
                 "outcome": "owner_queue",
-                "reason": "terminal reader refusal",
+                "reason": "terminal reader refusal; content filter; not retried or worked around"
+                if rd.filtered(c)
+                else "terminal reader refusal",
                 "review_status": "terminal_unavailable",
                 "readings": readings,
                 "calls": calls,
             }
     outcome, votes = decide(report, readings)
+    reason = f"blind re-read votes {votes}"
+    if outcome == "owner_queue" and any(
+        t is None and rd.filtered(c) for t, c in zip(readings, calls)
+    ):
+        reason = (
+            "the reader's provider refused a reading with its content filter; "
+            f"not retried or worked around ({reason})"
+        )
     return {
         **base,
         "outcome": outcome,
-        "reason": f"blind re-read votes {votes}",
+        "reason": reason,
         "votes": votes,
         "readings": readings,
         "calls": calls,
@@ -235,6 +252,8 @@ def triage(
     )
     if refused:
         return {
+            "decided_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "reader": f"{reader} x{SAMPLES}",
             "report_id": report["report_id"],
             "report": report,
             "outcome": "owner_queue",
@@ -303,22 +322,47 @@ def unsettled(d):
     )
 
 
+def limited(d):
+    """True when a reading failed on a usage or rate limit: stop the run, retry later."""
+    return any(
+        rd.LIMIT_RE.search(e) for c in d.get("calls", []) for e in c.get("errors", [])
+    )
+
+
+# The report fields a ledger row carries over, as (ledger key, report key). The row's id
+# is the report id; the quoted and proposed texts become from_text and to_text.
+REPORT_FIELDS = (
+    ("id", "report_id"),
+    *(
+        (k, k)
+        for k in (
+            "publication_id",
+            "book_id",
+            "source_id",
+            "source_sha256",
+            "physical_page",
+            "section_id",
+            "region",
+            "kind",
+        )
+    ),
+    ("from_text", "quoted_text"),
+    ("to_text", "proposed_text"),
+)
+
+
+def report_of(row):
+    """The report fields a ledger row carries, under their report names."""
+    return {rk: row[k] for k, rk in REPORT_FIELDS}
+
+
 def correction(d):
     r = d["report"]
     readings = json.dumps(d["readings"], ensure_ascii=False).encode()
     return {
-        "report_id": r["report_id"],
-        "publication_id": r["publication_id"],
-        "book_id": r["book_id"],
-        "source_id": r["source_id"],
-        "source_sha256": r["source_sha256"],
-        "physical_page": r["physical_page"],
-        "section_id": r["section_id"],
-        "region": r["region"],
-        "kind": r["kind"],
-        "from_text": r["quoted_text"],
-        "to_text": r["proposed_text"],
-        "state": "source_reviewed",
+        **{k: r[rk] for k, rk in REPORT_FIELDS},
+        "decided_at": d["decided_at"],
+        "state": ledger.STATE,
         "reviewer": {"kind": "agent", "id": f"blind-reread:{d['reader']}"},
         "evidence": {
             "crop_sha256": d["crop"].get("sha256"),
@@ -328,15 +372,26 @@ def correction(d):
     }
 
 
+def corrections(decisions):
+    """Ledger rows for the correction decisions, in decision order, each correction once."""
+    rows, seen = [], set()
+    for row in sorted(map(correction, decisions), key=ledger.order):
+        if ledger.key(row) not in seen:
+            seen.add(ledger.key(row))
+            rows.append(row)
+    return ledger.check(rows)
+
+
 def rebuild(out):
-    decisions = [
-        json.loads(p.read_text()) for p in sorted((out / "decisions").glob("*.json"))
-    ]
+    decisions = sorted(
+        (json.loads(p.read_text()) for p in (out / "decisions").glob("*.json")),
+        key=lambda d: (d["decided_at"], d["report_id"]),
+    )
     groups = {"correction": [], "rejected": [], "owner_queue": []}
     for d in decisions:
         groups[d["outcome"]].append(d)
+    (out / ledger.FILE).write_bytes(ledger.dump(corrections(groups["correction"])))
     lines = {
-        "corrections.jsonl": [correction(d) for d in groups["correction"]],
         "owner-queue.jsonl": [
             {
                 "report_id": d["report_id"],
@@ -351,7 +406,189 @@ def rebuild(out):
         (out / name).write_text(
             "".join(json.dumps(x, ensure_ascii=False) + "\n" for x in rows)
         )
+    (out / "owner-queue.md").write_text(owner_queue_page(out, groups["owner_queue"]))
     return {k: len(v) for k, v in groups.items()}
+
+
+AMBIGUOUS = "ambiguous-corrections.jsonl"
+
+
+def owner_items(out, queued=None):
+    """Every item waiting for the owner, each with its report, decision and reason.
+
+    Reports the blind re-read could not settle (including content-filter refusals), then
+    the accepted corrections the last published build could not place unambiguously.
+    """
+    if queued is None:
+        decisions = (
+            json.loads(p.read_text()) for p in (out / "decisions").glob("*.json")
+        )
+        queued = [d for d in decisions if d["outcome"] == "owner_queue"]
+    items = [
+        {
+            "key": d["report_id"],
+            "kind": "report the blind re-read did not settle",
+            "report": d["report"],
+            "decision": d,
+            "reason": d["reason"],
+        }
+        for d in queued
+    ]
+    path = out / AMBIGUOUS
+    for line in path.read_text().splitlines() if path.exists() else []:
+        q = json.loads(line)
+        c = q["correction"]
+        decision = out / "decisions" / f"{c['id']}.json"
+        items.append(
+            {
+                "key": q["correction_id"],
+                "kind": "accepted correction the build could not place",
+                "report": report_of(c),
+                "decision": json.loads(decision.read_text())
+                if decision.exists()
+                else None,
+                "reason": f"ambiguous correction {q['correction_id']}: {q['reason']}",
+            }
+        )
+    return items
+
+
+def _readings(d):
+    if d is None:
+        return ["  - no decision record for this report"]
+    if "readings" not in d:
+        return ["  - none: the page was not read (" + d["reason"] + ")"]
+    lines = []
+    for n, (text, call) in enumerate(zip(d["readings"], d["calls"]), 1):
+        if text is not None:
+            got = json.dumps(text, ensure_ascii=False)
+        elif rd.filtered(call):
+            got = "refused by the provider's content filter"
+        else:
+            got = "no reading (" + "; ".join(call.get("errors") or ["failed"]) + ")"
+        lines.append(f"  {n}. `{call.get('model', d['reader'])}`: {got}")
+    return lines
+
+
+def owner_queue_page(out, queued=None):
+    """owner-queue.md: each waiting item's report, blind readings and reason."""
+    items = owner_items(out, queued)
+    lines = [
+        "# Owner queue",
+        "",
+        (
+            f"{len(items)} item(s) need an owner decision. Generated by "
+            f"scripts/triage_reports.py from decisions/ and {AMBIGUOUS}; edits are "
+            "overwritten."
+        ),
+    ]
+    for n, item in enumerate(items, 1):
+        r = item["report"]
+        lines += [
+            "",
+            f"## {n}. {item['kind']}",
+            "",
+            f"- Report: `{r['report_id']}` against publication `{r['publication_id']}`",
+            (
+                f"- Book: `{r['book_id']}`, source `{r['source_id']}`, physical page "
+                f"{r['physical_page']}, section `{r['section_id']}`, "
+                f"region {r['region']}"
+            ),
+            f"- Kind: {r['kind']}",
+            "- Library text: " + json.dumps(r["quoted_text"], ensure_ascii=False),
+            "- Proposed text: " + json.dumps(r["proposed_text"], ensure_ascii=False),
+        ]
+        if r.get("note"):
+            lines.append("- Note: " + json.dumps(r["note"], ensure_ascii=False))
+        lines += ["- Readings:", *_readings(item["decision"])]
+        lines.append(f"- Reason: {item['reason']}")
+    return "\n".join(lines) + "\n"
+
+
+def pending_reports(store, out, publication=None):
+    """Stored reports without a decision under out, oldest first."""
+    return [
+        r
+        for r in list_reports(store, publication)
+        if not (out / "decisions" / f"{r['report_id']}.json").exists()
+    ]
+
+
+def run(
+    store,
+    out,
+    *,
+    limit=20,
+    reader=READER,
+    publication=None,
+    admission=doctor,
+    books=registered_books,
+    crop=fp.guarded_crop,
+    call=rd.call,
+    log=print,
+    ledger=None,
+    actor=None,
+):
+    """Decide up to limit pending reports, then rebuild the ledger and owner queue.
+
+    The sandbox admission check runs only when something is pending, and before any crop;
+    if it fails (doctor exits) nothing is triaged. A failed crop or a timed-out reading
+    leaves its report pending; a usage or rate limit leaves it pending and ends the run.
+    admission, books, crop and call are injectable for synthetic tests.
+    """
+    (out / "decisions").mkdir(parents=True, exist_ok=True)
+    (out / "empty").mkdir(exist_ok=True)  # the reader CLIs run in an empty cwd
+    pending = pending_reports(store, out, publication)
+    batch = pending[:limit]
+    decided = {"correction": 0, "rejected": 0, "owner_queue": 0}
+    if batch:
+        admission()
+        registered = books()
+    for r in batch:
+        d = triage(
+            r,
+            out,
+            books=registered,
+            reader=reader,
+            crop=crop,
+            call=call,
+            ledger=ledger,
+            actor=actor,
+        )
+        stop = rd.STOP.is_set() or limited(d)
+        if stop or unsettled(d):
+            log(
+                json.dumps(
+                    {
+                        "report_id": r["report_id"],
+                        "outcome": "retry later",
+                        "reason": d["reason"],
+                        "review_status": d["review_status"],
+                        "recovery": d["recovery"],
+                    }
+                )
+            )
+            if stop:
+                break
+            continue
+        (out / "decisions" / f"{r['report_id']}.json").write_text(
+            json.dumps(d, ensure_ascii=False, indent=1)
+        )
+        decided[d["outcome"]] += 1
+        log(
+            json.dumps(
+                {
+                    "report_id": r["report_id"],
+                    "outcome": d["outcome"],
+                    "reason": d["reason"],
+                }
+            )
+        )
+    return {
+        "decided": decided,
+        "pending": len(pending) - sum(decided.values()),
+        "totals": rebuild(out),
+    }
 
 
 def reports_store(a):
@@ -405,16 +642,9 @@ def main():
     )
     a = ap.parse_args()
     rd.parse(a.reader)
-    a.out.mkdir(parents=True, exist_ok=True)
-    (a.out / "decisions").mkdir(exist_ok=True)
-    (a.out / "empty").mkdir(exist_ok=True)  # the reader CLIs run in an empty cwd
-    pending = [
-        r
-        for r in list_reports(reports_store(a), a.publication)
-        if not (a.out / "decisions" / f"{r['report_id']}.json").exists()
-    ][: a.limit]
     if a.dry_run:
-        ledger = RecoveryLedger(a.ledger)
+        recovery = RecoveryLedger(a.ledger)
+        pending = pending_reports(reports_store(a), a.out, a.publication)[: a.limit]
         for r in pending:
             print(
                 json.dumps(
@@ -429,7 +659,7 @@ def main():
                                 "region",
                             )
                         },
-                        "recovery": ledger.status(
+                        "recovery": recovery.status(
                             source=r["source_sha256"],
                             page=r["physical_page"],
                             box=r["region"] or [0, 0, 1, 1],
@@ -440,48 +670,17 @@ def main():
             )
         print(json.dumps({"pending": len(pending)}))
         return
-    if pending:
-        doctor()
-        books = registered_books()
-    for r in pending:
-        d = triage(
-            r,
-            a.out,
-            books=books,
-            reader=a.reader,
-            ledger=RecoveryLedger(a.ledger),
-            actor={"kind": "agent", "id": a.actor},
-        )
-        if rd.STOP.is_set() or unsettled(d):
-            print(
-                json.dumps(
-                    {
-                        "report_id": r["report_id"],
-                        "outcome": "retry later",
-                        "reason": d["reason"],
-                        "recovery": d["recovery"],
-                    }
-                )
-            )
-            if rd.STOP.is_set():
-                break
-            continue
-        (a.out / "decisions" / f"{r['report_id']}.json").write_text(
-            json.dumps(d, ensure_ascii=False, indent=1)
-        )
-        print(
-            json.dumps(
-                {
-                    "report_id": r["report_id"],
-                    "outcome": d["outcome"],
-                    "reason": d["reason"],
-                    "review_status": d["review_status"],
-                    "recovery": d["recovery"],
-                }
-            ),
-            flush=True,
-        )
-    print(json.dumps({"decided": len(pending), "totals": rebuild(a.out)}))
+    result = run(
+        reports_store(a),
+        a.out,
+        limit=a.limit,
+        reader=a.reader,
+        publication=a.publication,
+        ledger=RecoveryLedger(a.ledger),
+        actor={"kind": "agent", "id": a.actor},
+        log=lambda line: print(line, flush=True),
+    )
+    print(json.dumps(result))
 
 
 if __name__ == "__main__":

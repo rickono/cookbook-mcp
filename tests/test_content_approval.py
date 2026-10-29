@@ -165,7 +165,7 @@ def test_review_finalize_publish_search_read_and_citations_preserve_evidence(
                 "title": "Page 1",
                 "text": "\n".join(l["text"] for l in snapshot["pages"][0]["lines"]),
                 "locator": {"kind": "page", "physical_page": 1},
-                "provenance": "transcription",
+                "provenance": "legacy-transcription",
                 "kind": "page",
                 "images": [],
             }
@@ -723,3 +723,77 @@ def test_quantity_revision_requires_matching_effective_text(tmp_path, consistent
     else:
         with pytest.raises(ValueError, match="quantity and effective text disagree"):
             approve()
+
+
+def test_reviewed_correction_finalizes_over_registered_production_candidate(tmp_path):
+    """Exact-import validation and reviewed overlays must coexist for one source."""
+    from synthetic_scanned import pdf_sha256, registry
+    from synthetic_scanned import snapshot as scanned_snapshot
+
+    from cookbook.build import build_snapshot
+    from cookbook.library import Library
+    from cookbook.publication import Runtime, publish_build
+    from cookbook.quality import finalize
+
+    build = tmp_path / "build"
+    build_snapshot(
+        scanned_snapshot(tmp_path),
+        [1],
+        build,
+        tmp_path / "cache",
+        scanned=registry(tmp_path),
+        progress=lambda event: None,
+    )
+    snapshot, selections = candidate()
+    snapshot["edition"]["source_sha256"] = pdf_sha256()
+    scope = selections[0]["id"]
+    reviews = ReviewStore(tmp_path / "review.json")
+    revision = make_revision(
+        snapshot,
+        [
+            {
+                "kind": "line_text",
+                "target_id": "p1-l1",
+                "before_sha256": target_digest(
+                    snapshot, "line_text", "p1-l1", selections=selections
+                ),
+                "state": "source_reviewed",
+                "value": "1/2 cup saffron water",
+                "reason": "Synthetic source comparison",
+                "evidence": source_evidence(snapshot, ["p1-l1"]),
+            }
+        ],
+        selections=selections,
+        reviewer={"kind": "human", "id": "owner"},
+    )
+    reviews.save_candidate(snapshot, selections=selections, revisions=[revision])
+    reviews.decide(
+        scope,
+        "apply_draft",
+        actor={"kind": "human", "id": "owner"},
+        reason="Apply correction",
+    )
+    reviews.decide(
+        scope,
+        "approve",
+        actor={"kind": "human", "id": "owner"},
+        reason="Complete synthetic review",
+        complete=True,
+        evidence=source_evidence(snapshot, selections[0]["line_ids"]),
+    )
+    out = tmp_path / "finalized"
+    finalize(build, tmp_path / "cache", out, transcription_review=reviews.path)
+    objects = LocalStore(tmp_path / "objects")
+    runtime = Runtime(objects, tmp_path / "runtime")
+    assert publish_build(objects, out, activate=runtime.activate)["status"] == "active"
+    lib = Library(runtime)
+    hit = lib.search("saffron")["results"][0]
+    assert hit["eligibility"]["eligible"]
+    assert (
+        "1/2 cup saffron water"
+        in lib.read_section(
+            None, hit["citation"]["book_id"], hit["citation"]["source_id"], scope
+        )["text"]
+    )
+    assert not lib.search("plain soup")["results"]
+    assert lib.search("colophon")["results"]

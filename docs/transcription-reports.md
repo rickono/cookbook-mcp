@@ -21,6 +21,11 @@ the page, each side at least 0.02. The server renders the page larger, up to
 `ZOOM_EDGE` (2400 px), and returns only that box, at most `edge` pixels. Small print
 and fraction glyphs become legible without returning a huge image.
 
+For a scanned section, `read_section` returns `check_regions`: the crop quantity-review
+boxes (`crop_confirmed`) and the unresolved items (`unresolved`) on its pages, each with
+a `physical_page` and a `box` that `get_page` takes unchanged as `region`. The agent
+checks the unresolved ones first instead of guessing a box.
+
 If the zoom shows something different from the library text, the agent tells the
 user what the page shows. It then calls `report_transcription_issue` once, with:
 
@@ -110,8 +115,9 @@ history for each pending report, without crops or model calls. Normal decision
 output and saved decisions include the same accounting. Existing settled decision
 files retain their recorded accounting and evidence.
 
-Each run rebuilds `corrections.jsonl` and `owner-queue.jsonl` from all decisions.
-Sources not registered with the helper, and DjVu sources, go to the owner queue.
+Each run rebuilds `ledger.jsonl`, `owner-queue.jsonl` and `owner-queue.md` from
+all decisions. Sources not registered with the helper, and DjVu sources, go to the
+owner queue.
 
 ```sh
 python3 scripts/triage_reports.py --reports-s3 --dry-run   # list pending reports
@@ -120,21 +126,127 @@ python3 scripts/triage_reports.py --reports-s3 --limit 20  # decide up to 20
 
 ## 3. The next publication applies corrections
 
-`corrections.jsonl` rows carry the source, page, region, `from_text`, `to_text`, the
-reviewer and the evidence (crop hash, readings hash, votes). The library changes
-only when a new publication is built and activated. Earlier publications stay as
-they were.
+`ledger.jsonl` is the correction ledger (`cookbook.ledger`); triage runs before this
+change wrote it as `corrections.jsonl`, which is no longer read. It is unrelated to the
+reader pipeline's `corrections.jsonl` (reader-vote corrections, `vote-corrections.jsonl`
+in a candidate). Each row carries an
+`id` (the report id), `decided_at`, the source digest and id, the physical page, an
+optional section and region, `from_text`, `to_text`, the reviewer and the evidence
+(crop hash, readings hash, votes). Rows are in decision order. A row binds to the
+source digest and page, not to the publication the report was filed against, so a
+report against an older publication still applies. The same correction decided again
+from a later report is kept once, at its first decision.
+
+`cookbook build --scanned-registry registry.json --ledger ledger.jsonl` applies
+the rows for each scanned source, in order, after unresolved markers are in place.
+Matching is whitespace-normalized and case-sensitive, and text touching an
+`[unresolved …]` marker never matches, so a correction cannot fill a marker:
+
+| `from_text` | Outcome |
+|---|---|
+| exactly once on the cited page | applied to the page and to every section part from that page that holds it |
+| otherwise, exactly once in the cited section's text from that page | applied there (section-scoped) |
+| nowhere in the cited scope (the cited section's text from that page, else the page) | stale; nothing changes |
+| more than once in the cited scope, or `to_text` holds a marker | ambiguous; nothing changes, owner queue |
+
+Chained corrections work because each row sees the text the earlier rows left. Every
+unit a correction changed lists `{id, reviewer}` in `extraction.corrections`.
+
+The source's rows are backed up beside its candidate as
+`quality/scanned/<sha256>/ledger.jsonl`; the transcription summary lists the applied,
+stale and ambiguous ids and the ledger digest. The publish gate re-imports the
+candidate with the stored ledger and requires the same text and outcomes. It refuses
+a stored row for another source digest, and an applied row whose page unit does not
+record it or whose page lies outside the source. `build-report.json` in the build
+directory (`scanned.build_report`, `scanned.read_build_report`) gives, for each
+source, its Calibre ids, its page coverage (total, transcribed, blank, failed), and its
+section and unresolved counts. It counts applied, stale and ambiguous corrections and
+holds the owner queue of ambiguous ones. It is not published. The library changes only when a new publication is built and activated.
+Earlier publications stay as they were.
+
+Every build also records what it was built from, as `quality/build-inputs.json` in the
+publication (`build-inputs.v1`). The record holds:
+
+- the snapshot path and the sha256 of its `snapshot-manifest.json`;
+- the OCR cache;
+- the approved Calibre ids, in order;
+- the forced OCR ids;
+- for each imported scanned source, its digest, physical page count and the sha256 of
+  its `candidate.json`.
+
+## 4. The refresh command closes the loop
+
+`scripts/refresh_library.py` runs steps 2 and 3 in one go. It runs on the Mac, by
+hand, and nothing schedules it. One run:
+
+1. reads the stored reports (`--reports DIR`, or `--reports-s3` with the Mac's
+   reports key) and finds those without a decision;
+2. if any are pending, runs `ocr_sandbox.py doctor`, and stops before triage if it
+   fails;
+3. blind-triages up to `--limit` (default 20) of them, exactly as in step 2. Reports
+   over the limit stay pending for the next run;
+4. regenerates `ledger.jsonl` from every decision;
+5. compares the ledger's rows for each scanned source with the `ledger_sha256` the
+   active publication's transcription summary records. If none differ, for example
+   when there were no new decisions or only rejections, it publishes nothing and
+   reports `"status": "unchanged"`;
+6. otherwise rebuilds from the active publication's `quality/build-inputs.json`, with
+   the new ledger. It uses the same snapshot, which must still match its recorded
+   proof, the same approved selection and OCR choices, and the same candidates. The
+   candidates are restored from the publication's `quality/scanned/<sha256>/`
+   inventory and checked against the recorded digests. The build goes under `--work`
+   (default `$COOKBOOK_DATA/refresh`);
+7. publishes and activates the rebuild through the usual lifecycle and records it in
+   `control/successful.json`, then prints a JSON report:
+   - the new and previous publication ids;
+   - the triage counts;
+   - the applied, stale and ambiguous corrections;
+   - the new and total owner-queue items, and the queue file.
+
+A publication with no recorded build inputs is refused; build and publish it once
+with `cookbook build`. A failed build or publish leaves the active publication
+unchanged, and earlier publications are kept for rollback. Publishing uses the
+Mac's publisher credential, which never goes to Fly. With `--s3`, the run uploads
+with the library bucket's write key from the `S3_*` and `AWS_*` env, the same env as
+`cookbook publish-s3`, with `COOKBOOK_AUDIENCE` set. It then waits for the
+hosted readiness acknowledgement, signing in with `--browser-login` or using
+`--token-file`, as `cookbook publish-s3` does.
+
+```sh
+uv run python scripts/refresh_library.py --reports DIR --store STORE --runtime RUNTIME
+uv run python scripts/refresh_library.py --reports-s3 --s3 \
+    --state-directory STATE --readiness-url https://HOST/readyz --browser-login
+```
+
+The owner queue is `owner-queue.md` under `--out`, a readable file the owner works
+through. It holds every report the blind re-read did not settle, including
+content-filter refusals, which are kept as they are. It also holds every accepted
+correction that the active publication's build could not place unambiguously; the
+refresh writes these to `ambiguous-corrections.jsonl` after each activation. Each item
+shows:
+
+- the report: id, publication, book, source, page, section, region, library text,
+  proposed text and note;
+- each blind reading, marked when the provider's filter refused it or the read
+  failed;
+- the reason.
+
+Resolving an item stays a manual owner step.
 
 ## Not done yet
 
-- **Scanned books are not published.** The hosted library is EPUB-only today. Until
-  the scanned pipeline's output is part of a publication, `get_page` has no scanned
-  pages to zoom and the tool has nothing to report against.
-- **Applying corrections** to a scanned publication is the publication build's job.
-  It means mapping a row onto the review revision model (`transcription_review`) for
-  that book's snapshot. That build does not exist yet.
-- **Per-quantity crop boxes.** `read_section` does not yet return the pipeline's
-  quantity boxes, so the agent has to choose a region itself.
+- **No scanned book is hosted yet.** The build imports a scanned PDF from a frozen
+  `scanned-candidate.v1` candidate (`cookbook build --scanned-registry registry.json`);
+  the gate accepts its text only through the transcription summary. A PDF without a
+  registered candidate is refused unless it is named in `--force-ocr-books`, which
+  keeps native page OCR and its assessments; a book cannot have both. The three production-transcribed books
+  (#49) are built and published to a local store only; hosted activation waits for the
+  owner. `get_page` renders with poppler's `pdftoppm`. The hosted image installs it;
+  on the Mac it is not on `PATH`, so for local checks put Calibre's bundled copy
+  (`/Applications/calibre.app/Contents/utils.app/Contents/MacOS`) on `PATH`.
+- **The owner queue has no resolution tooling.** Items in `owner-queue.md` wait for
+  the owner; nothing records an owner decision back into the ledger yet. The refresh
+  runs only by hand.
 - **Hosting is not configured.** See
   [hosted-runtime.md](hosted-runtime.md#transcription-reports--not-deployed). The
   bucket, its keys, the Fly secrets and the deploy each need the owner's approval.

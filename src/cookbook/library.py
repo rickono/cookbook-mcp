@@ -16,7 +16,8 @@ from PIL import Image
 
 from .extract import render_page
 from .reports import check_region
-from .storage import IntegrityError, digest_file, verify
+from .scanned import LABEL
+from .storage import IntegrityError, digest_file, has_table, verify
 
 ZOOM_EDGE = 2400  # largest render for a region zoom; about 25 MB of RGB on a 1 GB host
 
@@ -127,6 +128,32 @@ class Library:
             }
         )
 
+    def additive_row(self, db, table, key, value):
+        """The row of an additive table whose ``key`` is ``value``; None without one.
+
+        Older immutable publications remain readable without the additive tables.
+        """
+        if not has_table(db, table):
+            return None
+        return db.execute(f"select * from {table} where {key}=?", (value,)).fetchone()
+
+    def transcription_counts(self, pub):
+        """Scanned sources, applied corrections and unresolved items in a publication.
+
+        Read from each source's transcription summary, so corrections count once they
+        are recorded there. Byte-identical Calibre records share a source and count once.
+        """
+        counts = {"scanned_books": 0, "applied_corrections": 0, "unresolved_items": 0}
+        with self.db(pub) as db:
+            if not has_table(db, "transcription_sources"):
+                return counts
+            for (raw,) in db.execute("select summary from transcription_sources"):
+                summary = json.loads(raw)
+                counts["scanned_books"] += 1
+                counts["applied_corrections"] += len(summary["corrections"]["applied"])
+                counts["unresolved_items"] += summary["unresolved"]
+        return counts
+
     def citation(self, pub, book, section=None):
         d = {
             "publication_id": pub,
@@ -147,6 +174,15 @@ class Library:
                     "version": self.extraction_version(pub),
                 },
             )
+            with self.db(pub) as db:
+                unit = self.additive_row(
+                    db, "transcription_units", "section_id", section["id"]
+                )
+            if unit is not None:
+                d["extraction"]["label"] = json.loads(unit["label"])
+                # Ledger corrections served in this unit's text: [{id, reviewer}].
+                if corrections := json.loads(unit["corrections"]):
+                    d["extraction"]["corrections"] = corrections
         if section:
             d["eligibility"] = self.eligibility(section)
         if section and d["locator"]["kind"] == "page":
@@ -266,6 +302,26 @@ class Library:
         with self.db(pub) as db:
             b = self.book(db, book_id)
             toc = json.loads(b["toc"])
+            coverage = {
+                "recipe_labels": "conservative source structure only",
+                "image_association": "EPUB document",
+                "ocr": "English; low-text physical pages",
+            }
+            scanned = self.additive_row(
+                db, "transcription_sources", "source_id", b["source_id"]
+            )
+            if scanned is not None:
+                summary = json.loads(scanned["summary"])
+                coverage = {
+                    "recipe_labels": "agent-assembled sections, unapproved",
+                    "image_association": "none",
+                    "transcription": {
+                        "label": LABEL,
+                        "pages_total": summary["pages_total"],
+                        **summary["coverage"],
+                        "unresolved": summary["unresolved"],
+                    },
+                }
             return {
                 "citation": self.citation(pub, b),
                 "calibre_id": b["calibre_id"],
@@ -273,11 +329,7 @@ class Library:
                 "toc": toc[offset : offset + limit],
                 "next_offset": offset + limit if offset + limit < len(toc) else None,
                 "artifact_id": "original",
-                "coverage": {
-                    "recipe_labels": "conservative source structure only",
-                    "image_association": "EPUB document",
-                    "ocr": "English; low-text physical pages",
-                },
+                "coverage": coverage,
             }
 
     def read_section(
@@ -295,7 +347,7 @@ class Library:
             if s is None:
                 raise IntegrityError("unavailable identifier")
             withdrawn = self.suppressed(s)
-            return {
+            result = {
                 "citation": self.citation(pub, b, s),
                 "text": "" if withdrawn else s["text"][offset : offset + limit],
                 "eligibility": self.eligibility(s),
@@ -306,6 +358,28 @@ class Library:
                 "kind": s["kind"],
                 "image_ids": json.loads(s["images"])[:50],
             }
+            # Scanned units only: where to zoom with get_page(region=box); EPUB is unchanged.
+            unit = self.additive_row(db, "transcription_units", "section_id", s["id"])
+            if unit is not None:
+                result["check_regions"] = json.loads(unit["check_regions"])
+            return result
+
+    def section_pages(self, publication_id, book_id, source_id, section_id):
+        """Physical pages of a scanned section, from its locator; None for any other."""
+        try:
+            pub = self.publication(publication_id)
+        except IntegrityError:
+            return None
+        with self.db(pub) as db:
+            s = db.execute(
+                "select s.locator from sections s join books b on b.source_id=s.source_id"
+                " where s.id=? and s.source_id=? and b.id=?",
+                (section_id, source_id, book_id),
+            ).fetchone()
+        locator = json.loads(s["locator"]) if s else {}
+        if locator.get("kind") != "scanned-section":
+            return None
+        return locator["physical_pages"]
 
     def cached(self, pub, logical):
         m = self.runtime.manifest(pub)
@@ -342,9 +416,7 @@ class Library:
     def image_metadata(self, db, pub, book, im):
         context = None
         # Older immutable publications remain readable without this additive table.
-        if db.execute(
-            "select 1 from sqlite_master where type='table' and name='image_context'"
-        ).fetchone():
+        if has_table(db, "image_context"):
             row = db.execute(
                 "select title,section_id from image_context where image_id=?",
                 (im["id"],),

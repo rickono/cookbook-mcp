@@ -177,6 +177,13 @@ Publication quality checks replay the retained evidence and verify text, citatio
 and search consistency. Use the existing local publication command afterward;
 recording approval does not publish or activate anything.
 
+Registered production scanned candidates retain their immutable candidate files,
+correction ledger, labels and transcription summary. Finalization verifies their
+exact import alongside the separate reviewed-content projection. On corrected
+pages, the retained transcription is marked as superseded and removed from search;
+its original-page citation remains available. Unchanged pages keep their existing
+reading behavior. A cached manifest never bypasses the live withdrawal check.
+
 Search/read responses now include `eligibility`. Existing native and legacy OCR
 content keeps its previous reading behavior and provenance but gains no implied
 complete-content approval. Opening another candidate leaves immutable published

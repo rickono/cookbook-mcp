@@ -202,3 +202,46 @@ A fallback run is a separate config (`pipeline-<model>-x3-fb-<model2>-a4`) with
 its own work dir, so it never mixes with plain runs. Grade a new reader
 without a fallback, so that the pages it loses to filters stay visible. Add the
 fallback only for a production run.
+
+## Production runs
+
+`production.py` runs the production config over any book registered with the
+guarded helper (`$COOKBOOK_DATA/batches/pdf-library-18-20261014/manifest.json`),
+covering pages 1..N rather than the frozen benchmark page list. It never reads
+or writes EXP, the benchmark work dirs or `baseline.json`. Its output goes to
+`$COOKBOOK_DATA/production/transcription/<config>/`.
+
+- `production.py run BOOK... | --all` refuses to start unless
+  `ocr_sandbox.py doctor` passes. It renders page images through the helper,
+  20 pages per job, and checks them against the registered source hash. Then it
+  runs the frozen pipeline page by page. A rerun resumes: finished pages are
+  never paid for twice. A page whose page read fails is not cached as done.
+  Its calls go to `work/failures/` so that their cost is counted, and the next
+  pass retries it.
+- A page is **blank** only with evidence: two passes in which every page read
+  came back empty. Any other page without text is **failed**.
+- `production.py assemble BOOK...` runs sectioning and assembler v4 into
+  `books/<b>/assembly/`. It then writes the book's `scanned-candidate.v1` to
+  `books/<b>/candidate/` (`candidate.py`). The candidate holds:
+  - `candidate.json`, with its freeze identity: reader samples, fallback,
+    prompt and code hashes, and coverage;
+  - one row per physical page in `pages.jsonl`;
+  - `sections.jsonl`;
+  - `quantity-review.jsonl`;
+  - `unresolved.jsonl`, where each item has a code, a crop box and a review
+    link;
+  - `vote-corrections.jsonl`.
+
+  The command refuses a book that still has failed pages unless you pass
+  `--allow-missing`. With `--offline`, reassembly makes no model calls and
+  reproduces the same bytes.
+- `production.py seed BOOK... [--from WORK]` copies books that another work dir
+  already read with the production config into the production work area, so they
+  are not paid for twice. By default it copies from the benchmark cell. It copies
+  their page records, label caches and failure sidecars, and their page images from
+  the frozen benchmark inputs. It refuses a work dir read by another reader config,
+  and page records read from other page images. It never overwrites production work
+  and changes nothing in the source; the manifest records each seed. Then
+  `assemble --offline` writes the candidates without model calls.
+- `production.py status [BOOK...]` reports, for each book, the pages
+  transcribed, blank, failed and pending, and the list-price cost so far.

@@ -334,11 +334,13 @@ def image_meta(book, page):
     raise KeyError(page)
 
 
-def run_page(out, book, page):
+def run_page(out, book, page, meta=None):
+    """meta: the page image record; by default the frozen benchmark's (production passes the
+    guarded helper's render)."""
     dest = out / "pages" / f"b{book}-p{page:03d}.json"
     if dest.exists():
         return json.loads(dest.read_text())
-    meta = image_meta(book, page)
+    meta = meta or image_meta(book, page)
     t0 = time.time()
     rec = {
         "book": book,

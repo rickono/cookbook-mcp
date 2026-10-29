@@ -9,7 +9,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from .ocr import POLICY, ReviewRequired, effective, load_record
-from .storage import IntegrityError, atomic_write, canonical, digest_file
+from .storage import (
+    IntegrityError,
+    atomic_write,
+    canonical,
+    check_bytes,
+    digest_file,
+    has_table,
+    source_id_for,
+)
 
 QUALITY_PATH = "quality/ocr-review.json"
 
@@ -200,6 +208,274 @@ def check_publish_quality(manifest, inputs):
             raise IntegrityError("unmatched OCR report rows")
         if not forced_sources.issubset(sources):
             raise IntegrityError("forced OCR source missing from index")
+        check_transcription(manifest, inputs, db)
+
+
+def _inventory_bytes(files_by_path, inputs, logical, what):
+    """A backed-up inventory file's bytes, checked against its manifest entry."""
+    e = files_by_path.get(logical)
+    if e is None or logical not in inputs:
+        raise ReviewRequired(f"missing {what}")
+    return check_bytes(
+        inputs[logical].read_bytes(), e.sha256, e.size, f"{what} changed"
+    )
+
+
+def _stored_ledger(files_by_path, inputs, sha):
+    """The correction ledger backed up beside a scanned candidate (possibly empty)."""
+    from . import ledger
+    from .scanned import INVENTORY
+
+    logical = f"{INVENTORY}/{sha}/{ledger.FILE}"
+    return ledger.parse(
+        _inventory_bytes(files_by_path, inputs, logical, "scanned correction ledger")
+    )
+
+
+def _check_bindings(db, rows, item, source_id):
+    """Every stored correction names this source; every applied one sits on its page.
+
+    The summary's applied ids must be ledger rows whose page is in the source, and every
+    unit recording the id must come from that page. The page unit records it, unless the
+    quote was found only in the cited section's text from that page: then the cited
+    section is the only unit that does.
+    """
+    by_id = {r["id"]: r for r in rows}
+    for r in rows:
+        if r["source_id"] != source_id or r["source_sha256"] != item["source_sha256"]:
+            raise IntegrityError(f"correction {r['id']} does not bind to its source")
+    corrections = item.get("corrections")
+    applied = corrections.get("applied") if isinstance(corrections, dict) else None
+    if not isinstance(applied, list):
+        raise IntegrityError("transcription summary mismatch")
+    recorded = {}
+    for unit_id, locator, value in db.execute(
+        "select s.id,s.locator,u.corrections from transcription_units u "
+        "join sections s on s.id=u.section_id where u.source_id=?",
+        (source_id,),
+    ):
+        locator = json.loads(locator)
+        pages = locator.get("physical_pages") or [locator.get("physical_page")]
+        for c in json.loads(value):
+            recorded.setdefault(c.get("id"), []).append(
+                (unit_id, locator["kind"], pages)
+            )
+    for cid in applied:
+        if cid not in by_id:
+            raise IntegrityError(
+                f"applied correction {cid} is not in the stored ledger"
+            )
+        page, cited = by_id[cid]["physical_page"], by_id[cid]["section_id"]
+        units = recorded.get(cid, [])
+        if (
+            not isinstance(item.get("pages_total"), int)
+            or page > item["pages_total"]
+            or not units
+            or any(page not in pages for _, _, pages in units)
+            or (
+                ("page", [page]) not in [(kind, pages) for _, kind, pages in units]
+                and {unit for unit, _, _ in units} != {cited}
+            )
+        ):
+            raise IntegrityError(f"correction {cid} does not bind to its page")
+
+
+def _check_index(db, source, item, result, *, superseded_pages=(), marker=None):
+    """The scanned index rows of one source equal a fresh import of its candidate: its
+    stored summary, sections, TOC, search rows and transcription labels."""
+    source_id = source["id"]
+    stored = db.execute(
+        "select summary from transcription_sources where source_id=?", (source_id,)
+    ).fetchone()
+    units = []
+    for original in result["units"]:
+        unit = {**original, "locator": dict(original["locator"])}
+        pages = unit["locator"].get(
+            "physical_pages", [unit["locator"].get("physical_page")]
+        )
+        if set(superseded_pages).intersection(pages):
+            unit["locator"]["superseded_transcription"] = marker
+            unit["searchable"] = False
+        units.append(unit)
+    indexed = [
+        (
+            r["id"],
+            r["ordinal"],
+            r["title"],
+            r["text"],
+            json.loads(r["locator"]),
+            r["provenance"],
+            r["kind"],
+            json.loads(r["images"]),
+        )
+        for r in db.execute(
+            "select * from sections where source_id=? and provenance!='scanned-content-v1' order by ordinal",
+            (source_id,),
+        )
+    ]
+    expected = [
+        (
+            u["id"],
+            n,
+            u["title"],
+            u["text"],
+            u["locator"],
+            u["provenance"],
+            u["kind"],
+            u["images"],
+        )
+        for n, u in enumerate(units)
+    ]
+    searched = sorted(
+        tuple(r)
+        for r in db.execute(
+            "select section_id,title,text from search where source_id=? and section_id in "
+            "(select id from sections where provenance!='scanned-content-v1')",
+            (source_id,),
+        )
+    )
+    labels = {
+        r["section_id"]: (
+            json.loads(r["label"]),
+            json.loads(r["check_regions"]),
+            json.loads(r["corrections"]),
+        )
+        for r in db.execute(
+            "select * from transcription_units where source_id=?", (source_id,)
+        )
+    }
+    if (
+        stored is None
+        or json.loads(stored[0]) != item
+        or indexed != expected
+        or json.loads(source["toc"]) != result["toc"]
+        or searched
+        != sorted((u["id"], u["title"], u["text"]) for u in units if u["searchable"])
+        or labels
+        != {
+            u["id"]: (
+                u["transcription"]["label"],
+                u["transcription"]["check_regions"],
+                u["transcription"]["corrections"],
+            )
+            for u in units
+        }
+    ):
+        raise IntegrityError("scanned index does not match the candidate")
+
+
+def check_transcription(manifest, inputs, db):
+    """Transcription text is publishable only as the exact import of a backed-up candidate.
+
+    Every source with transcription-provenance rows must be listed in the transcription
+    summary, and its index rows, search rows, labels and TOC must equal a fresh import of
+    the candidate files and the correction ledger in the inventory.
+    """
+    from .scanned import (
+        CANDIDATE,
+        FILES,
+        INVENTORY,
+        PROVENANCE,
+        SUMMARY_PATH,
+        SUMMARY_VERSION,
+        import_candidate,
+    )
+
+    files_by_path = {e.path: e for e in manifest.files}
+    transcribed = {
+        r[0]
+        for r in db.execute(
+            "select distinct source_id from sections where provenance=?", (PROVENANCE,)
+        )
+    }
+    entry = files_by_path.get(SUMMARY_PATH)
+    if entry is None and SUMMARY_PATH not in inputs:
+        if transcribed:
+            raise ReviewRequired("transcription text requires a transcription summary")
+        return
+    if entry is None or SUMMARY_PATH not in inputs:
+        raise ReviewRequired("missing transcription summary")
+    if digest_file(inputs[SUMMARY_PATH]) != (entry.sha256, entry.size):
+        raise IntegrityError("transcription summary changed")
+    summary = json.loads(inputs[SUMMARY_PATH].read_bytes())
+    if (
+        not isinstance(summary, dict)
+        or set(summary) != {"version", "sources"}
+        or summary["version"] != SUMMARY_VERSION
+        or not isinstance(summary["sources"], list)
+        or not all(isinstance(i, dict) for i in summary["sources"])
+    ):
+        raise IntegrityError("transcription summary mismatch")
+    items = {i.get("source_id"): i for i in summary["sources"]}
+    if len(items) != len(summary["sources"]):
+        raise IntegrityError("transcription summary mismatch")
+    if set(items) != transcribed:
+        raise ReviewRequired(
+            "transcription summary does not cover the transcription text"
+        )
+    if not (
+        has_table(db, "transcription_sources") and has_table(db, "transcription_units")
+    ):
+        raise IntegrityError("scanned index lacks transcription tables")
+    labelled = {
+        r[0]
+        for q in ("transcription_sources", "transcription_units")
+        for r in db.execute(f"select distinct source_id from {q}")
+    }
+    if not labelled.issubset(items):
+        raise IntegrityError("scanned index labels an unsummarised source")
+    for source_id, item in items.items():
+        sha = item.get("source_sha256")
+        row = db.execute("select * from sources where id=?", (source_id,)).fetchone()
+        if (
+            row is None
+            or row["format"] != "PDF"
+            or source_id != source_id_for("PDF", sha)
+            or row["sha256"] != sha
+        ):
+            raise IntegrityError("scanned source mismatch")
+        original = files_by_path.get(row["original_path"])
+        if original is None or original.sha256 != sha:
+            raise IntegrityError("source digest mismatch")
+        files = {
+            name: _inventory_bytes(
+                files_by_path, inputs, f"{INVENTORY}/{sha}/{name}", "scanned candidate"
+            )
+            for name in (CANDIDATE, *FILES)
+        }
+        if hashlib.sha256(files[CANDIDATE]).hexdigest() != item.get("candidate_sha256"):
+            raise IntegrityError("scanned candidate changed")
+        rows = _stored_ledger(files_by_path, inputs, sha)
+        _check_bindings(db, rows, item, source_id)
+        result = import_candidate(
+            files,
+            source_id=source_id,
+            source_sha256=sha,
+            physical_pages=item.get("pages_total"),
+            ledger=rows,
+        )
+        # The stored ledger re-derives every applied, stale and ambiguous outcome.
+        if item != result["summary"]:
+            raise IntegrityError("transcription summary mismatch")
+        superseded_pages, marker = set(), None
+        review_path = inputs.get("quality/content-review.json")
+        if review_path is not None:
+            from .transcription_review import ReviewStore
+
+            candidate = ReviewStore(review_path).export()["candidates"][-1]
+            if candidate["snapshot"]["edition"]["source_sha256"] == sha:
+                superseded_pages = {
+                    line["physical_page"]
+                    for line in candidate["view"]["lines"]
+                    if line["text"] != line["raw_text"]
+                }
+                marker = {
+                    "path": "quality/content-review.json",
+                    "candidate_id": candidate["id"],
+                }
+        _check_index(
+            db, row, item, result, superseded_pages=superseded_pages, marker=marker
+        )
 
 
 def finalize(build: Path, cache: Path, output: Path, *, transcription_review=None):

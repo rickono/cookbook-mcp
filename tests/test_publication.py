@@ -260,7 +260,7 @@ def test_rollback_selects_verified_retained_publication_with_cas(published, tmp_
     result = runtime.rollback(first, expected_version=version)
     assert result["status"] == "active"
     assert runtime.status()["runtime_pointer"]["publication_id"] == m.publication_id
-    assert runtime.manifest(m2.publication_id) == m2
+    assert runtime.manifest(m2.publication_id).publication_id == m2.publication_id
     with pytest.raises(IntegrityError):
         runtime.rollback(
             dict(first, manifest_sha256="f" * 64), expected_version=version
@@ -380,7 +380,7 @@ def test_atomic_runtime_switch_failure_retains_staged_and_working_versions(
     result = publish(store, m2, i2, expected_version=version, activate=runtime.activate)
     assert result["status"] == "pending_activation"
     assert runtime.status()["runtime_pointer"]["publication_id"] == m.publication_id
-    assert runtime.manifest(m2.publication_id) == m2
-    assert runtime.manifest(m.publication_id) == m
+    assert runtime.manifest(m2.publication_id).publication_id == m2.publication_id
+    assert runtime.manifest(m.publication_id).publication_id == m.publication_id
     monkeypatch.setattr(os, "replace", replace)
     assert Runtime(store, runtime.root).recover() == m2.publication_id

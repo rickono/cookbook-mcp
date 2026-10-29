@@ -1,14 +1,38 @@
 """Build an index from an explicitly approved, already verified snapshot."""
 
 from __future__ import annotations
-from datetime import datetime, timezone
+
 import json
-from pathlib import Path
 import sqlite3
 import uuid
-from .extract import VERSION, epub, paged, ident
+from datetime import UTC, datetime
+from pathlib import Path
+
+from .extract import VERSION, epub, ident, paged
+from .ledger import FILE as LEDGER_FILE
+from .ledger import check as check_ledger
+from .ledger import dump as dump_ledger
 from .publication import Entry, Manifest
-from .storage import IntegrityError, atomic_write, canonical, digest_file
+from .scanned import (
+    BUILD_REPORT,
+    INVENTORY,
+    SUMMARY_PATH,
+    SUMMARY_VERSION,
+    build_report,
+    correction_counts,
+    import_candidate,
+    read_candidate,
+)
+from .storage import (
+    IntegrityError,
+    atomic_write,
+    canonical,
+    digest_file,
+    source_id_for,
+)
+
+BUILD_INPUTS = "quality/build-inputs.json"
+BUILD_INPUTS_VERSION = "build-inputs.v1"
 
 SCHEMA = """
 CREATE TABLE info(publication_id TEXT NOT NULL, extraction_version TEXT NOT NULL);
@@ -18,6 +42,8 @@ CREATE TABLE sections(id TEXT PRIMARY KEY, source_id TEXT, ordinal INTEGER, titl
 CREATE INDEX sections_source ON sections(source_id,ordinal);
 CREATE TABLE images(id TEXT PRIMARY KEY, source_id TEXT, asset TEXT, document TEXT, caption TEXT);
 CREATE TABLE image_context(image_id TEXT PRIMARY KEY, title TEXT, section_id TEXT);
+CREATE TABLE transcription_sources(source_id TEXT PRIMARY KEY, summary TEXT);
+CREATE TABLE transcription_units(section_id TEXT PRIMARY KEY, source_id TEXT, label TEXT, check_regions TEXT, corrections TEXT);
 CREATE VIRTUAL TABLE search USING fts5(section_id UNINDEXED, source_id UNINDEXED, title, text, tokenize='unicode61 remove_diacritics 2');
 """
 
@@ -49,10 +75,24 @@ def add_content(db, source, fmt, sha, original, sections, images, toc):
                 json.dumps(s["images"]),
             ),
         )
-        db.execute(
-            "insert into search values (?,?,?,?)",
-            (s["id"], source, s["title"], s["text"]),
-        )
+        # Scanned page units covered by a section stay readable but are not search hits.
+        if s.get("searchable", True):
+            db.execute(
+                "insert into search values (?,?,?,?)",
+                (s["id"], source, s["title"], s["text"]),
+            )
+        if "transcription" in s:
+            t = s["transcription"]
+            db.execute(
+                "insert into transcription_units values (?,?,?,?,?)",
+                (
+                    s["id"],
+                    source,
+                    json.dumps(t["label"]),
+                    json.dumps(t["check_regions"]),
+                    json.dumps(t["corrections"]),
+                ),
+            )
     for im in images:
         db.execute(
             "insert into images values (?,?,?,?,?)",
@@ -84,10 +124,24 @@ def build_snapshot(
     progress=print,
     *,
     force_ocr_ids=(),
+    scanned=None,
+    ledger=None,
 ):
+    """Build a new publication directory.
+
+    A PDF is indexed from its registered scanned candidate (``scanned`` maps a source
+    sha256 to ``{"physical_pages", "candidate"}``, see scanned.read_registry), with the
+    rows of the correction ``ledger`` (cookbook.ledger) for its digest applied; each
+    source's rows are backed up beside its candidate and the outcomes are counted in
+    ``build-report.json``, which also holds the owner queue of ambiguous corrections. A
+    PDF without a candidate is refused unless it is named in ``force_ocr_ids``; native
+    page OCR still passes the OCR admission check.
+    """
     if output.exists():
         raise IntegrityError("build directory must be new")
     force_ocr_ids = set(force_ocr_ids)
+    scanned = scanned or {}
+    ledger = check_ledger(ledger or [])
     if not force_ocr_ids.issubset(approved_ids):
         raise IntegrityError("forced OCR books must be in the approved selection")
     # POC backs up only approved record directories plus catalog metadata; full-library command deferred.
@@ -136,7 +190,36 @@ def build_snapshot(
         if fmt not in ("PDF", "DJVU"):
             raise IntegrityError("forced OCR requires a PDF or DjVu source")
         rel = r["path"] + "/" + name + "." + fmt.lower()
-        forced_sources.add(fmt.lower() + ":" + proof_files[rel]["sha256"])
+        forced_sources.add(source_id_for(fmt, proof_files[rel]["sha256"]))
+    imported = {}
+    for r in records:
+        fmt, name = r["selected_format"]
+        if fmt != "PDF":
+            continue
+        sha = proof_files[r["path"] + "/" + name + ".pdf"]["sha256"]
+        source = source_id_for("PDF", sha)
+        if sha not in scanned:
+            if r["id"] not in force_ocr_ids:
+                raise IntegrityError("PDF book requires a registered scanned candidate")
+            continue
+        if r["id"] in force_ocr_ids:
+            raise IntegrityError(
+                "PDF book has both a registered scanned candidate and forced OCR"
+            )
+        if source not in imported:
+            files = read_candidate(scanned[sha]["candidate"])
+            imported[source] = import_candidate(
+                files,
+                source_id=source,
+                source_sha256=sha,
+                physical_pages=scanned[sha]["physical_pages"],
+                ledger=ledger,
+            )
+            imported[source]["files"] = files | {
+                LEDGER_FILE: dump_ledger(imported[source]["ledger"])
+            }
+            imported[source]["calibre_ids"] = []
+        imported[source]["calibre_ids"].append(r["id"])
     output.mkdir(parents=True, mode=0o700)
     (output / "assets").mkdir(mode=0o700)
     pub = uuid.uuid4().hex
@@ -176,7 +259,7 @@ def build_snapshot(
         rel = r["path"] + "/" + name + "." + fmt.lower()
         p = snapshot / rel
         sha, size = digest_file(p)
-        source = fmt.lower() + ":" + sha
+        source = source_id_for(fmt, sha)
         dest.execute(
             "insert into books values (?,?,?,?,?,?)",
             (
@@ -193,6 +276,17 @@ def build_snapshot(
         progress({"event": "extract_start", "calibre_id": r["id"], "format": fmt})
         if fmt == "EPUB":
             sections, images, toc = epub(p, source, emit_asset)
+        elif source in imported:
+            candidate = imported[source]
+            sections, images, toc = candidate["units"], [], candidate["toc"]
+            for file_name, data in candidate["files"].items():
+                copy = output / "scanned" / sha / file_name
+                atomic_write(copy, data)
+                inputs[f"{INVENTORY}/{sha}/{file_name}"] = copy
+            dest.execute(
+                "insert into transcription_sources values (?,?)",
+                (source, json.dumps(candidate["summary"])),
+            )
         else:
             sections, images, toc = paged(
                 p,
@@ -228,6 +322,8 @@ def build_snapshot(
                 ),
                 "ocr_mode": "all_pages"
                 if source in forced_sources
+                else "scanned_candidate"
+                if source in imported
                 else "low_text_pages"
                 if fmt != "EPUB"
                 else "not_applicable",
@@ -236,17 +332,54 @@ def build_snapshot(
                 "unresolved_toc": sum(t.get("section_id") is None for t in toc),
             }
         )
+        if source in imported:
+            stats[-1]["corrections"] = correction_counts(imported[source]["summary"])
         dest.commit()
         progress({"event": "extract_done", **stats[-1]})
     db.close()
     dest.execute("insert into search(search) values('optimize')")
     dest.commit()
     dest.close()
-    from .quality import make_report, QUALITY_PATH
+    from .quality import QUALITY_PATH, make_report
 
     report = make_report(pub, quality_items, forced_ocr_sources=forced_sources)
     atomic_write(output / "ocr-review.json", canonical(report))
     inputs[QUALITY_PATH] = output / "ocr-review.json"
+    if imported:
+        summary = {
+            "version": SUMMARY_VERSION,
+            "sources": [imported[s]["summary"] for s in sorted(imported)],
+        }
+        atomic_write(output / "transcription-summary.json", canonical(summary))
+        inputs[SUMMARY_PATH] = output / "transcription-summary.json"
+        atomic_write(
+            output / BUILD_REPORT,
+            canonical(build_report(imported.values())),
+        )
+    # What a refresh needs to rebuild this publication with a new ledger: the same
+    # snapshot (by its proof), approved selection, OCR choices and candidate set.
+    record = {
+        "version": BUILD_INPUTS_VERSION,
+        "snapshot": {
+            "path": str(snapshot),
+            "proof_sha256": digest_file(snapshot.parent / "snapshot-manifest.json")[0],
+        },
+        "ocr_cache": str(Path(cache).resolve()),
+        "approved_ids": list(approved_ids),
+        "force_ocr_ids": sorted(force_ocr_ids),
+        "scanned": [
+            {
+                "source_sha256": imported[s]["summary"]["source_sha256"],
+                "physical_pages": scanned[imported[s]["summary"]["source_sha256"]][
+                    "physical_pages"
+                ],
+                "candidate_sha256": imported[s]["candidate_sha256"],
+            }
+            for s in sorted(imported)
+        ],
+    }
+    atomic_write(output / "build-inputs.json", canonical(record))
+    inputs[BUILD_INPUTS] = output / "build-inputs.json"
     inputs["runtime/index.sqlite"] = index
     entries = []
     for logical, p in sorted(inputs.items()):
@@ -266,7 +399,7 @@ def build_snapshot(
     m = Manifest(
         publication_id=pub,
         locator_version="epub-spine-v2",
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
         files=entries,
     )
     atomic_write(output / "manifest.json", canonical(m.model_dump()))

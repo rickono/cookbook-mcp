@@ -92,9 +92,7 @@ def test_blind_majority_corrects(tmp_path):
         "rejected": 0,
         "owner_queue": 0,
     }
-    [c] = [
-        json.loads(x) for x in (tmp_path / "corrections.jsonl").read_text().splitlines()
-    ]
+    [c] = [json.loads(x) for x in (tmp_path / "ledger.jsonl").read_text().splitlines()]
     assert (c["from_text"], c["to_text"], c["state"]) == (
         "2 tsp salt",
         "2 tbsp salt",
@@ -104,6 +102,39 @@ def test_blind_majority_corrects(tmp_path):
         "kind": "agent",
         "id": "blind-reread:claude:claude-haiku-5-5 x3",
     }
+
+
+def decided(tmp_path, name, at, **report):
+    d, _ = run(tmp_path, ["2 tbsp salt"] * 3, report=REPORT | report)
+    d["decided_at"] = at
+    (tmp_path / "decisions").mkdir(exist_ok=True)
+    (tmp_path / "decisions" / f"{name}.json").write_text(json.dumps(d))
+    return d
+
+
+def test_ledger_is_in_decision_order_and_binds_to_source_and_page(tmp_path):
+    from cookbook import ledger
+
+    # File names sort against decision time; the ledger must not follow them.
+    decided(tmp_path, "a", "2026-10-20T10:00:02Z", report_id="1" * 64, physical_page=13)
+    decided(tmp_path, "b", "2026-10-20T10:00:01Z", report_id="2" * 64)
+    # The same correction, reported again against a later publication: kept once, earliest.
+    decided(
+        tmp_path, "c", "2026-10-20T10:00:03Z", report_id="3" * 64, publication_id="new"
+    )
+    assert triage.rebuild(tmp_path)["correction"] == 3
+    rows = ledger.read(tmp_path / "ledger.jsonl")
+    assert [(r["id"], r["decided_at"]) for r in rows] == [
+        ("2" * 64, "2026-10-20T10:00:01Z"),
+        ("1" * 64, "2026-10-20T10:00:02Z"),
+    ]
+    assert [(r["source_sha256"], r["physical_page"]) for r in rows] == [
+        ("b" * 64, 12),
+        ("b" * 64, 13),
+    ]
+    assert rows[0]["publication_id"] == "pub"
+    # The row id is the report id; the row does not repeat it.
+    assert "report_id" not in rows[0]
 
 
 def test_blind_majority_rejects(tmp_path):
@@ -334,3 +365,43 @@ def test_terminal_refusal_follows_source_alias_and_restart(tmp_path):
     d, seen = run(tmp_path, [], report=replacement)
     assert d["review_status"] == "terminal_unavailable"
     assert seen == []
+
+
+def test_refresh_triage_shares_recovery_budget_across_output_runs(tmp_path):
+    from cookbook.reports import VERSION, report_id
+    from cookbook.storage import LocalStore
+
+    report = {**REPORT, "version": VERSION, "created_at": "2026-10-28T00:00:00Z"}
+    report["report_id"] = report_id(report)
+    reports = LocalStore(tmp_path / "reports")
+    reports.put_bytes("reports/pub/report.json", json.dumps(report).encode())
+    path = tmp_path / "shared-recovery.sqlite3"
+    crops = []
+
+    def crop(*args):
+        crops.append(True)
+        return {"image": "synthetic", "sha256": "c" * 64}
+
+    for n in range(4):
+        out = tmp_path / f"run-{n}"
+        triage.run(
+            reports,
+            out,
+            admission=lambda: None,
+            books=lambda: {"b" * 64: 18},
+            crop=crop,
+            call=lambda *args: (None, {"errors": ["timeout 300s"]}),
+            ledger=RecoveryLedger(path),
+            actor={"kind": "agent", "id": f"worker-{n}"},
+            log=lambda line: None,
+        )
+    assert len(crops) == 3
+    decision = json.loads(
+        (out / "decisions" / f"{report['report_id']}.json").read_text()
+    )
+    assert decision["review_status"] == "budget_exhausted"
+    assert {a["actor"]["id"] for a in decision["recovery"]["attempts"]} == {
+        "worker-0",
+        "worker-1",
+        "worker-2",
+    }

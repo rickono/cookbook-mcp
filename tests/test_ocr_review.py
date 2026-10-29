@@ -1,24 +1,26 @@
 import json
-from pathlib import Path
 import sqlite3
+from pathlib import Path
+
 import pytest
 from PIL import Image
-from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
-from cookbook import ocr
-from cookbook.extract import ocr_page
-from cookbook.build import build_snapshot
-from cookbook.publication import publish
-from cookbook.quality import read_report, finalize
-from cookbook.storage import IntegrityError, atomic_write, canonical, digest_file
+from reportlab.pdfgen import canvas
 from test_extract import make_pdf
+
+from cookbook import ocr
+from cookbook.build import build_snapshot
+from cookbook.extract import ocr_page
+from cookbook.publication import publish
+from cookbook.quality import finalize, read_report
+from cookbook.storage import IntegrityError, atomic_write, canonical, digest_file
 
 
 def test_forced_ocr_replaces_bad_embedded_text_and_preserves_empty_pages(
     tmp_path, monkeypatch
 ):
-    from cookbook.extract import paged
     from cookbook import extract
+    from cookbook.extract import paged
 
     image = make_pdf(tmp_path / "image-source.pdf")
     pdf = tmp_path / "bad-text.pdf"
@@ -55,8 +57,8 @@ def test_forced_ocr_replaces_bad_embedded_text_and_preserves_empty_pages(
 def test_forced_source_policy_survives_finalization_and_blocks_missing_assessment(
     tmp_path, monkeypatch
 ):
-    from cookbook.quality import check_publish_quality, QUALITY_PATH
     from cookbook.publication import Manifest
+    from cookbook.quality import QUALITY_PATH, check_publish_quality
 
     monkeypatch.setattr(ocr, "assess", lambda *args, **kwargs: [])
     snapshot = snapshot_fixture(tmp_path)
@@ -184,15 +186,26 @@ def test_pending_review_blocks_publish_and_correction_finalizes_new_version(
     tmp_path, published, monkeypatch
 ):
     _, _, store, runtime, lib, _ = published
+    # Only the scanned recipe page (page 2) needs review; forced OCR reads every page.
     monkeypatch.setattr(
         ocr,
         "assess",
-        lambda result, **kw: [] if kw.get("blank") else ["uncertain_quantity"],
+        lambda result, **kw: (
+            ["uncertain_quantity"]
+            if not kw.get("blank") and "teaspoon" in result["text"].casefold()
+            else []
+        ),
     )
     cache = tmp_path / "ocr-cache"
     build = tmp_path / "build-review"
+    # Native page OCR for a PDF without a scanned candidate needs forced OCR.
     m, inputs, _ = build_snapshot(
-        snapshot_fixture(tmp_path), [1], build, cache, progress=lambda x: None
+        snapshot_fixture(tmp_path),
+        [1],
+        build,
+        cache,
+        progress=lambda x: None,
+        force_ocr_ids=[1],
     )
     report = read_report(build)
     assert len(report["pending_ids"]) == 1

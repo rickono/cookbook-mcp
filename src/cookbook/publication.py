@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import tempfile
+import threading
+from collections import OrderedDict
 from pathlib import Path
+from typing import NamedTuple
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -215,6 +219,41 @@ def confirm_activation(pointer, activate):
     }
 
 
+HISTORY = "control/successful.json"
+
+
+def read_build(build: Path):
+    """The manifest and logical inputs a build directory holds (manifest.json, inputs.json)."""
+    m = Manifest.model_validate_json((build / "manifest.json").read_bytes())
+    inputs = {
+        k: Path(v) for k, v in json.loads((build / "inputs.json").read_bytes()).items()
+    }
+    return m, inputs
+
+
+def publish_build(store, build: Path, *, activate, **options):
+    """Publish a build directory against the store's current pointer; caller holds the lock.
+
+    The pointer moves only by compare-and-swap, so a concurrent activation makes this fail
+    with nothing changed. A confirmed activation goes to the front of the successful
+    history (``control/successful.json``), which keeps earlier publications for rollback.
+    """
+    m, inputs = read_build(build)
+    _, version = store.read_version("control/active.json")
+    result = publish(
+        store, m, inputs, expected_version=version, activate=activate, **options
+    )
+    if result["status"] == "active":
+        raw, history_version = store.read_version(HISTORY)
+        history = json.loads(raw) if raw else []
+        pointer = {k: result[k] for k in ("publication_id", "manifest_sha256")}
+        history = [pointer] + [
+            v for v in history if v["publication_id"] != m.publication_id
+        ]
+        store.put_bytes(HISTORY, canonical(history), expected=history_version)
+    return result
+
+
 def restore(store, pointer, destination: Path, *, runtime_only=False):
     m = load_manifest(store, pointer)
     if destination.exists():
@@ -240,10 +279,58 @@ def restore(store, pointer, destination: Path, *, runtime_only=False):
     return m
 
 
+class _RuntimeEntry(NamedTuple):
+    path: str
+    sha256: str
+    size: int
+    role: str
+
+    @property
+    def key(self):
+        return "objects/" + self.sha256
+
+
+class _RuntimeManifest(NamedTuple):
+    """Read-only runtime view; publication construction/serialization stays mutable."""
+
+    schema_version: int
+    locator_version: str
+    publication_id: str
+    created_at: str
+    files: tuple[_RuntimeEntry, ...]
+
+    @classmethod
+    def from_manifest(cls, manifest):
+        return cls(
+            manifest.schema_version,
+            manifest.locator_version,
+            manifest.publication_id,
+            manifest.created_at,
+            tuple(
+                _RuntimeEntry(e.path, e.sha256, e.size, e.role) for e in manifest.files
+            ),
+        )
+
+
+def _fingerprint(stat):
+    return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+
+
 class Runtime:
-    def __init__(self, store, root: Path):
+    def __init__(self, store, root: Path, *, _manifest_capacity=3):
+        if _manifest_capacity < 1:
+            raise ValueError("manifest capacity must be positive")
         self.store, self.root = store, root
+        self._manifest_capacity = _manifest_capacity
+        self._manifests = OrderedDict()
+        # Only metadata lookup/load/eviction uses this lock. It never acquires
+        # the activation lock or spans library queries, downloads or rendering.
+        self._manifest_lock = threading.Lock()
         root.mkdir(parents=True, exist_ok=True, mode=0o700)
+
+    def _invalidate_manifest(self, publication_id):
+        with self._manifest_lock:
+            self._manifests.pop(publication_id, None)
 
     def active(self):
         try:
@@ -281,7 +368,10 @@ class Runtime:
             destination = self.root / "versions" / pointer["publication_id"]
             if not destination.exists():
                 restore(self.store, pointer, destination, runtime_only=True)
-            m = validate_version(pointer, destination)
+            try:
+                m = validate_version(pointer, destination)
+            finally:
+                self._invalidate_manifest(pointer["publication_id"])
             atomic_write(self.root / "active.json", canonical(pointer))
             return m.publication_id
 
@@ -295,6 +385,7 @@ class Runtime:
             if not re.fullmatch("[a-f0-9]{32}", pointer["publication_id"]):
                 raise IntegrityError("invalid cached publication")
             destination = self.root / "versions" / pointer["publication_id"]
+            self._invalidate_manifest(pointer["publication_id"])
             return validate_version(pointer, destination).publication_id
         except Exception:
             active = self.root / "active.json"
@@ -309,6 +400,8 @@ class Runtime:
                     destination.rename(
                         self.root / ("invalid-version-" + uuid.uuid4().hex)
                     )
+            if destination is not None:
+                self._invalidate_manifest(destination.name)
             raise
 
     def recover(self):
@@ -342,10 +435,38 @@ class Runtime:
         if not re.fullmatch("[a-f0-9]{32}", publication_id):
             raise IntegrityError("unavailable publication")
         path = self.root / "versions" / publication_id / "manifest.json"
-        if not path.exists():
-            # Retained version pointers are managed administratively; no arbitrary manifests exposed.
-            raise IntegrityError("unavailable publication")
-        return Manifest.model_validate_json(path.read_bytes())
+        with self._manifest_lock:
+            try:
+                current = _fingerprint(path.stat())
+                cached = self._manifests.get(publication_id)
+                if cached is not None and cached[0] == current:
+                    self._manifests.move_to_end(publication_id)
+                    return cached[1]
+                # A failed reload must not leave a previously valid entry resident.
+                self._manifests.pop(publication_id, None)
+                for _ in range(2):
+                    with path.open("rb") as source:
+                        before = _fingerprint(os.fstat(source.fileno()))
+                        raw = source.read()
+                        after = _fingerprint(os.fstat(source.fileno()))
+                    if before != after or after != _fingerprint(path.stat()):
+                        continue
+                    manifest = Manifest.model_validate_json(raw)
+                    if manifest.publication_id != publication_id:
+                        raise IntegrityError("publication identity mismatch")
+                    immutable = _RuntimeManifest.from_manifest(manifest)
+                    if after != _fingerprint(path.stat()):
+                        continue
+                    self._manifests[publication_id] = (after, immutable)
+                    if len(self._manifests) > self._manifest_capacity:
+                        self._manifests.popitem(last=False)
+                    return immutable
+                raise IntegrityError("publication changed during manifest load")
+            except OSError as error:
+                self._manifests.pop(publication_id, None)
+                # Retained versions are managed administratively; never fetch an
+                # arbitrary manifest or substitute the active publication here.
+                raise IntegrityError("unavailable publication") from error
 
 
 def synthetic_gc_plan(store, retained: list[dict], pending: list[dict]):

@@ -54,6 +54,7 @@ def test_invalid_claims(keys, mint, change):
 
 def test_auth_every_http_operation(published, keys, mint):
     _, _, _, _, lib, _ = published
+    lib.search("salt")  # Warm metadata must never bypass per-request authorization.
     v = JWTVerifier(
         issuer="https://issuer.example/",
         audience="http://127.0.0.1:8765/mcp",
