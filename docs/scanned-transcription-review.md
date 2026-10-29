@@ -60,7 +60,7 @@ No arithmetic or scaling recovers a missing quantity. Source-derived callers
 must run through `scripts/ocr_sandbox.py` after admission and before input reads;
 pure synthetic tests may run locally. Book data and reports stay outside Git.
 
-## Explicit standalone complete-content approval
+## Explicit complete-content approval
 
 Saved scan evidence can now enter an additive administrative path without changing
 legacy OCR decisions or the unapproved EPUB export. `ReviewStore` in
@@ -77,7 +77,7 @@ of these operations:
 - `--decision-file /private/decision.json`: arguments to `ReviewStore.decide`:
   `selection_id`, `action`, `actor` (`kind` and explicit `id`) and `reason`.
   Actions are `apply_draft`, `clear_flag`, `metadata_amendment`, `approve` and
-  `revoke`. Every record has a timestamp, predecessor, exact candidate, source
+  `revoke`, plus `review_portion` for reusable regional findings. Every record has a timestamp, predecessor, exact candidate, source
   snapshot and effective-reading identities, reviewer configuration and policy.
   `relates_to` links superseding or revoking decisions to retained history.
 - `--selection-id ID`: inspect current eligibility, reasons, candidate evidence
@@ -87,20 +87,52 @@ Approval requires explicit human action, `complete: true`, and `evidence` equal
 to `source_evidence(snapshot, selection.line_ids)` for the inspected source.
 Revised candidates require a separate `apply_draft` decision before approval.
 Recording an agent actor does not grant approval authority. Proposed or unresolved
-readings and ambiguous ownership cannot qualify. `required_content` must be empty:
-this path supports a standalone recipe and line-text corrections; quantity and
-membership overlays remain pending until their consistency rules are implemented; dependencies, formulations and variations
-need the subsequent complete-content dependency work. The owner must establish
-standalone completeness rather than infer it from a boundary proposal. Flag
-clearance and metadata amendment do not constitute source comparison.
+readings and ambiguous ownership cannot qualify. Quantity and membership overlays
+remain pending until their consistency rules are implemented. Flag clearance and
+metadata amendment do not constitute source comparison.
+
+Each selection declares its complete ordered `line_ids`, including continuations,
+`kind` (`recipe`, `passage`, or `reference_entry`), and selected `formulation` and
+`variation` when applicable. The reviewer explicitly verifies those boundaries
+and associations; boundary proposals alone do not establish completeness.
+Independent passages, reference entries and optional variations have separate
+selection IDs and separate approval. An optional variation is omitted from the
+base recipe's required dependencies and may remain pending.
+
+Selections may declare `required_content`, for example:
+
+```json
+[{"selection_id": "sauce", "formulation": "standard", "variation": "base", "scope": "whole"}]
+```
+
+A whole use requires eligible complete supporting content. A `partial` use also
+provides explicit ordered `line_ids` within that selection and requires an exact
+human `review_portion` finding with source evidence for those lines. A regional
+finding never approves the entire supporting recipe. Required dependencies of
+that supporting preparation must also qualify. Cycles, missing targets and
+formulation/variation mismatches remain pending. Declare dependencies in the
+candidate selection; the decision's legacy `required_content` argument cannot
+introduce undeclared supporting work.
+
+Decisions retain the exact local source/context, effective reading, membership,
+geometry, reading order, formulation/variation and required-support bindings.
+Each support binding names the qualifying decision and interpretation digest.
+Changing a required portion invalidates its dependents transitively; approving
+the repair alone does not restore them. Review the complete dependent again.
+Unchanged regional evidence remains inspectable and reusable. Unrelated content
+on the same page retains eligibility when its own interpretation is unchanged;
+new page/render/recognition evidence still requires review. Stored decisions are
+revalidated against their original candidate and preceding supporting decisions,
+including on finalization. Earlier candidate-wide approvals remain limited to
+their original exact candidate rather than acquiring broader authority.
 
 Pass `--transcription-review /private/review.json` to `finalize-local`, alongside
 its existing build, cache and new output directory arguments. Original bytes must
 already be backed up in that build with the same source digest. Existing OCR
-quality checks still run. Finalization freezes the review history, adds recipe
+quality checks still run. Finalization freezes the review history, adds content
 sections and backs up `quality/content-review.json` in the immutable manifest.
 Pending sections expose title, status and original-page citations, with empty
-read text and no full-text search row. Only exact approved recipe text enters
+read text and no full-text search row. Only exact approved content text enters
 search and reading. Citation `content_review` references contain candidate and
 decision identifiers and the history artifact path, not correction prose.
 Publication quality checks replay the retained evidence and verify text, citation
@@ -112,7 +144,7 @@ content keeps its previous reading behavior and provenance but gains no implied
 complete-content approval. Opening another candidate leaves immutable published
 versions alone. A revocation in this review store affects later finalization;
 live withdrawal across retained versions is a separate dependency of the parent
-spec, not a property of this standalone slice. The history uses digests and
+spec, not a property of this dependency slice. The history uses digests and
 process locking for identity and consistency, not signatures or an authenticated
 multi-user authorization service.
 

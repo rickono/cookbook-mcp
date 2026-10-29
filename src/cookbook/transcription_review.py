@@ -434,6 +434,94 @@ def render_review_report(snapshot, *, revisions=(), selections=()):
     )
 
 
+def _scope_binding(candidate, scope, line_ids=None):
+    """Bind local source interpretation without unrelated candidate content."""
+    ids = scope["line_ids"] if line_ids is None else line_ids
+    selected = set(ids)
+    lines = {l["line_id"]: l for l in candidate["view"]["lines"]}
+    return _digest(
+        {
+            "edition": candidate["snapshot"]["edition"],
+            "scope": scope
+            if line_ids is None
+            else {
+                "id": scope["id"],
+                "line_ids": ids,
+                "reading_order": [i for i in scope["line_ids"] if i in selected],
+                "formulation": scope.get("formulation"),
+                "variation": scope.get("variation"),
+            },
+            "pages": [
+                {k: v for k, v in p.items() if k != "lines"}
+                for p in candidate["snapshot"]["pages"]
+                if any(l["id"] in selected for l in p["lines"])
+            ],
+            "lines": [
+                {
+                    k: v
+                    for k, v in lines[i].items()
+                    if k not in {"revision_id", "reason"}
+                }
+                for i in ids
+            ],
+            "memberships": {
+                i: {
+                    k: v
+                    for k, v in candidate["view"]["memberships"][i].items()
+                    if k not in {"revision_id", "reason"}
+                }
+                for i in ids
+            },
+            "blocks": [
+                b
+                for b in candidate["snapshot"]["blocks"]
+                if selected.intersection(b["line_ids"])
+            ],
+            "quantities": {
+                cell["id"]: candidate["view"]["quantities"][cell["id"]]
+                for table in candidate["snapshot"]["tables"]
+                for cell in table["cells"]
+                if selected.intersection(cell["line_ids"])
+            },
+        }
+    )
+
+
+def _revoked_decisions(history):
+    revoked = set()
+    prior = []
+    for event in history:
+        if event["action"] == "revoke":
+            if event["relates_to"] is not None:
+                revoked.add(event["relates_to"])
+            else:
+                revoked.update(e["id"] for e in prior if e["scope"] == event["scope"])
+        prior.append(event)
+    return revoked
+
+
+def _support_scopes(candidate, scope):
+    scopes = {s["id"]: s for s in candidate["selections"]}
+    result = []
+    for use in scope.get("required_content", []):
+        if not isinstance(use, dict) or use.get("scope") not in {"whole", "partial"}:
+            raise ValueError("required supporting content needs explicit scope")
+        target = scopes.get(use.get("selection_id"))
+        if target is None or any(
+            use.get(k) != target.get(k) for k in ("formulation", "variation")
+        ):
+            raise ValueError("required supporting content selection mismatch")
+        ids = use.get("line_ids") if use["scope"] == "partial" else None
+        if use["scope"] == "partial" and (
+            not ids
+            or len(set(ids)) != len(ids)
+            or not set(ids) <= set(target["line_ids"])
+        ):
+            raise ValueError("invalid partial supporting content")
+        result.append((use, target, ids))
+    return result
+
+
 class ReviewStore:
     """Persistent administrative decisions over saved evidence, never inference.
 
@@ -496,14 +584,23 @@ class ReviewStore:
                 if (
                     not event["complete"]
                     or event["required_content"]
+                    != (
+                        scope.get("required_content", [])
+                        if scope and "scope_sha256" in event
+                        else []
+                    )
                     or event["actor"]["kind"] != "human"
                     or scope is None
-                    or scope["kind"] != "recipe"
+                    or scope["kind"] not in {"recipe", "passage", "reference_entry"}
                     or scope["state"] == "unresolved"
                     or event["evidence"]
                     != source_evidence(candidate["snapshot"], scope["line_ids"])
                 ):
                     raise ValueError("invalid complete-content approval")
+                if "scope_sha256" in event and event["scope_sha256"] != _scope_binding(
+                    candidate, scope
+                ):
+                    raise ValueError("approval scope mismatch")
                 ids = set(scope["line_ids"])
                 if any(
                     l["state"] in {"proposed", "unresolved"}
@@ -516,11 +613,57 @@ class ReviewStore:
                     for i in ids
                 ):
                     raise ValueError("approval ownership mismatch")
-                if any(
-                    q["state"] in {"proposed", "unresolved"}
-                    for q in candidate["view"]["quantities"].values()
-                ):
-                    raise ValueError("approval covers unresolved quantities")
+                self._validate_portion(
+                    candidate,
+                    scope,
+                    event["actor"],
+                    event["evidence"],
+                    scope["line_ids"],
+                )
+        prior = {**data, "decisions": []}
+        for event in data["decisions"]:
+            candidate = candidates[event["candidate_id"]]
+            scope = next(
+                (s for s in candidate["selections"] if s["id"] == event["scope"]), None
+            )
+            if event["action"] == "review_portion":
+                if candidate["revisions"] and (candidate["id"], event["scope"]) not in {
+                    (e["candidate_id"], e["scope"])
+                    for e in prior["decisions"]
+                    if e["action"] == "apply_draft"
+                }:
+                    raise ValueError("regional review requires prior apply_draft")
+                if scope is None:
+                    raise ValueError("unknown regional scope")
+                ids = [e["line_id"] for e in event["evidence"]]
+                self._validate_portion(
+                    candidate, scope, event["actor"], event["evidence"], ids
+                )
+                if event.get("scope_sha256") != _scope_binding(candidate, scope, ids):
+                    raise ValueError("regional evidence mismatch")
+            if (
+                event["action"] in {"approve", "review_portion"}
+                and "scope_sha256" in event
+            ):
+                bindings = []
+                for use, target, ids in _support_scopes(candidate, scope):
+                    support = self._support_decision(
+                        prior, candidate, target, ids, {scope["id"]}
+                    )
+                    if not support:
+                        raise ValueError(
+                            "approval requires eligible supporting content"
+                        )
+                    bindings.append(
+                        {
+                            **use,
+                            "decision_id": support["id"],
+                            "scope_sha256": _scope_binding(candidate, target, ids),
+                        }
+                    )
+                if bindings != event.get("dependency_bindings"):
+                    raise ValueError("approval dependency mismatch")
+            prior["decisions"].append(event)
         return data
 
     def export(self):
@@ -559,28 +702,123 @@ class ReviewStore:
         if scope is None:
             raise ValueError("unknown selection")
         history = [e for e in data["decisions"] if e["scope"] == selection_id]
-        decisions = [
-            e
-            for e in history
-            if e["candidate_id"] == candidate["id"]
-            and e["action"] in {"approve", "revoke"}
-        ]
-        approval = (
-            decisions[-1]
-            if decisions and decisions[-1]["action"] == "approve"
-            else None
-        )
-        revoked = {e["relates_to"] for e in history if e["action"] == "revoke"}
-        if approval and approval["id"] in revoked:
-            approval = None
+        approval, reasons = self._eligibility(data, candidate, scope, set())
         return {
             "eligible": bool(approval),
-            "reasons": [] if approval else ["exact_complete_content_approval_required"],
+            "reasons": reasons,
             "approval": approval,
             "history": history,
             "candidate": candidate,
             "scope": scope,
         }
+
+    def _validate_portion(self, candidate, scope, actor, evidence, ids):
+        if actor["kind"] != "human":
+            raise ValueError("agent approval authority is not validated")
+        if (
+            not ids
+            or len(ids) != len(set(ids))
+            or not set(ids) <= set(scope["line_ids"])
+        ):
+            raise ValueError("invalid regional source evidence")
+        if list(evidence) != source_evidence(candidate["snapshot"], ids):
+            raise ValueError("exact inspected source evidence required")
+        if any(
+            l["state"] in {"proposed", "unresolved"}
+            for l in candidate["view"]["lines"]
+            if l["line_id"] in ids
+        ):
+            raise ValueError("unresolved regional content")
+        if any(
+            candidate["view"]["memberships"][i]["value"] != [scope["id"]] for i in ids
+        ):
+            raise ValueError("unresolved regional ownership")
+        for revision in candidate["revisions"]:
+            for change in revision["changes"]:
+                if {e["line_id"] for e in change["evidence"]}.intersection(
+                    ids
+                ) and change["kind"] != "line_text":
+                    raise ValueError("unsupported correction scope remains pending")
+        for table in candidate["snapshot"]["tables"]:
+            for cell in table["cells"]:
+                if set(cell["line_ids"]).intersection(ids) and candidate["view"][
+                    "quantities"
+                ][cell["id"]]["state"] in {"proposed", "unresolved"}:
+                    raise ValueError("unresolved regional quantity")
+
+    def _support_decision(self, data, candidate, target, ids, visiting):
+        if ids is None:
+            return self._eligibility(data, candidate, target, visiting)[0]
+        revoked = _revoked_decisions(data["decisions"])
+        findings = [
+            e
+            for e in data["decisions"]
+            if e["scope"] == target["id"]
+            and e["action"] == "review_portion"
+            and e["id"] not in revoked
+            and e.get("scope_sha256") == _scope_binding(candidate, target, ids)
+        ]
+        if not findings or target["id"] in visiting:
+            return None
+        finding = findings[-1]
+        bindings = []
+        try:
+            uses = _support_scopes(candidate, target)
+        except ValueError:
+            return None
+        for use, dependency, portion in uses:
+            support = self._support_decision(
+                data, candidate, dependency, portion, visiting | {target["id"]}
+            )
+            if not support:
+                return None
+            bindings.append(
+                {
+                    **use,
+                    "decision_id": support["id"],
+                    "scope_sha256": _scope_binding(candidate, dependency, portion),
+                }
+            )
+        return finding if bindings == finding.get("dependency_bindings", []) else None
+
+    def _eligibility(self, data, candidate, scope, visiting):
+        if scope["id"] in visiting:
+            return None, ["required_support_cycle"]
+        visiting = visiting | {scope["id"]}
+        history = [e for e in data["decisions"] if e["scope"] == scope["id"]]
+        revoked = _revoked_decisions(history)
+        matches = [
+            e
+            for e in history
+            if e["action"] == "approve"
+            and (
+                e.get("scope_sha256") == _scope_binding(candidate, scope)
+                if "scope_sha256" in e
+                else e["candidate_id"] == candidate["id"]
+            )
+        ]
+        approval = matches[-1] if matches else None
+        if not approval or approval["id"] in revoked:
+            return None, ["exact_complete_content_approval_required"]
+        bindings = []
+        try:
+            uses = _support_scopes(candidate, scope)
+        except ValueError:
+            return None, ["required_support_selection_mismatch"]
+        for use, target, ids in uses:
+            support = self._support_decision(data, candidate, target, ids, visiting)
+            if not support:
+                return None, ["required_support_pending:" + target["id"]]
+            bindings.append(
+                {
+                    **use,
+                    "decision_id": support["id"],
+                    "scope_sha256": _scope_binding(candidate, target, ids),
+                }
+            )
+        if bindings != approval.get("dependency_bindings", []):
+            return None, ["required_support_changed"]
+        return approval, []
 
     def decide(
         self,
@@ -606,6 +844,7 @@ class ReviewStore:
             "approve",
             "revoke",
             "metadata_amendment",
+            "review_portion",
         }:
             raise ValueError("invalid decision action")
         if (
@@ -619,9 +858,37 @@ class ReviewStore:
         with file_lock(self.path.with_suffix(".lock")):
             state = self.inspect(selection_id)
             candidate, scope = state["candidate"], state["scope"]
+            dependency_bindings = []
+            portion_ids = None
+            if action == "review_portion":
+                portion_ids = [e["line_id"] for e in evidence]
+                self._validate_portion(candidate, scope, actor, evidence, portion_ids)
+                if candidate["revisions"] and not any(
+                    e["action"] == "apply_draft"
+                    and e["candidate_id"] == candidate["id"]
+                    for e in state["history"]
+                ):
+                    raise ValueError("apply_draft separately before regional review")
+            if action in {"approve", "review_portion"}:
+                for use, target, ids in _support_scopes(candidate, scope):
+                    support = self._support_decision(
+                        self._load(), candidate, target, ids, {selection_id}
+                    )
+                    if not support:
+                        raise ValueError("required supporting content remains pending")
+                    dependency_bindings.append(
+                        {
+                            **use,
+                            "decision_id": support["id"],
+                            "scope_sha256": _scope_binding(candidate, target, ids),
+                        }
+                    )
             if action == "approve":
                 if any(
                     change["kind"] != "line_text"
+                    and {e["line_id"] for e in change["evidence"]}.intersection(
+                        scope["line_ids"]
+                    )
                     for revision in candidate["revisions"]
                     for change in revision["changes"]
                 ):
@@ -637,7 +904,7 @@ class ReviewStore:
                 if (
                     not complete
                     or required_content
-                    or scope["kind"] != "recipe"
+                    or scope["kind"] not in {"recipe", "passage", "reference_entry"}
                     or scope["state"] == "unresolved"
                 ):
                     raise ValueError(
@@ -654,11 +921,9 @@ class ReviewStore:
                     if l["line_id"] in ids
                 ):
                     raise ValueError("unresolved or proposed content")
-                if any(
-                    q["state"] in {"proposed", "unresolved"}
-                    for q in view["quantities"].values()
-                ):
-                    raise ValueError("unresolved or proposed quantity")
+                self._validate_portion(
+                    candidate, scope, actor, evidence, scope["line_ids"]
+                )
                 if any(view["memberships"][i]["value"] != [selection_id] for i in ids):
                     raise ValueError("unresolved recipe ownership")
             data = self._load()
@@ -669,6 +934,8 @@ class ReviewStore:
                 raise ValueError("unknown related decision")
             event = {
                 "version": "content-decision.v1",
+                "scope_sha256": _scope_binding(candidate, scope, portion_ids),
+                "dependency_bindings": dependency_bindings,
                 "timestamp": datetime.now(UTC).isoformat(),
                 "actor": deepcopy(actor),
                 "action": action,
@@ -678,7 +945,7 @@ class ReviewStore:
                 "effective_text_sha256": _digest(candidate["view"]),
                 "evidence": deepcopy(list(evidence)),
                 "complete": complete,
-                "required_content": list(required_content),
+                "required_content": deepcopy(scope.get("required_content", [])),
                 "reason": reason,
                 "reviewer_config": reviewer_config,
                 "policy": policy,
@@ -716,6 +983,10 @@ class ReviewStore:
                     "path": "quality/content-review.json",
                     "candidate_id": candidate["id"],
                     "decision_id": approval["id"] if approval else None,
+                    "approval_candidate_id": approval["candidate_id"]
+                    if approval
+                    else None,
+                    "scope_sha256": _scope_binding(candidate, scope),
                     "eligible": state["eligible"],
                     "reasons": state["reasons"],
                 },
@@ -724,6 +995,7 @@ class ReviewStore:
                 {
                     "id": scope["id"],
                     "ordinal": ordinal,
+                    "kind": scope["kind"],
                     "title": selected[0]["text"] or scope["id"],
                     "text": "\n".join(l["text"] for l in selected) if approval else "",
                     "source_sha256": candidate["snapshot"]["edition"]["source_sha256"],
