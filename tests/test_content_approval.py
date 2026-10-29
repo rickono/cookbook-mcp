@@ -156,7 +156,21 @@ def test_review_finalize_publish_search_read_and_citations_preserve_evidence(
     snapshot, selections = candidate()
     snapshot["pages"][0]["lines"][1]["text"] = "2 cups water; 2 cup saffron water"
     snapshot["pages"][0]["lines"][2]["text"] = "2 cups carrots"
-    source, original = scan_build(tmp_path / "build", snapshot)
+    source, original = scan_build(
+        tmp_path / "build",
+        snapshot,
+        pages=[
+            {
+                "id": "page1",
+                "title": "Page 1",
+                "text": "\n".join(l["text"] for l in snapshot["pages"][0]["lines"]),
+                "locator": {"kind": "page", "physical_page": 1},
+                "provenance": "transcription",
+                "kind": "page",
+                "images": [],
+            }
+        ],
+    )
     scope = selections[0]["id"]
     store = ReviewStore(tmp_path / "review.json")
     correction = make_revision(
@@ -279,6 +293,15 @@ def test_review_finalize_publish_search_read_and_citations_preserve_evidence(
     assert (
         "1/2 cup saffron water"
         in lib.read_section(final.publication_id, "book", source, scope)["text"]
+    )
+    page = lib.read_section(final.publication_id, "book", source, "page1")
+    assert page["text"] == ""
+    assert (
+        page["citation"]["locator"]["superseded_transcription"]["path"]
+        == "quality/content-review.json"
+    )
+    assert all(
+        r["citation"]["section_id"] != "page1" for r in lib.search("water")["results"]
     )
     history = json.loads(inputs["quality/content-review.json"].read_bytes())
     assert history["candidates"][0]["snapshot"] == snapshot
@@ -535,7 +558,7 @@ def test_source_reviewed_proposal_needs_separate_draft_application(tmp_path):
         )
 
 
-def test_unsupported_relationship_correction_remains_pending(tmp_path):
+def test_source_reviewed_membership_can_complete_approval(tmp_path):
     snapshot, selections = candidate()
     scope = selections[0]["id"]
     revision = make_revision(
@@ -564,13 +587,139 @@ def test_unsupported_relationship_correction_remains_pending(tmp_path):
         actor={"kind": "human", "id": "owner"},
         reason="Apply ownership review",
     )
-    with pytest.raises(ValueError, match="unsupported correction scope"):
-        store.decide(
-            scope,
+    store.decide(
+        scope,
+        "approve",
+        actor={"kind": "human", "id": "owner"},
+        reason="Complete",
+        complete=True,
+        evidence=source_evidence(snapshot, selections[0]["line_ids"]),
+    )
+    assert store.inspect(scope)["eligible"] is True
+
+
+@pytest.mark.parametrize(
+    "field", ["fts_source", "fts_title", "title", "kind", "ordinal"]
+)
+def test_quality_gate_rejects_changed_projection_metadata(tmp_path, field):
+    import json
+    import sqlite3
+    from pathlib import Path
+
+    from cookbook.quality import check_publish_quality, finalize
+    from cookbook.storage import IntegrityError, digest_file
+
+    snapshot, scopes = candidate()
+    scan_build(tmp_path / "build", snapshot)
+    store = ReviewStore(tmp_path / "review.json")
+    store.save_candidate(snapshot, selections=scopes)
+    scope = scopes[0]["id"]
+    store.decide(
+        scope,
+        "approve",
+        actor={"kind": "human", "id": "owner"},
+        reason="Reviewed",
+        complete=True,
+        evidence=source_evidence(snapshot, scopes[0]["line_ids"]),
+    )
+    out = tmp_path / "final"
+    manifest = finalize(
+        tmp_path / "build", tmp_path / "cache", out, transcription_review=store.path
+    )
+    inputs = {
+        k: Path(v) for k, v in json.loads((out / "inputs.json").read_bytes()).items()
+    }
+    with sqlite3.connect(inputs["runtime/index.sqlite"]) as db:
+        if field.startswith("fts_"):
+            column = {"fts_source": "source_id", "fts_title": "title"}[field]
+            db.execute(
+                f"update search set {column}=? where section_id=?", ("unrelated", scope)
+            )
+        else:
+            db.execute(
+                f"update sections set {field}=? where id=?",
+                (42 if field == "ordinal" else "unrelated", scope),
+            )
+    sha, size = digest_file(inputs["runtime/index.sqlite"])
+    manifest = manifest.model_copy(
+        update={
+            "files": [
+                e.model_copy(update={"sha256": sha, "size": size})
+                if e.path == "runtime/index.sqlite"
+                else e
+                for e in manifest.files
+            ]
+        }
+    )
+    with pytest.raises(IntegrityError, match="content approval"):
+        check_publish_quality(manifest, inputs)
+
+
+@pytest.mark.parametrize("consistent", [True, False])
+def test_quantity_revision_requires_matching_effective_text(tmp_path, consistent):
+    from test_transcription_review import snapshot as table_snapshot
+
+    snapshot = table_snapshot()
+    scopes = [
+        {
+            "id": "recipe",
+            "kind": "recipe",
+            "state": "candidate",
+            "line_ids": ["l0", "l1", "l2"],
+        }
+    ]
+    revision = make_revision(
+        snapshot,
+        [
+            {
+                "kind": "quantity",
+                "target_id": "cell",
+                "before_sha256": target_digest(
+                    snapshot, "quantity", "cell", selections=scopes
+                ),
+                "state": "source_reviewed",
+                "value": "1 cup" if consistent else "9 cups",
+                "reason": "Compared source",
+                "evidence": source_evidence(snapshot, ["l0"]),
+            },
+            {
+                "kind": "line_text",
+                "target_id": "l0",
+                "before_sha256": target_digest(
+                    snapshot, "line_text", "l0", selections=scopes
+                ),
+                "state": "source_reviewed",
+                "value": "1 cup",
+                "reason": "Compared source",
+                "evidence": source_evidence(snapshot, ["l0"]),
+            },
+        ],
+        selections=scopes,
+        reviewer={"kind": "human", "id": "owner"},
+    )
+    store = ReviewStore(tmp_path / "review.json")
+    store.save_candidate(snapshot, selections=scopes, revisions=[revision])
+    store.decide(
+        "recipe", "apply_draft", actor={"kind": "human", "id": "owner"}, reason="Apply"
+    )
+
+    def approve():
+        return store.decide(
+            "recipe",
             "approve",
             actor={"kind": "human", "id": "owner"},
-            reason="Complete",
+            reason="Inspected",
             complete=True,
-            evidence=source_evidence(snapshot, selections[0]["line_ids"]),
+            evidence=source_evidence(snapshot, scopes[0]["line_ids"]),
         )
-    assert store.inspect(scope)["eligible"] is False
+
+    if consistent:
+        approve()
+        assert (
+            ReviewStore(store.path)
+            .publication_sections()[0]["text"]
+            .startswith("1 cup\n")
+        )
+    else:
+        with pytest.raises(ValueError, match="quantity and effective text disagree"):
+            approve()

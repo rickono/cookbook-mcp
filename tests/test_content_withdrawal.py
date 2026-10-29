@@ -14,7 +14,7 @@ from cookbook.storage import LocalStore
 from cookbook.transcription_review import ReviewStore, source_evidence
 
 
-@pytest.mark.parametrize("decision_action", ["confirm_error", "revoke"])
+@pytest.mark.parametrize("decision_action", ["confirm_error", "revoke", "fresh_error"])
 def test_confirmed_error_withdraws_published_content_and_required_dependents(
     tmp_path, keys, mint, monkeypatch, decision_action
 ):
@@ -97,6 +97,11 @@ def test_confirmed_error_withdraws_published_content_and_required_dependents(
     reviews.save_candidate(draft, selections=scopes)
     assert lib.search("Stew")["results"]
     # Administrative action, separate from the read-only content/report interface.
+    if decision_action == "fresh_error":
+        reviews.save_candidate(snapshot, selections=scopes, extraction_run="run-2")
+        accepted_candidate = None
+        approve(reviews, snapshot, scopes, "neighbor")
+        decision_action = "confirm_error"
     event = reviews.decide(
         "sauce",
         decision_action,
@@ -111,7 +116,7 @@ def test_confirmed_error_withdraws_published_content_and_required_dependents(
     record_withdrawal(objects, event)
     assert not ReviewStore(reviews.path).inspect("sauce")["eligible"]
     assert not reviews.inspect("stew")["eligible"]
-    assert reviews.inspect("neighbor")["eligible"]
+    assert reviews.inspect("neighbor", candidate_id=event["candidate_id"])["eligible"]
     assert not lib.search("Sauce")["results"]
     assert (
         lib.read_section(manifest.publication_id, "book", source, "page-3")["text"]
@@ -186,6 +191,8 @@ def test_confirmed_error_withdraws_published_content_and_required_dependents(
         assert not page["isError"]
         assert page["structuredContent"]["citation"]["locator"]["physical_page"] == 3
     # A new approval for the repaired sauce alone cannot restore the stew.
+    if accepted_candidate is None:
+        reviews.save_candidate(draft, selections=scopes, extraction_run="run-2")
     approve(reviews, draft, scopes, "sauce")
     assert not reviews.inspect("stew")["eligible"]
     approve(reviews, draft, scopes, "stew")

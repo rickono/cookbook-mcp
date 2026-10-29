@@ -8,14 +8,32 @@ from .storage import Conflict, IntegrityError, canonical
 KEY = "control/content-withdrawals.json"
 
 
-def affected_decisions(history, candidate, scope, binding):
+def affected_decisions(history, candidate, scope, binding, candidates=()):
     """Freeze exact evidence approvals and their transitive required dependents."""
+    from .transcription_review import _effective_selections, _scope_binding
+
+    def interpretation(c, selection):
+        return _scope_binding(
+            {k: v for k, v in c.items() if k != "extraction_run"}, selection
+        )
+
+    matching = set()
+    for c in candidates:
+        for selection in _effective_selections(c):
+            if selection["id"] == scope["id"] and interpretation(
+                c, selection
+            ) == interpretation(candidate, scope):
+                matching.add(c["id"])
     affected = {
         e["id"]
         for e in history
         if e["action"] in {"approve", "review_portion"}
         and e["scope"] == scope["id"]
-        and (e.get("scope_sha256") == binding or e["candidate_id"] == candidate["id"])
+        and (
+            e.get("scope_sha256") == binding
+            or e["candidate_id"] == candidate["id"]
+            or e["candidate_id"] in matching
+        )
     }
     return dependent_decisions(history, affected)
 
@@ -26,9 +44,14 @@ def revoked_approvals(history, scope, relates_to):
         {
             e["id"]
             for e in history
-            if e["scope"] == scope
-            and e["action"] in {"approve", "review_portion"}
-            and (relates_to is None or e["id"] == relates_to)
+            if e["action"] in {"approve", "review_portion"}
+            and (
+                (e["scope"] == scope and (relates_to is None or e["id"] == relates_to))
+                or (
+                    relates_to is not None
+                    and e.get("workflow_validation_id") == relates_to
+                )
+            )
         },
     )
 
