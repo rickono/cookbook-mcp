@@ -262,7 +262,7 @@ def finalize(build: Path, cache: Path, output: Path, *, transcription_review=Non
                         section["text"],
                         json.dumps(section["locator"]),
                         "scanned-content-v1",
-                        "recipe",
+                        section["kind"],
                         "[]",
                     ),
                 )
