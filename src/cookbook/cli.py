@@ -96,6 +96,14 @@ def _main():
     operation.add_argument("--candidate-file", type=Path)
     operation.add_argument("--decision-file", type=Path)
     operation.add_argument("--selection-id")
+    operation.add_argument(
+        "--withdrawal-id", help="Retry enforcing a saved error decision"
+    )
+    transcription.add_argument(
+        "--withdrawal-store",
+        type=Path,
+        help="Shared local publication object store for immediate withdrawal",
+    )
     a = p.parse_args()
     if a.command == "review-transcription":
         from .transcription_review import ReviewStore
@@ -105,9 +113,29 @@ def _main():
             candidate = json.loads(a.candidate_file.read_bytes())
             result = {"candidate_id": store.save_candidate(**candidate)}
         elif a.decision_file:
-            result = store.decide(**json.loads(a.decision_file.read_bytes()))
+            decision = json.loads(a.decision_file.read_bytes())
+            if decision.get("action") == "confirm_error" and not a.withdrawal_store:
+                p.error(
+                    "confirm_error requires --withdrawal-store; use the serving object store"
+                )
+            if decision.get("action") == "confirm_error":
+                decision["withdrawal_store"] = LocalStore(a.withdrawal_store)
+            result = store.decide(**decision)
+        elif a.withdrawal_id:
+            if not a.withdrawal_store:
+                p.error("--withdrawal-id requires --withdrawal-store")
+            result = next(
+                (e for e in store.export()["decisions"] if e["id"] == a.withdrawal_id),
+                None,
+            )
+            if result is None or result.get("action") != "confirm_error":
+                raise ValueError("unknown withdrawal decision")
         else:
             result = store.inspect(a.selection_id)
+        if a.withdrawal_id:
+            from .withdrawal import record_withdrawal
+
+            record_withdrawal(LocalStore(a.withdrawal_store), result)
         print(json.dumps(result))
         return
     if a.command == "check-publisher-login":

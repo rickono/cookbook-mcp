@@ -187,3 +187,34 @@ multi-user authorization service.
 These JSON-only operations do not admit source processing. Any PDF/DjVu parsing,
 rendering, OCR or model work still requires the unchanged sandbox launcher and
 VM/cgroup ceilings in `ocr-resource-isolation.md`.
+
+A confirmed substantive error is an administrative `confirm_error` decision,
+separate from an unverified reader report or an alternative candidate. Supply a
+human actor, reason, and the exact source evidence for the selected content.
+An optional `candidate_id` targets a retained candidate when a newer draft exists.
+Use `--withdrawal-store /private/publication-objects` with `--decision-file`;
+this must be the same object store used by the serving runtime. The Python
+`ReviewStore.decide` interface accepts its existing local or S3 store object as
+`withdrawal_store`. Recording this action succeeds only after current withdrawal
+has been durably enforced in that shared store. No deployment or pointer change
+is involved.
+
+The decision records affected exact approval/regional-finding identities and
+required dependents transitively. Readers check shared current withdrawals on
+every request, including retained publications, continuations and cached assets.
+Affected full-text hits and transcription reads are suppressed. Original page
+images, source artifact metadata, titles, historical approval references and the
+withdrawal actor/reason/evidence remain inspectable. Physical-page and legacy unscoped transcription
+are conservatively suppressed when it contains affected content; independently
+approved neighboring recipes remain available. Citation `eligibility` describes
+current status; the immutable locator's `content_review` records publication-time
+status. A rollback cannot restore withdrawn approval IDs. Fresh source comparison,
+complete approval of repaired content and its dependents, then finalization and
+publication are needed to serve the repair.
+
+If shared-store enforcement fails, the command fails rather than reporting
+withdrawal success. The immutable decision remains in administrative history.
+Retry it using `--withdrawal-id DECISION_ID --withdrawal-store PATH`; repeated
+retries are idempotent. Readers fail closed if current withdrawal state cannot
+be read or validated. The shared control record must be retained independently
+of publication rollback and retention cleanup.

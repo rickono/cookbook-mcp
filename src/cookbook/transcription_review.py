@@ -562,7 +562,9 @@ def _scope_binding(candidate, scope, line_ids=None):
 
 
 def _revoked_decisions(history):
-    revoked = set()
+    from .withdrawal import withdrawn_decisions
+
+    revoked = withdrawn_decisions(history)
     prior = []
     for event in history:
         if event["action"] == "revoke":
@@ -735,6 +737,25 @@ class ReviewStore:
             scope = next(
                 (s for s in candidate["selections"] if s["id"] == event["scope"]), None
             )
+            if event["action"] == "confirm_error":
+                from .withdrawal import affected_decisions, affected_pages, validate
+
+                validate(event)
+                if (
+                    scope is None
+                    or event["evidence"]
+                    != source_evidence(candidate["snapshot"], scope["line_ids"])
+                    or event["affected_decisions"]
+                    != affected_decisions(
+                        prior["decisions"],
+                        candidate,
+                        scope,
+                        _scope_binding(candidate, scope),
+                    )
+                    or event["affected_pages"]
+                    != affected_pages(prior["decisions"], event["affected_decisions"])
+                ):
+                    raise ValueError("substantive-error evidence mismatch")
             if event["action"] == "review_portion":
                 if candidate["revisions"] and (candidate["id"], event["scope"]) not in {
                     (e["candidate_id"], e["scope"])
@@ -800,11 +821,15 @@ class ReviewStore:
                 atomic_write(self.path, canonical(data))
         return candidate["id"]
 
-    def inspect(self, selection_id):
+    def inspect(self, selection_id, *, candidate_id=None):
         data = self._load()
         if not data["candidates"]:
             raise ValueError("missing candidate")
-        candidate = data["candidates"][-1]
+        candidate = (
+            next(c for c in data["candidates"] if c["id"] == candidate_id)
+            if candidate_id
+            else data["candidates"][-1]
+        )
         scope = next(
             (s for s in candidate["selections"] if s["id"] == selection_id), None
         )
@@ -895,7 +920,7 @@ class ReviewStore:
             return None, ["required_support_cycle"]
         visiting = visiting | {scope["id"]}
         history = [e for e in data["decisions"] if e["scope"] == scope["id"]]
-        revoked = _revoked_decisions(history)
+        revoked = _revoked_decisions(data["decisions"])
         matches = [
             e
             for e in history
@@ -942,11 +967,15 @@ class ReviewStore:
         relates_to=None,
         reviewer_config="human-source-review.v1",
         policy="standalone-content.v1",
+        candidate_id=None,
+        withdrawal_store=None,
     ):
         from datetime import datetime
 
         from .storage import atomic_write, canonical, file_lock
 
+        if action == "confirm_error" and withdrawal_store is None:
+            raise ValueError("confirmed error requires shared publication store")
         if action not in {
             "apply_draft",
             "clear_flag",
@@ -954,6 +983,7 @@ class ReviewStore:
             "revoke",
             "metadata_amendment",
             "review_portion",
+            "confirm_error",
         }:
             raise ValueError("invalid decision action")
         if (
@@ -965,8 +995,16 @@ class ReviewStore:
         if not all(_nonempty(v) for v in (reason, reviewer_config, policy)):
             raise ValueError("reason, reviewer configuration and policy required")
         with file_lock(self.path.with_suffix(".lock")):
-            state = self.inspect(selection_id)
+            state = self.inspect(selection_id, candidate_id=candidate_id)
             candidate, scope = state["candidate"], state["scope"]
+            if action == "confirm_error" and (
+                actor["kind"] != "human"
+                or list(evidence)
+                != source_evidence(candidate["snapshot"], scope["line_ids"])
+            ):
+                raise ValueError(
+                    "confirmed error requires human and exact source evidence"
+                )
             dependency_bindings = []
             portion_ids = None
             if action == "review_portion":
@@ -1068,9 +1106,25 @@ class ReviewStore:
                 if data["decisions"]
                 else None,
             }
+            if action == "confirm_error":
+                from .withdrawal import affected_decisions, affected_pages
+
+                event["affected_decisions"] = affected_decisions(
+                    data["decisions"],
+                    candidate,
+                    scope,
+                    _scope_binding(candidate, scope),
+                )
+                event["affected_pages"] = affected_pages(
+                    data["decisions"], event["affected_decisions"]
+                )
             event["id"] = _digest(event)
             data["decisions"].append(event)
             atomic_write(self.path, canonical(data))
+            if action == "confirm_error":
+                from .withdrawal import record_withdrawal
+
+                record_withdrawal(withdrawal_store, event)
         return event
 
     def publication_sections(self):
