@@ -54,7 +54,7 @@ def supervise(
     stop,
     *,
     interval=30,
-    startup_grace=600,
+    startup_grace=900,
     failures=3,
     probe=healthy,
 ):

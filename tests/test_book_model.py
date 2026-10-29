@@ -412,8 +412,9 @@ def test_validation_receipt_write_failure_preserves_verified_source(
     assert runtime.active() == active and not list(runtime.root.glob("invalid-*"))
 
 
-def test_complete_index_reload_can_take_more_than_one_minute(
-    tmp_path, monkeypatch, free_tcp_port, free_tcp_port_factory
+@pytest.mark.parametrize("ready_after", [240, None])
+def test_expanded_index_reload_waits_but_remains_bounded(
+    tmp_path, monkeypatch, free_tcp_port, free_tcp_port_factory, ready_after
 ):
     from urllib.error import URLError
 
@@ -447,14 +448,19 @@ def test_complete_index_reload_can_take_more_than_one_minute(
 
     def call(method, path, **kwargs):
         if path == "/health":
-            if clock[0] < 65:
+            if ready_after is None or clock[0] < ready_after:
                 raise URLError("complete index still loading")
             return {"ok": True}
         return {"version": "30.2"}
 
     monkeypatch.setattr(engine, "call", call)
     try:
-        engine.start()
-        assert 65 <= clock[0] < 180 and engine.process is not None
+        if ready_after is None:
+            with pytest.raises(IntegrityError, match="startup timed out"):
+                engine.start()
+            assert 600 <= clock[0] < 601 and engine.process is None
+        else:
+            engine.start()
+            assert ready_after <= clock[0] < 600 and engine.process is not None
     finally:
         engine.close()

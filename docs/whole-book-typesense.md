@@ -18,10 +18,12 @@ existing resource admission check still applies.
 Interpretations are imported only when the original source hashes match exactly.
 Their states are preserved. The first catalog has native structural capture for
 all 59 currently published EPUBs, including Chop Chop, and 2,632 candidate recipe
-records from the 20-book trial. Parts, uses, quantities, reference entries and
-other typed records are supported but currently have only limited worked
-examples. Structural coverage does not establish semantic completeness, readable
-image text, suitability, or accurate recipe boundaries. Parser diagnostics and
+records from the 20-book trial. The subsequent
+[native recipe interpretation](native-recipe-interpretation.md) extends candidates
+to 55 books while preserving source records and supported examples. Its rollout
+status and interpretation limits are documented separately. Structural coverage
+does not establish semantic completeness, readable image text, suitability, or
+accurate recipe boundaries. Parser diagnostics and
 interpretation coverage accompany reading responses.
 
 The manifest contains `runtime/whole-books.sqlite` and `runtime/whole-books.json`.
@@ -36,14 +38,14 @@ pointer update, and exact hosted acknowledgement. No book data belongs in Git.
 | --- | --- |
 | `find_book_content` | Literal keyword retrieval with typo tolerance and 5:1 title/body weighting. Filter by admitted book IDs, finite record kinds, or candidate inclusion. Default allowance 25; maximum 50. Page continuations require a pinned publication. |
 | `get_book_structure` | Coverage, separate reading occurrences, root nodes and authored navigation, with bounded offsets. |
-| `read_book_content` | Ordered original nodes for an entity, span, navigation target, reading occurrence or node; bounded UTF-8 bytes and node count with exact continuations. First-page typed records and resolved original links can be followed by ID. |
+| `read_book_content` | Ordered original nodes for an entity, span, navigation target, reading occurrence or node; bounded UTF-8 bytes and node count with exact continuations. Typed records page independently through `next_related_offset`/`related_offset`; resolved original links can be followed by ID. |
 | `get_supporting_work` | Interpreted uses/choices, quantities, selected parts/formulations, unresolved scopes, cycles and explicit truncation. Only required whole-preparation uses expand recursively. |
 
 Search returns publication/model/book/source/target citations. Follow the target
 with `read_book_content` until `next_cursor` is null before assessing a recipe.
-For library-wide recipe discovery, also search `kinds=['source']`: 39 books do not
-yet have recipe records. Empty recipe results never establish absence of a suitable
-recipe. Source snippets and ranking cannot supply dietary or subjective judgments.
+For library-wide recipe discovery, also search `kinds=['source']` for omitted or
+uninterpreted content; recipe coverage remains publication-specific. Empty recipe
+results never establish absence of a suitable recipe. Source snippets and ranking cannot supply dietary or subjective judgments.
 
 The existing `search_library`, `read_section`, image tools and recipe-card renderer
 remain compatible. New recipe-card citations accept a model snapshot and target
@@ -65,8 +67,8 @@ publication. Engine death fails health/readiness so the existing supervisor can
 restart the whole owned process group. Restarting reuses a complete matching index. Lookups for a prepared publication
 do not wait behind another publication's index import.
 Retained publications continue to resolve exact citations.
-Owned-engine startup allows up to 180 seconds for a persisted index reload. The
-supervisor allows up to 600 seconds before the first healthy probe, covering
+Owned-engine startup allows up to 600 seconds for an expanded persisted index reload. The
+supervisor allows up to 900 seconds before the first healthy probe, covering
 engine load and runtime byte checks. After the first healthy probe, three failed
 30-second probes trigger recovery without waiting for startup grace again.
 

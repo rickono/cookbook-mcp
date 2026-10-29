@@ -66,9 +66,9 @@ class BookSearch:
                 stderr=self.log,
                 env=env,
             )
-            # A complete persisted collection can take over a minute to reload
+            # The expanded persisted collection can take several minutes to reload
             # on the bounded serving VM. Keep readiness closed while it loads.
-            deadline = time.monotonic() + 180
+            deadline = time.monotonic() + 600
             while time.monotonic() < deadline:
                 if self.process.poll() is not None:
                     raise IntegrityError("search engine stopped")
