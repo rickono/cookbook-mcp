@@ -65,3 +65,28 @@ Private evidence and the synthetic probe are under
 `~/cookbook-mcp-data/poc/zoom-stall-67-followup-20261030/`. Original books,
 transcriptions, page images, raw production logs and credentials remain outside
 Git and GitHub.
+
+## Approved five-minute passive capture
+
+The owner approved a temporary diagnostic run on the existing Machine. The
+watcher completed its five-minute window on October 30, with health probes from
+12:27:24 through 12:32:19 UTC: 60 responses, all HTTP 200. The slowest probe took
+approximately 37 ms. No page-render requests or other reproduction stimulus were
+sent, so this is passive observation rather than a successful stress/replay test.
+
+The captured process snapshots include the service supervisor, worker and native
+search process. A supplemental snapshot accounts for Linux's 15-byte process-name
+truncation, which otherwise excludes the native search process from the exact-name
+filter. Snapshot memory and I/O pressure averages were zero. Kernel stacks were
+readable; no Python user-space stacks were collected. No failed-health snapshot
+was triggered because no health probe failed.
+
+The captured Machine configuration is identical before and after. No image,
+secrets, runtime configuration or publication changes were made. The capture was
+retrieved and its SHA-256 verified, then all four temporary remote script/capture
+files were removed. No persistent instrumentation was installed. Raw diagnostics
+remain private under the follow-up evidence directory's `live-watch-1/` folder.
+
+The historical root cause remains unproved and issue 67 stays open. This quiet
+observation window does not establish behavior during a future render-related
+outage or exclude historical memory/storage pressure.
