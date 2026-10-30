@@ -17,6 +17,10 @@ A chapter can continue across source files.
 An authored preparation, including its ingredients, instructions, associated prose,
 and any local parts or variations. It can itself be used in another recipe.
 
+**Complete recipe**:
+A recipe whose full authored content is available for the selected formulation or
+variation, including continuations and required supporting work.
+
 **Recipe part**:
 An authored group within a recipe, such as a preparation, ingredient group,
 method group, equipment list, variation, or final assembly.
@@ -28,6 +32,11 @@ Repeated requirements for the same ingredient remain separate occurrences.
 **Recipe formulation**:
 A named ingredient set and yield for a recipe, such as its small or large batch.
 Formulations may share instructions.
+
+**Quantity occurrence**:
+One authored quantity in its particular source and culinary context, such as an
+ingredient requirement or yield. Repeated quantities remain distinct occurrences
+even when their wording matches.
 
 **Recipe use**:
 A recipe's use of another preparation, with its requiredness, amount, selected
@@ -69,9 +78,29 @@ reviewed and unresolved content is clearly identified.
 A change to a transcription supported by the original page's visible content.
 A correction does not change the original book.
 
+**Source-printed inconsistency**:
+An inconsistency present in the authored source, preserved in a faithful
+transcription and identified separately from a transcription error.
+
+**Substantive content error**:
+An omission, addition, mistranscription, or incorrect ordering or association that
+changes authored meaning or completeness. Harmless formatting differences are excluded.
+
+**Critical content error**:
+A substantive content error affecting quantities, units, ingredient associations,
+required instructions, or recipe ownership.
+
+**False clearance**:
+An approval of content that contains a substantive content error or unresolved
+required content.
+
 **Unresolved content**:
 Content whose correct transcription or completeness has not yet been established.
 It remains explicitly identified rather than being filled in by inference.
+
+**Unavailable content**:
+Authored content that cannot currently be supplied within the library's source
+and review constraints, including content excluded by a terminal refusal.
 
 **Transcription report**:
 A claim, from an agent reading the library, that a scanned transcription differs
@@ -83,9 +112,23 @@ A review pass in which an agent examines the source and candidate transcription,
 attempts source-supported recovery, and identifies remaining uncertainty. Whether
 its result qualifies as approved content is a separate decision.
 
+**Agent approval**:
+An agent's source-supported acceptance of a particular transcription within its
+inspected scope, under the owner's validated review policy. It is distinct from
+human approval and does not itself publish content.
+
+**Publication eligibility**:
+The status of content that satisfies the library's applicable review and
+acceptance requirements. Eligibility does not itself publish the content.
+
 **Human edge case**:
 Uncertainty that remains after agent review and requires the owner's judgment,
-source inspection, or a better scan. The escalation criteria are not yet settled.
+source inspection, or a better scan because source-supported recovery cannot
+establish the transcription or completeness within its allowed attempts.
+
+**Review failure**:
+A review that could not be completed because the reviewer or its tools failed.
+It leaves content pending rather than establishing a content judgment.
 
 **Owner queue**:
 The human edge cases waiting for the owner's decision: transcription reports a
