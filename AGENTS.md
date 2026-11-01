@@ -16,5 +16,5 @@ fixture. Change resource ceilings only after a separate review of host capacity.
 Before creating, claiming, wiring, or resolving issue-tracker work, read
 [the GitHub tracker conventions](docs/agents/issue-tracker.md).
 When discussing cookbook concepts or planning a change to them, read
-[the domain glossary](CONTEXT.md). Keep agreed terminology there; decision detail
+[the domain glossary](GLOSSARY.md). Keep agreed terminology there; decision detail
 belongs in its issue or, when warranted, an architectural decision record.

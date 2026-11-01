@@ -14,7 +14,7 @@ trial below remains evidence for the model, not a claim of complete semantic
 interpretation or production acceptance.
 The machine-readable contract is
 [whole-book.draft-v1.schema.json](schemas/whole-book.draft-v1.schema.json).
-Terminology is in [CONTEXT.md](../CONTEXT.md).
+Terminology is in [GLOSSARY.md](../GLOSSARY.md).
 
 ## Alternatives compared
 
@@ -202,7 +202,7 @@ Every interpreted field uses `FieldValue<T>` with a tagged state:
 
 Populated fields require non-null values and evidence. Absent or unresolved
 fields carry no asserted value and require an explanation. `supported` is not a
-claim of human approval or complete extraction. [Agent review](../CONTEXT.md) and
+claim of human approval or complete extraction. [Agent review](../GLOSSARY.md) and
 acceptance policy remain distinct.
 
 The draft JSON Schema rejects unknown record types/properties and enforces
