@@ -1,0 +1,22 @@
+/* No fixed viewport widths or sticky controls: text can reflow at browser zoom. */
+html { color-scheme: light; }
+body { font-size: 18px; line-height: 1.6; }
+main, main * { min-width: 0; }
+main { box-sizing: border-box; width: 100%; overflow-wrap: anywhere; }
+nav { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
+a { color: #234f80; }
+button { color: #20251f; background: #f0ede3; border: 2px solid #56624e; border-radius: .25rem; cursor: pointer; }
+a, button, summary, input, select, textarea { min-height: 44px; max-width: 100%; box-sizing: border-box; }
+summary { padding: .5rem; }
+[hidden] { display: none !important; }
+:focus-visible { outline: 3px solid #234f80; outline-offset: 3px; }
+.skip-link { position: absolute; left: .5rem; top: -10rem; background: #faf8f2; z-index: 2; }
+.skip-link:focus { top: .5rem; }
+body.kitchen { font-size: 22px; line-height: 1.6; }
+.kitchen a, .kitchen button, .kitchen summary, .kitchen input, .kitchen select { min-height: 52px; }
+.kitchen h1 { font-size: 1em; }
+.kitchen main { max-width: 58ch; }
+.table-region { max-width: 100%; overflow-x: auto; border: 1px solid #56624e; padding: .5rem; box-sizing: border-box; }
+.table-region .source-text { white-space: pre; overflow-wrap: normal; }
+.table-label { font-weight: bold; }
+@media (forced-colors: active) { :focus-visible { outline-color: Highlight; } }

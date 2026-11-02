@@ -25,7 +25,7 @@ async function checkPublication() {
     if (data.pinned_state === 'withheld') {
       document.querySelector('#text')?.replaceChildren();
       document.querySelector('[data-next-text]')?.remove();
-      const status = document.querySelector('[role="status"]');
+      const status = document.querySelector('[data-reading-status]');
       if (status && status !== notice) status.textContent = 'Text withheld by current withdrawal or supersession.';
     }
     const publication = JSON.parse(atob(at.replace(/-/g, '+').replace(/_/g, '/'))).publication_id;

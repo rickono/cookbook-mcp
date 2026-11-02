@@ -66,7 +66,8 @@ def read_native(library, loc):
         related_offset=loc.get("related_offset", 0),
     )
     data.update(result)
-    data["text"] = project_text(result["nodes"])
+    data["text_blocks"] = project_blocks(library, pub, result["nodes"])
+    data["text"] = "".join(b["text"] for b in data["text_blocks"])
     data["state"] = "partial_text" if result["next_cursor"] else "complete_text"
     data["text_offset"] = loc.get("offset", 0)
     data["structure_notes"] = [
@@ -178,3 +179,31 @@ def project_text(nodes):
         elif node.get("content_kind") in {"table_cell", "cell"}:
             out.append(" | ")
     return "".join(out)
+
+
+def project_blocks(library, publication_id, nodes):
+    """Classify bounded nodes using retained table intervals, even mid-cell.
+
+    XPath names are not reliable for namespace-qualified EPUBs. This read-only
+    projection uses the already validated immutable model, without loading more
+    text or reconstructing an unverified semantic grid.
+    """
+    from .book_model import connection
+
+    blocks = []
+    with connection(library.model(publication_id).path) as db:
+        for item in nodes:
+            node = item["node"]
+            table = db.execute(
+                "select 1 from nodes n join nodes t on t.document_id=n.document_id "
+                "where n.id=? and t.content_kind='table' "
+                "and t.preorder<=n.preorder and t.subtree_end>=n.preorder limit 1",
+                (node["id"],),
+            ).fetchone()
+            kind = "table" if table else "text"
+            text = project_text([item])
+            if blocks and blocks[-1]["kind"] == kind:
+                blocks[-1]["text"] += text
+            else:
+                blocks.append({"kind": kind, "text": text})
+    return blocks
