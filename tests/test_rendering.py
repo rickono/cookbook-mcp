@@ -89,7 +89,11 @@ Path(sys.argv[-1]+'.pid').write_text(str(p.pid))
     # A reparented zombie has stopped executing and holds no memory/resources.
     state = Path(f"/proc/{pid}/stat")
     for _ in range(20):
-        if not state.exists() or state.read_text().split()[2] == "Z":
+        try:
+            stopped = state.read_text().split()[2] == "Z"
+        except (FileNotFoundError, ProcessLookupError):
+            stopped = True
+        if stopped:
             break
         time.sleep(0.01)
     else:
