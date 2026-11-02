@@ -1,0 +1,1359 @@
+{
+  "version": "native-recipe-markup-v1",
+  "profiles": {
+    "4": {
+      "title": [
+        "recipe_title"
+      ],
+      "ingredient": [
+        "il_item",
+        "il_item1"
+      ],
+      "instruction": [
+        "method_indent",
+        "method_nonindent"
+      ],
+      "stop": [
+        "headera",
+        "headera_box",
+        "headerfm",
+        "headerfm1",
+        "headerfm3",
+        "section"
+      ],
+      "part": {},
+      "source_sha256": "3799eb6d1457d445e4ca7f4ab5f77aee48b2fcdbe977cfd073ff1a41da3c08ab"
+    },
+    "5": {
+      "title": [
+        "h3|section",
+        "h4|section"
+      ],
+      "ingredient": [
+        "textbox"
+      ],
+      "instruction": [
+        "extract",
+        "extract1"
+      ],
+      "stop": [
+        "chapter"
+      ],
+      "part": {},
+      "source_sha256": "232c56c72c34d1d17a4b08de603e6c67a24790be1a378a4e053e65b439b8a345"
+    },
+    "7": {
+      "title": [
+        "head",
+        "head1"
+      ],
+      "ingredient": [
+        "list"
+      ],
+      "instruction": [
+        "step"
+      ],
+      "stop": [
+        "head2",
+        "index_alpha",
+        "indexa",
+        "plant"
+      ],
+      "part": {},
+      "source_sha256": "c62ce71b8c3188e7e905d677a4924e0dd4a0b87330250203f479c9c95110450e"
+    },
+    "10": {
+      "title": [
+        "recipes_rh"
+      ],
+      "ingredient": [
+        "recipes_ing",
+        "recipes_ing1"
+      ],
+      "instruction": [
+        "recipes_recipe-tx",
+        "recipes_sidetxfl"
+      ],
+      "stop": [
+        "chapter-number",
+        "chapter-title",
+        "h",
+        "h1",
+        "h2",
+        "h2-v",
+        "h2a",
+        "h3"
+      ],
+      "part": {},
+      "source_sha256": "533476467ad2844a747a1ba5fa46edf8268980d2a759511d4b7882de45032c69"
+    },
+    "13": {
+      "title": [
+        "recipe-title",
+        "subrecipe-title"
+      ],
+      "ingredient": [
+        "ingred"
+      ],
+      "instruction": [
+        "step"
+      ],
+      "stop": [
+        "fm-section-title",
+        "fm-section-title1",
+        "hidden",
+        "toc-hed"
+      ],
+      "part": {},
+      "source_sha256": "a89550fde7ab460eacc18d225114ae81706c483c1a60c3b284a511b2782af797"
+    },
+    "17": {
+      "title": [
+        "recipe_title"
+      ],
+      "ingredient": [
+        "IL_item",
+        "ingreident1"
+      ],
+      "instruction": [
+        "method_step",
+        "method_step1",
+        "process"
+      ],
+      "stop": [
+        "chapter_number",
+        "chapter_title",
+        "contents",
+        "fmtitle",
+        "glossary"
+      ],
+      "part": {},
+      "source_sha256": "e6229145bffe62e34c8f21cc90b151ec51c941e0be08097031d8e841d7ce98c1"
+    },
+    "18": {
+      "title": [
+        "h3",
+        "h3a",
+        "h3b",
+        "h3d",
+        "h3f"
+      ],
+      "ingredient": [
+        "hang",
+        "hangb"
+      ],
+      "instruction": [
+        "indent",
+        "noindenta",
+        "noindentf"
+      ],
+      "stop": [
+        "h2b",
+        "h2b1",
+        "h2c",
+        "h2f"
+      ],
+      "part": {},
+      "source_sha256": "df2e2e6b19b1108a22bbaa12fe288579e42fa5444f7486a8deae4dc581336ad6"
+    },
+    "25": {
+      "title": [
+        "rt",
+        "rt-supb-pg"
+      ],
+      "ingredient": [
+        "ril",
+        "rilf",
+        "rill"
+      ],
+      "instruction": [
+        "rp",
+        "rpf",
+        "rpl"
+      ],
+      "stop": [
+        "bmh1",
+        "bmt-glo-pg",
+        "h1",
+        "h1-supb-pg",
+        "h3-supb-pg",
+        "h3aft",
+        "indexdiv"
+      ],
+      "part": {},
+      "source_sha256": "09d4484b1ca640c38d1e703eabff28ac5ec8b80a7f87e899e93ac73c1f75d6a4"
+    },
+    "28": {
+      "title": [
+        "h2a3",
+        "h3bc",
+        "h3bc1"
+      ],
+      "ingredient": [
+        "noindenta"
+      ],
+      "instruction": [
+        "indent",
+        "noindentt1",
+        "noindentt3"
+      ],
+      "stop": [
+        "h1a",
+        "h1c",
+        "h2a",
+        "h2a1",
+        "h2a2",
+        "h2a2a",
+        "h2aa",
+        "h3b",
+        "h3r"
+      ],
+      "part": {
+        "ingredient_group": [
+          "rilh"
+        ],
+        "method_group": [
+          "rph"
+        ]
+      },
+      "source_sha256": "a8acf0b5e75e94f30ca4fb5b73e3765b5dee8aed6ee21d86a5bd71d5d8ccf8d6"
+    },
+    "38": {
+      "title": [
+        "rt-chap-pg"
+      ],
+      "ingredient": [
+        "ril",
+        "rilf"
+      ],
+      "instruction": [
+        "rp",
+        "rpf"
+      ],
+      "stop": [
+        "Contents-Head",
+        "aph1",
+        "apst",
+        "apt-app-pg",
+        "bmh1"
+      ],
+      "part": {},
+      "source_sha256": "d5abbf66fb2d79bad272f0ff0ef8be904a4a2b255b10042ce1fc08e80226d59d"
+    },
+    "39": {
+      "title": [
+        "rt-supb-pg"
+      ],
+      "ingredient": [
+        "ril",
+        "rilf"
+      ],
+      "instruction": [
+        "rp",
+        "rpf"
+      ],
+      "stop": [
+        "apt-app-pg",
+        "bmh1",
+        "bmh2",
+        "bmt-idx-pg",
+        "h1",
+        "h1-supb-pg"
+      ],
+      "part": {},
+      "source_sha256": "9c830e2df6aa7abf017ef516a1c0ecdc963c476aa00b0c18c8fec4358dfd6c20"
+    },
+    "50": {
+      "title": [
+        "recipetitle",
+        "sbrecipetitle"
+      ],
+      "ingredient": [
+        "list"
+      ],
+      "instruction": [
+        "step",
+        "step_top",
+        "stepfirst"
+      ],
+      "stop": [
+        "about_the_author",
+        "chaptitle",
+        "chaptitle_fb",
+        "how-to",
+        "index",
+        "mattertitle",
+        "mattertitle_y"
+      ],
+      "part": {},
+      "source_sha256": "4fc296d588ed13f46fbe30d7e89922992ffd9a90edccffce39a42127d070418e"
+    },
+    "67": {
+      "title": [
+        "recipe_rt",
+        "recipe_rt1",
+        "recipe_rt1a",
+        "recipe_srt",
+        "srecipe_srt"
+      ],
+      "ingredient": [
+        "recipe_i",
+        "recipe_i-spc",
+        "srecipe_i"
+      ],
+      "instruction": [
+        "noindentt",
+        "recipe_rsteps",
+        "recipe_rsteps1",
+        "srecipe_rsteps",
+        "srecipe_rsteps1"
+      ],
+      "stop": [
+        "a-head",
+        "b-head",
+        "c-head",
+        "d-head",
+        "e-head",
+        "ind-head",
+        "sidebar_st"
+      ],
+      "part": {},
+      "source_sha256": "b18f1b15edcc19dfb737c5cbdae9ad012ced396a3dbfd74459eca1ee9873cbe0"
+    },
+    "71": {
+      "title": [
+        "chapter-title",
+        "recipe-title5",
+        "recipe-titlea"
+      ],
+      "ingredient": [
+        "ingredient"
+      ],
+      "instruction": [
+        "step"
+      ],
+      "stop": [
+        "part-number",
+        "part-title",
+        "preface-title",
+        "sect1",
+        "sect2"
+      ],
+      "part": {},
+      "source_sha256": "fafa11d81d9f4e2cf99eb13e36dfff22e36e7dbfc0d16333fad0ed78d2eda858"
+    },
+    "75": {
+      "title": [
+        "recipe_title",
+        "recipe_title1",
+        "recipe_title2"
+      ],
+      "ingredient": [
+        "ingredients",
+        "ingredients1"
+      ],
+      "instruction": [
+        "instruction1"
+      ],
+      "stop": [
+        "chapter",
+        "chapter6",
+        "foreword",
+        "section",
+        "section0",
+        "section1",
+        "toc"
+      ],
+      "part": {},
+      "source_sha256": "3f8c57c798c89cbd24067b67698add8ad5fec1eeb7693bf79cc65dd121e8675e"
+    },
+    "12": {
+      "title": [
+        "h3_rec",
+        "h4_rec",
+        "h4_rec2"
+      ],
+      "ingredient": [
+        "rec_ing"
+      ],
+      "instruction": [
+        "rec_step",
+        "rec_steptt"
+      ],
+      "stop": [
+        "h1_fm",
+        "h2_ch"
+      ],
+      "part": {
+        "ingredient_group": [
+          "rec_ing-h",
+          "rec_ing-h1"
+        ],
+        "method_group": [
+          "rec_step-h"
+        ],
+        "equipment": [
+          "rec_ing-h4b"
+        ]
+      },
+      "source_sha256": "96d73d47dd663c1cb0745521378e935bb21a82ed797b348a7cad7778c16a15f7"
+    },
+    "14": {
+      "title": [
+        "recipe_subtitle",
+        "head"
+      ],
+      "ingredient": [
+        "IL_item"
+      ],
+      "instruction": [
+        "sub_method",
+        "method"
+      ],
+      "stop": [
+        "header",
+        "section",
+        "index"
+      ],
+      "part": {},
+      "source_sha256": "e8857c893c38f4634249926caba4473c50efc3c569c8e052e533270d37ceb7f6"
+    },
+    "15": {
+      "title": [
+        "drink_title",
+        "ahed"
+      ],
+      "ingredient": [
+        "list",
+        "list_a",
+        "ingred",
+        "ingred1"
+      ],
+      "instruction": [
+        "drink_nonindent",
+        "method",
+        "step"
+      ],
+      "stop": [
+        "fm_hed",
+        "fm_hed_1",
+        "index_letter"
+      ],
+      "part": {
+        "unresolved": [
+          "drink_ingredients"
+        ]
+      },
+      "role_prefixes": {
+        "instruction": [
+          "Method "
+        ],
+        "equipment": [
+          "Equipment "
+        ],
+        "yield": [
+          "Yield "
+        ]
+      },
+      "part_labels": {
+        "method": "method_group",
+        "tools": "equipment",
+        "glassware": "equipment",
+        "garnish": "ingredient_group",
+        "origin": "unresolved"
+      },
+      "instruction_part_kinds": [
+        "method_group"
+      ],
+      "source_sha256": "0cb59524539c61787a9e934d272a332633b9075647a0c321796e38037f671e04"
+    },
+    "16": {
+      "title": [
+        "rt",
+        "rt-appendix"
+      ],
+      "ingredient": [
+        "ril",
+        "rilf",
+        "rill"
+      ],
+      "instruction": [
+        "rp",
+        "rpnl"
+      ],
+      "stop": [
+        "h1",
+        "h2a",
+        "h3",
+        "sbt"
+      ],
+      "part": {},
+      "source_sha256": "9f7a012afde5934259edde84e012701401bca9d8fdc5d1683a37c33f2e5c9a2f"
+    },
+    "19": {
+      "title": [
+        "h3"
+      ],
+      "ingredient": [
+        "ing",
+        "ing-1"
+      ],
+      "instruction": [
+        "noindent-1",
+        "indent"
+      ],
+      "stop": [
+        "h2a",
+        "h2b",
+        "head"
+      ],
+      "part": {},
+      "source_sha256": "a843b5a2072367f06d4673c635eaccde3706dcfd6f44db765e8efa1573df7d93"
+    },
+    "20": {
+      "title": [
+        "h",
+        "h2c1"
+      ],
+      "ingredient": [
+        "hang"
+      ],
+      "instruction": [
+        "num"
+      ],
+      "stop": [
+        "heading",
+        "h2f",
+        "h2c"
+      ],
+      "part": {},
+      "source_sha256": "261efe4520f63eaac2047517e9decceda9de4066d8e02b82463413ba526b75ee"
+    },
+    "22": {
+      "title": [
+        "Recipe_rT"
+      ],
+      "ingredient": [
+        "Recipe_ing1",
+        "Recipe_ing"
+      ],
+      "instruction": [
+        "Recipe_stps"
+      ],
+      "stop": [
+        "h2",
+        "h3",
+        "part",
+        "part1"
+      ],
+      "part": {},
+      "source_sha256": "1d899d381d8c6991ce98f4575d16ff8d446f5d9eeee8c80d7470bb7972fa4394"
+    },
+    "23": {
+      "title": [
+        "rt",
+        "srt",
+        "eprt"
+      ],
+      "ingredient": [
+        "ril",
+        "rilf",
+        "ril-split",
+        "sril",
+        "srilf"
+      ],
+      "instruction": [
+        "rp",
+        "srp"
+      ],
+      "stop": [
+        "h1",
+        "h2",
+        "h3"
+      ],
+      "part": {},
+      "source_sha256": "4fa73b92f5ccfa56fb807acd4b3ba9e8cfac1ea83700ad1ccdc8e6f269fe2943"
+    },
+    "24": {
+      "title": [
+        "rec_title",
+        "sub_rec_t"
+      ],
+      "ingredient": [
+        "ingredients",
+        "sub_ingred"
+      ],
+      "instruction": [
+        "centered5",
+        "sub_method"
+      ],
+      "stop": [
+        "chapter_title"
+      ],
+      "part": {},
+      "source_sha256": "ed4c1e9249c497b4ec86d8264764514faa3de90708eb23b85ddd7f7bd5bf3aaf"
+    },
+    "26": {
+      "title": [
+        "recipe_title",
+        "sub_recipe_title"
+      ],
+      "ingredient": [
+        "textbox",
+        "textbox0"
+      ],
+      "instruction": [
+        "extract",
+        "extract0"
+      ],
+      "stop": [
+        "chapter00"
+      ],
+      "part": {},
+      "source_sha256": "c31ee7920ef722c754b1338f5beeb0f4124fe50b47394ace163f59c456ebe8b2"
+    },
+    "27": {
+      "title": [
+        "recipe_head"
+      ],
+      "ingredient": [
+        "Il_item",
+        "Il_item_2",
+        "Il_item1"
+      ],
+      "instruction": [
+        "indent"
+      ],
+      "stop": [
+        "section",
+        "header",
+        "chapter"
+      ],
+      "part": {
+        "ingredient_group": [
+          "Il_head"
+        ]
+      },
+      "source_sha256": "c0b36b2fd9748278e8bb27ecf23686116133b3191decf7cf5904055e16fda2d8"
+    },
+    "29": {
+      "title": [
+        "rt",
+        "bmrt"
+      ],
+      "ingredient": [
+        "ril",
+        "rilf",
+        "rill",
+        "bmril",
+        "bmrilf",
+        "bmrill"
+      ],
+      "instruction": [
+        "rp",
+        "rpf",
+        "bmrp"
+      ],
+      "stop": [
+        "h1",
+        "h2",
+        "part"
+      ],
+      "part": {
+        "preparation": [
+          "rt1"
+        ]
+      },
+      "source_sha256": "1aca7c503770619fb499acc1ce7dd3340eca6edd23e48361cd3452b6117cf91a"
+    },
+    "31": {
+      "title": [
+        "rephead"
+      ],
+      "ingredient": [
+        "ing",
+        "ingt"
+      ],
+      "instruction": [
+        "rindent",
+        "rnoindent"
+      ],
+      "stop": [
+        "head19",
+        "boxhead"
+      ],
+      "part": {},
+      "source_sha256": "0783817d9410c7e4fb2286cfe84141ff4cc45381a5d5b60bdacfc4c7ddc8124f"
+    },
+    "37": {
+      "title": [
+        "OS_RECIPE-HEADING",
+        "OS_RECIPE-SUBHEADING"
+      ],
+      "ingredient": [
+        "OS_INGREDIENTS-LIST",
+        "OS_double-column-ingredients",
+        "OS_INGREDIENTS-LIST-S"
+      ],
+      "instruction": [
+        "OS_method"
+      ],
+      "stop": [
+        "h1",
+        "h2",
+        "ct"
+      ],
+      "part": {
+        "ingredient_group": [
+          "OS_Ingredients-sub",
+          "OS_Ingredients-sub2"
+        ]
+      },
+      "source_sha256": "8ad69cb9139aff52f532cb2c68d7108fbd83c1be84cbf0ef9d5d917955ef30f8"
+    },
+    "40": {
+      "title": [
+        "rt"
+      ],
+      "ingredient": [
+        "ril",
+        "rils"
+      ],
+      "instruction": [
+        "rp",
+        "rpf"
+      ],
+      "stop": [
+        "h1",
+        "h2",
+        "h3"
+      ],
+      "part": {
+        "ingredient_group": [
+          "rilh"
+        ]
+      },
+      "source_sha256": "14d2d21a133458b8f42e4a2e34714724cf35664d38cf1e0e48f8f796812e22a2"
+    },
+    "41": {
+      "title": [
+        "C646",
+        "C887"
+      ],
+      "ingredient": [
+        "C659",
+        "C674"
+      ],
+      "instruction": [
+        "C693",
+        "C786",
+        "C786p"
+      ],
+      "stop": [
+        "C594",
+        "C599",
+        "C601"
+      ],
+      "part": {},
+      "source_sha256": "f0e8d72bd13b3806cb5c8cac76f3408d7962c1faccd3e8e7d1b740a8ee9379c1"
+    },
+    "47": {
+      "title": [
+        "h2-r1",
+        "h2-sr",
+        "h2-sr1"
+      ],
+      "ingredient": [
+        "hang"
+      ],
+      "instruction": [
+        "nlist",
+        "noindent2",
+        "noindent3"
+      ],
+      "stop": [
+        "h1",
+        "h2",
+        "h2-a"
+      ],
+      "part": {},
+      "source_sha256": "c8c10b53576b0338bc2f3fba3dd38a911102872f9a6d37460df51d0aecdceeed"
+    },
+    "48": {
+      "title": [
+        "h3c",
+        "h3c1",
+        "h3r"
+      ],
+      "ingredient": [
+        "hang",
+        "hangt",
+        "hangb"
+      ],
+      "instruction": [
+        "noindentt",
+        "noindent-t",
+        "indent"
+      ],
+      "stop": [
+        "h1",
+        "h2",
+        "h3"
+      ],
+      "part": {},
+      "source_sha256": "d90cb3a8892f93046e3508b17025bd2f5ea2920346a31c1030550d6406d8e27a"
+    },
+    "49": {
+      "title": [
+        "h2b",
+        "h1sp"
+      ],
+      "ingredient": [
+        "table-r",
+        "table2",
+        "tablerb"
+      ],
+      "instruction": [
+        "indent",
+        "toc1",
+        "noindentt"
+      ],
+      "stop": [
+        "h1r",
+        "h2a",
+        "h3"
+      ],
+      "part": {
+        "ingredient_group": [
+          "recipe"
+        ]
+      },
+      "source_sha256": "be474547e46a1f612af966fb463f7c3d1f93f5c85dc6d110c0279ffac308e0ce"
+    },
+    "52": {
+      "title": [
+        "recipe_title"
+      ],
+      "ingredient": [
+        "IL_item"
+      ],
+      "instruction": [
+        "method"
+      ],
+      "stop": [
+        "headerA",
+        "headerB"
+      ],
+      "part": {
+        "preparation": [
+          "subsection_header"
+        ],
+        "equipment": [
+          "equip_head"
+        ]
+      },
+      "source_sha256": "91390cd3669fb2d6fe8c09e33811be3fe37127ca761d67d415c5296d2ba60017"
+    },
+    "53": {
+      "title": [
+        "recipe_title",
+        "subrecipe_title_br1"
+      ],
+      "ingredient": [
+        "IL_item",
+        "IL_item_space"
+      ],
+      "instruction": [
+        "method_step",
+        "method_step1"
+      ],
+      "stop": [
+        "A_head",
+        "A_head1",
+        "chapter"
+      ],
+      "part": {
+        "ingredient_group": [
+          "IL_subheader",
+          "IL_subheader_top"
+        ],
+        "method_group": [
+          "MS_header"
+        ]
+      },
+      "source_sha256": "afb9d9867983cf0c4b8f0a27d35ee2a7d6c129ca4d7589fb18ae96a40a70908d"
+    },
+    "54": {
+      "title": [
+        "recipe_title"
+      ],
+      "ingredient": [
+        "IL_item"
+      ],
+      "instruction": [
+        "method_step",
+        "method_step_D"
+      ],
+      "stop": [
+        "section1",
+        "chapter"
+      ],
+      "part": {
+        "ingredient_group": [
+          "IL_head",
+          "IL_head_top"
+        ]
+      },
+      "source_sha256": "23a790a3538437aaffefaaa8777ceb2475a2de808f7289ba20683649e87da195"
+    },
+    "55": {
+      "title": [
+        "recipe_title",
+        "subrecipe_title",
+        "B_head",
+        "A_head1"
+      ],
+      "ingredient": [
+        "IL_item",
+        "IL_item_space"
+      ],
+      "instruction": [
+        "method_nonindent",
+        "method_indent"
+      ],
+      "stop": [
+        "A_head",
+        "section_title",
+        "fm_title"
+      ],
+      "part": {
+        "ingredient_group": [
+          "IL_subheader"
+        ]
+      },
+      "source_sha256": "68eece0cc151f66b73d45f1f57e43d01afe1f9272e457a80812ae164a4a8b2d4"
+    },
+    "56": {
+      "title": [
+        "head",
+        "head23"
+      ],
+      "ingredient": [
+        "noindent1"
+      ],
+      "instruction": [
+        "hanging",
+        "hanging3"
+      ],
+      "stop": [
+        "head2"
+      ],
+      "part": {},
+      "source_sha256": "d157af97455ff05f9d1807fd0866b0e633bab66139bfddf9f7c3dc6ac1a82f0e"
+    },
+    "59": {
+      "title": [
+        "section_hd",
+        "section_title",
+        "chapter_title"
+      ],
+      "ingredient": [
+        "ingred_sublist",
+        "ingred_sublistt"
+      ],
+      "instruction": [
+        "method_txt"
+      ],
+      "stop": [
+        "chapter_title1"
+      ],
+      "part": {
+        "ingredient_group": [
+          "ingred_subhead"
+        ]
+      },
+      "source_sha256": "d40662eba636bb7b478692e3a89d5f2019c514184737ebb64addee80920948aa"
+    },
+    "60": {
+      "title": [
+        "chapterHeadA",
+        "chapterHeadB"
+      ],
+      "ingredient": [
+        "extractVerse"
+      ],
+      "instruction": [
+        "para",
+        "bibliographyEntry"
+      ],
+      "stop": [
+        "chapterOpenerText",
+        "boxTitle"
+      ],
+      "part": {
+        "ingredient_group": [
+          "extractHead"
+        ]
+      },
+      "source_sha256": "eedb54263e585493ddfe5f48e4fc7a9f9f2afa34a81c650c5e9d8b1bc8c17d7e"
+    },
+    "64": {
+      "title": [
+        "section_title"
+      ],
+      "ingredient": [
+        "ingred_sublist"
+      ],
+      "instruction": [
+        "method_txt"
+      ],
+      "stop": [
+        "chapter_title"
+      ],
+      "part": {},
+      "instruction_continuation": [
+        "first1_noindent"
+      ],
+      "source_sha256": "0974b851029360f7f6271c052a9f4b8d78c8abaad9892617b2aa67cbc2b4469b"
+    },
+    "66": {
+      "title": [
+        "recipetitle",
+        "featurerecipetitle"
+      ],
+      "ingredient": [
+        "ingred",
+        "featureingred"
+      ],
+      "instruction": [
+        "step",
+        "stepfirst",
+        "featurestep",
+        "featurestepfirst"
+      ],
+      "stop": [
+        "chaptitle",
+        "mattertitle",
+        "sidebartitle"
+      ],
+      "part": {
+        "method_group": [
+          "stephed"
+        ],
+        "variation": [
+          "variationtitle",
+          "featurevariationrt"
+        ]
+      },
+      "source_sha256": "7200095621a4d6dab5759cb335aeb92964de02bb486c7f7d435140e9f12caacd"
+    },
+    "68": {
+      "title": [
+        "recipetitle",
+        "subrecipetitle",
+        "subrecipetitle1"
+      ],
+      "ingredient": [
+        "ILitem"
+      ],
+      "instruction": [
+        "headnote"
+      ],
+      "stop": [
+        "chapter",
+        "headerFM",
+        "headerA",
+        "headerB",
+        "textboxheader"
+      ],
+      "part": {
+        "ingredient_group": [
+          "ILsubheader",
+          "ILsubheadertop"
+        ]
+      },
+      "source_sha256": "c0c55f3a0c12ca4494d96ee640dbd99031f20bafc96a746ff10c84288e0e77d4"
+    },
+    "69": {
+      "title": [
+        "h3s",
+        "h3ss"
+      ],
+      "ingredient": [
+        "ingNEW",
+        "ing1"
+      ],
+      "instruction": [
+        "stps",
+        "stpst"
+      ],
+      "stop": [
+        "h1",
+        "h2"
+      ],
+      "part": {
+        "ingredient_group": [
+          "ingH1"
+        ],
+        "method_group": [
+          "sidH1"
+        ],
+        "variation": [
+          "mixh"
+        ]
+      },
+      "source_sha256": "0396d581b96470931ba544056376c344200db0cdbf0eb6c1bd3002e5d21636fa"
+    },
+    "70": {
+      "title": [
+        "rechead",
+        "recheada"
+      ],
+      "ingredient": [
+        "ing",
+        "ingt"
+      ],
+      "instruction": [
+        "noindentt"
+      ],
+      "stop": [
+        "h1",
+        "h2",
+        "h3",
+        "sideh"
+      ],
+      "part": {
+        "ingredient_group": [
+          "ing1"
+        ]
+      },
+      "source_sha256": "2f9d90454f9d08416ee6414ebfc01c3af22d0679bb4556e5e2c27cceda5469b8"
+    },
+    "73": {
+      "title": [
+        "rt",
+        "r1t"
+      ],
+      "ingredient": [
+        "ril",
+        "rilf",
+        "r1il",
+        "r1ilf"
+      ],
+      "instruction": [
+        "rp",
+        "rpf",
+        "r1p",
+        "r1pf"
+      ],
+      "stop": [
+        "fmh1",
+        "fmh2"
+      ],
+      "part": {},
+      "source_sha256": "207bd7b9c408bd9af0931612411aca59ea7c87f4c26416de1a119e52ab8bea9c"
+    },
+    "74": {
+      "title": [
+        "h3r",
+        "h3ra"
+      ],
+      "ingredient": [
+        "item"
+      ],
+      "instruction": [
+        "method",
+        "method1"
+      ],
+      "stop": [
+        "h3a",
+        "h4"
+      ],
+      "part": {
+        "ingredient_group": [
+          "rhead"
+        ]
+      },
+      "source_sha256": "1cff427c0efcaac05926b8915c5ede252c2203555d990d391970fdbc41207c4a"
+    },
+    "77": {
+      "title": [
+        "h2|"
+      ],
+      "ingredient": [
+        "hang"
+      ],
+      "instruction": [
+        "ext"
+      ],
+      "stop": [
+        "h1|"
+      ],
+      "part": {
+        "ingredient_group": [
+          "h4|"
+        ]
+      },
+      "source_sha256": "3f9a00ec839812690982d68246568de46ce147a878d73b8d592df2d92cdbc41d"
+    },
+    "78": {
+      "title": [
+        "rt",
+        "r1t"
+      ],
+      "ingredient": [
+        "ril",
+        "rilf",
+        "r1il",
+        "r1ilf"
+      ],
+      "instruction": [
+        "rp",
+        "rpf",
+        "r1p",
+        "r1pf"
+      ],
+      "stop": [
+        "h1",
+        "h2"
+      ],
+      "part": {
+        "ingredient_group": [
+          "rilh"
+        ],
+        "method_group": [
+          "rph"
+        ],
+        "equipment": [
+          "reqh"
+        ]
+      },
+      "source_sha256": "0b6e03378f3fdf1a4e7f5b794d378d850b41051fb356398e57eadeac15e9fe25"
+    },
+    "87": {
+      "title": [
+        "recipe_title",
+        "recipe_title1",
+        "subrecipe_title"
+      ],
+      "ingredient": [
+        "list-none",
+        "list-none1",
+        "list-none2",
+        "list-none3"
+      ],
+      "instruction": [
+        "method",
+        "method1",
+        "method_indent"
+      ],
+      "stop": [
+        "sect",
+        "sect1",
+        "chap_head",
+        "fm_head",
+        "ind_subhead"
+      ],
+      "part": {
+        "variation": [
+          "ver_head1",
+          "ver_head"
+        ]
+      },
+      "source_sha256": "fdb5ab660bd586bd29a0238d15c31b567e777304c7cb4834152d2d54dfae983a"
+    },
+    "51": {
+      "title": [
+        "authored-inline-title"
+      ],
+      "title_inline_classes": [
+        "calibre4"
+      ],
+      "ingredient": [
+        "calibre_29",
+        "authored-inline-ingredient"
+      ],
+      "instruction": [
+        "p|calibre_1"
+      ],
+      "stop": [],
+      "part": {},
+      "ingredient_inline_classes": [
+        "calibre3"
+      ],
+      "role_prefixes": {
+        "yield": [
+          "SERVES",
+          "MAKES"
+        ]
+      },
+      "inline_ingredient_groups": true,
+      "part_labels": {
+        "to serve": "ingredient_group"
+      },
+      "source_sha256": "a79a7b2f7b4700cf582f7a9b83507ad59a949418621c2c3c0e7940b4e434cd75"
+    },
+    "65": {
+      "title": [
+        "box_head"
+      ],
+      "ingredient": [],
+      "instruction": [
+        "box_para",
+        "box_in_para"
+      ],
+      "stop": [
+        "chap_head",
+        "fm_head"
+      ],
+      "part": {},
+      "prose_recipe": true,
+      "retain_trailing_document": false,
+      "source_sha256": "79b6ec876a385f0523b0303543dc4ae5fa8679ea9ccc57cfca740cc63d99e0fa"
+    },
+    "30": {
+      "title": [
+        "svg-recipe-title"
+      ],
+      "ingredient": [
+        "svg-ingredient"
+      ],
+      "instruction": [
+        "svg-instruction"
+      ],
+      "stop": [],
+      "part": {
+        "preparation": [
+          "svg-component"
+        ]
+      },
+      "svg_text": true,
+      "source_sha256": "70eb2021ee6e0c311b96a83e3c179eaf94e5d0142b7b4b12997fd25df0103c17"
+    },
+    "72": {
+      "title": [
+        "fragment-recipe-title"
+      ],
+      "ingredient": [
+        "fragment-ingredient-list"
+      ],
+      "instruction": [
+        "fragment-instruction"
+      ],
+      "stop": [],
+      "part": {
+        "ingredient_group": [
+          "fragment-ingredient-list"
+        ]
+      },
+      "fragmented_page_text": true,
+      "source_sha256": "23e377d37c900a4da5defad138fdedc7b1f4e2f68a9995ff0e05541b7cc00f57"
+    }
+  },
+  "special_books": {
+    "8": "reference work",
+    "62": "reference work",
+    "63": "reference work",
+    "76": "image-only source requires protected OCR and review"
+  }
+}

@@ -86,6 +86,8 @@ def slug(s):
 
 
 def lines_of(rec):
+    if rd.has_refusal(rec):
+        return []
     return [l for l in (rec.get("final_text") or "").splitlines() if l.strip()]
 
 
@@ -108,9 +110,24 @@ def check(label, n):
 
 
 def label_page(reader, out, pages, page, cache):
+    if pages[page].get("failed") or rd.has_refusal(pages[page]):
+        return {
+            "page": page,
+            "label": {
+                "printed_page": None,
+                "page_kinds": [],
+                "blocks": [],
+                "references": [],
+            },
+            "errors": [],
+            "calls": [],
+        }
     dest = cache / f"p{page:03d}.json"
     if dest.exists():
-        return json.loads(dest.read_text())
+        saved = json.loads(dest.read_text())
+        if rd.has_refusal(saved):
+            saved["label"] = None
+        return saved
     ls = lines_of(pages[page])
     prev = lines_of(pages.get(page - 1, {}))[-12:]
     nxt = lines_of(pages.get(page + 1, {}))[:8]
@@ -126,6 +143,9 @@ def label_page(reader, out, pages, page, cache):
     for attempt in range(3):
         text, meta = rd.call(out, reader, prompt, None, attempts=2, timeout=300)
         calls.append(meta)
+        if rd.refused(meta):
+            errors.append("provider refused section labelling")
+            break
         if rd.STOP.is_set():
             return None
         try:
@@ -146,8 +166,27 @@ def frozen_images(book):
     return json.loads((EXP / f"inputs/books/{book}/images.json").read_text())
 
 
-def build(book, pages, labels, cfg, model, outdir, images=None):
-    """images: the book's page image records; by default the frozen benchmark's images.json."""
+def build(
+    book, pages, labels, cfg, model, outdir, images=None, *, review_failures=False
+):
+    """images: the book's page image records; by default the frozen benchmark's images.json.
+
+    Review derivatives opt into explicit missing-crop checks. Refused page reads
+    are excluded in every path, including historical fallback-derived caches.
+    This function never retries a crop or makes a model call.
+    """
+    pages = {
+        p: (
+            {"final_text": "", "crops": [], "corrections": [], "failed": True}
+            if rd.has_refusal(rec)
+            else rec
+        )
+        for p, rec in pages.items()
+    }
+    labels = {
+        p: (None if pages.get(p, {}).get("failed") or rd.has_refusal(label) else label)
+        for p, label in labels.items()
+    }
     images = {p["physical_page"]: p for p in images or frozen_images(book)}
     sections, order, ids = {}, [], set()
     page_sections = {p: [] for p in images}
@@ -398,6 +437,26 @@ def build(book, pages, labels, cfg, model, outdir, images=None):
         }
         page_lines = lines_of(rec)
         for n, c in enumerate(rec.get("crops") or []):
+            if review_failures and (
+                "image" not in c or len(c.get("readings") or {}) < 2
+            ):
+                # A failed render or insufficient readings never confirms a
+                # quantity. Review derivatives retain that missing check without
+                # retrying it or inventing a crop-image receipt.
+                for sid in qty_secs or [None]:
+                    n_unres += 1
+                    unresolved.append(
+                        {
+                            "id": f"u{n_unres}",
+                            "section_id": sid,
+                            "physical_page": page,
+                            "source_fragment": None,
+                            "field": "amount",
+                            "reason": "quantity crop unavailable or unconfirmed; page read kept",
+                            "proposed_value": None,
+                            "box": c.get("box") or [0, 0, 1, 1],
+                        }
+                    )
             if "image" not in c:
                 continue
             reviewed, uncertain = [], []
@@ -574,7 +633,13 @@ def assemble(
     for p in images:
         f = pipe / "pages" / f"b{book}-p{p['physical_page']:03d}.json"
         if f.exists():
-            pages[p["physical_page"]] = json.loads(f.read_text())
+            saved = json.loads(f.read_text())
+            failure = pipe / "failures" / f.name
+            old_refusal = failure.exists() and rd.has_refusal(
+                json.loads(failure.read_text())
+            )
+            if not rd.has_refusal(saved) and not old_refusal:
+                pages[p["physical_page"]] = saved
     missing = [p["physical_page"] for p in images if p["physical_page"] not in pages]
     if missing and not allow_missing:
         sys.exit(

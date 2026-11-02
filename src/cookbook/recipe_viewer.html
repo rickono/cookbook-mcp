@@ -65,7 +65,7 @@ footer { display:flex; align-items:center; justify-content:space-between; gap:14
       r.source && ['original','book','adapted'].includes(r.source.kind) && text(r.source.label) &&
       (r.source.note == null || text(r.source.note,2000)) && Array.isArray(r.source.citations) && r.source.citations.length <= 8 &&
       (r.source.kind === 'original' || r.source.citations.length > 0) &&
-      r.source.citations.every(c => c && ['publication_id','book_id','source_id','section_id'].every(k => text(c[k])));
+      r.source.citations.every(c => c && ['publication_id','book_id','source_id'].every(k => text(c[k])) && (text(c.section_id) || (text(c.model_snapshot_id) && text(c.target_id))));
   }
   function notify(method, params) { window.parent.postMessage({jsonrpc:'2.0',method,params}, '*'); }
   function resize() {
@@ -94,7 +94,7 @@ footer { display:flex; align-items:center; justify-content:space-between; gap:14
       <div id="recipe-body" ${expanded?'':'hidden'}><div class="aligned-head"><h2>Ingredients for this action</h2><h2>Method</h2></div><ol class="actions">${recipe.steps.map((step,i)=>`<li class="action-row"><aside aria-label="Ingredients for step ${i+1}"><ul class="ingredient-list">${step.ingredients.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></aside><div><h3><span class="step-num" aria-hidden="true">${i+1}</span>${esc(step.title)}</h3><p>${esc(step.method)}</p></div></li>`).join('')}</ol></div>
       <p class="compact-meta" ${expanded?'hidden':''}>${recipe.steps.length} ${recipe.steps.length===1?'step':'steps'}</p>
       <footer><button type="button" class="source" id="source" aria-expanded="${sourceOpen}" aria-controls="source-note">${esc(label)} · Source</button><button type="button" id="expand" class="toggle" aria-expanded="${expanded}" aria-controls="recipe-body">${expanded?'Compact recipe':'View recipe'} <span aria-hidden="true">${expanded?'↑':'↓'}</span></button></footer>
-      <div id="source-note" class="source-note" ${sourceOpen?'':'hidden'}><p>${esc(label)}</p>${source.note?`<p>${esc(source.note)}</p>`:''}${source.citations.length?`<details><summary>Source identifiers</summary><ul>${source.citations.map(c=>`<li>Publication: ${esc(c.publication_id)}<br>Book: ${esc(c.book_id)}<br>Source: ${esc(c.source_id)}<br>Section: ${esc(c.section_id)}</li>`).join('')}</ul></details>`:''}</div></article>`;
+      <div id="source-note" class="source-note" ${sourceOpen?'':'hidden'}><p>${esc(label)}</p>${source.note?`<p>${esc(source.note)}</p>`:''}${source.citations.length?`<details><summary>Source identifiers</summary><ul>${source.citations.map(c=>`<li>Publication: ${esc(c.publication_id)}<br>Book: ${esc(c.book_id)}<br>Source: ${esc(c.source_id)}${c.section_id?`<br>Section: ${esc(c.section_id)}`:`<br>Model: ${esc(c.model_snapshot_id)}<br>Content: ${esc(c.target_id)}`}</li>`).join('')}</ul></details>`:''}</div></article>`;
     status.hidden = true;
     document.getElementById('expand').onclick = () => {
       expanded = !expanded; render(); document.getElementById('expand').focus({preventScroll:true});
