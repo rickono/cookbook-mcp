@@ -109,7 +109,7 @@ def reader_from_environment(verifier):
     """Opt-in hosted reader. Never borrow library or agent-report write authority."""
     from .reader import Reader, ReaderConfig
 
-    if not any(name.startswith("READER_") for name in os.environ):
+    if not any(name.startswith(("READER_", "PERSONAL_")) for name in os.environ):
         return None
     if any(not os.environ.get(name) for name in READER_NAMES):
         raise ValueError("incomplete reader configuration")
@@ -141,6 +141,7 @@ def reader_from_environment(verifier):
         os.environ["READER_AWS_SECRET_ACCESS_KEY"],
     )
     from .owner_report_config import owner_reports_from_environment
+    from .personal_config import personal_from_environment
 
     return Reader(
         config,
@@ -148,6 +149,7 @@ def reader_from_environment(verifier):
         store,
         os.environ["READER_SESSION_KEY"].encode(),
         owner_reports=owner_reports_from_environment(s3_store),
+        personal_state=personal_from_environment(s3_store),
     )
 
 

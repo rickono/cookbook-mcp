@@ -245,7 +245,9 @@ async def deliver(reader, request, library, owner=None, csrf=""):
         + '">Inspect originals</a>'
     )
     from .owner_reports import form
+    from .reader_personal import controls
 
+    body += controls(data["source_location"], data["state"] != "withheld")
     body += form(reader, data, loc, owner, csrf)
     body += '<script src="/reader/content.js" defer></script>'
     durable = {

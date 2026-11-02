@@ -149,6 +149,7 @@ class Reader:
         identity=None,
         clock=time.time,
         owner_reports=None,
+        personal_state=None,
     ):
         if urlsplit(verifier.issuer).scheme != "https" or not verifier.issuer.endswith(
             "/"
@@ -159,6 +160,7 @@ class Reader:
         self.identity = identity or IdentityProvider(config, verifier)
         self.clock = clock
         self.owner_reports = owner_reports
+        self.personal_state = personal_state
 
     async def read(self, key):
         raw, version = await asyncio.to_thread(self.store.read_version, key)
@@ -342,6 +344,11 @@ class Reader:
                 "body{font:18px/1.6 system-ui;margin:0;color:#20251f;background:#faf8f2}main{max-width:65ch;padding:1rem;margin:auto}a,button{display:inline-block;min-height:44px;box-sizing:border-box;padding:.5rem}button,input,select{font:inherit;max-width:100%;min-height:44px;box-sizing:border-box}label{display:block}#owner-report label{display:block}#owner-report textarea,#owner-report input:not([type=hidden]){box-sizing:border-box;max-width:100%;width:100%;font:inherit;min-height:44px}.source-text{white-space:pre-wrap;overflow-wrap:anywhere}pre{white-space:pre-wrap;overflow-wrap:anywhere}summary{min-height:44px;cursor:pointer}li{margin-block:1rem;overflow-wrap:anywhere}:focus-visible{outline:3px solid #375d9c;outline-offset:3px}",
                 media_type="text/css",
             )
+        if path == "/reader/personal.js":
+            return Response(
+                Path(__file__).with_name("reader_personal.js").read_text(),
+                media_type="text/javascript",
+            )
         if path == "/reader/search.js":
             return Response(
                 Path(__file__).with_name("reader_search.js").read_text(),
@@ -499,6 +506,18 @@ class Reader:
                     destination = None
             return self.expired(destination)
         subject, session = auth
+        if path == "/reader/personal":
+            from .reader_personal import endpoint
+
+            return await endpoint(self, request, library, subject, session)
+        if path == "/reader/bookmarks":
+            from .reader_personal import bookmarks_page
+
+            return bookmarks_page(self)
+        if path == "/reader/book":
+            from .reader_personal import book_entry
+
+            return await book_entry(self, request, library, subject)
         if path == "/reader/search":
             from .reader_search import page
 
@@ -594,13 +613,13 @@ class Reader:
                     + " · "
                     + escape(c["format"])
                     + ' · Published <a href="'
-                    + escape(reading_link(c))
+                    + escape(reading_link(c).replace("/reader/read?", "/reader/book?"))
                     + '">Open book</a></li>'
                 )
             body = (
                 '<nav aria-label="Account"><form method="post" action="/reader/logout"><input type="hidden" name="csrf" value="'
                 + escape(session["csrf"])
-                + '"><button name="scope" value="device">Sign out this device</button><button name="scope" value="all">Sign out all reader devices</button></form></nav><p>Logout ends reader access. It does not sign out Google or MCP, revoke copied valid tokens immediately, or erase content already delivered.</p><a href="/reader/search">Search library</a><h2>Published books</h2><ul>'
+                + '"><button name="scope" value="device">Sign out this device</button><button name="scope" value="all">Sign out all reader devices</button></form></nav><p>Logout ends reader access. It does not sign out Google or MCP, revoke copied valid tokens immediately, or erase content already delivered.</p><a href="/reader/search">Search library</a><a href="/reader/bookmarks">Bookmarks</a><h2>Published books</h2><ul>'
                 + "".join(rows)
                 + "</ul>"
             )
@@ -701,6 +720,9 @@ class Reader:
         for path in (
             "/reader",
             "/reader/catalog",
+            "/reader/book",
+            "/reader/bookmarks",
+            "/reader/personal.js",
             "/reader/session",
             "/reader/read",
             "/reader/content",
@@ -724,6 +746,9 @@ class Reader:
             app.routes.insert(0, Route(path, endpoint))
         app.routes.insert(
             0, Route("/reader/search/results", endpoint, methods=["POST"])
+        )
+        app.routes.insert(
+            0, Route("/reader/personal", endpoint, methods=["GET", "POST"])
         )
         app.routes.insert(0, Route("/reader/reports", endpoint, methods=["POST"]))
         app.routes.insert(0, Route("/reader/logout", endpoint, methods=["POST"]))
