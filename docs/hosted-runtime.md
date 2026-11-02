@@ -311,3 +311,11 @@ read & write on that one bucket. The server only creates objects, conditionally,
 never reads or deletes them. The Mac reads reports with a separate key for that
 bucket. Creating the bucket and keys, adding the Fly secrets and deploying each need
 the owner's approval. None of them has been done.
+
+## Hosted browser reader — implementation only
+
+The optional same-origin sign-in and published-catalog slice is described in
+[Hosted reader configuration](hosted-reader.md). It requires a separate confidential
+web client, shared encrypted durable session bucket and explicit callback/TLS
+configuration. No reader deployment, provider configuration or live renewal has
+been performed or verified by this implementation.
