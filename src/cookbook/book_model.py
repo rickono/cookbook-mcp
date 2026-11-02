@@ -254,6 +254,10 @@ class BookModel:
         ).fetchone()
         if node is None:
             raise IntegrityError("unavailable whole-book target")
+        if nav:
+            chapter = self.navigation_parts(db, book_id, node)
+            if chapter is not None:
+                return chapter, None
         end = {"node_id": node["id"], "side": "after", "offset": None}
         if nav:
             # A TOC destination is often an empty <a>, rather than a container.
@@ -283,6 +287,66 @@ class BookModel:
             }
         ], None
 
+    def navigation_parts(self, db, book_id, node):
+        starts = db.execute(
+            "select id,ordinal from occurrences where edition_id=? and document_id=? limit 2",
+            (book_id, node["document_id"]),
+        ).fetchall()
+        if len(starts) != 1:
+            return None  # Never guess which occurrence an ambiguous link meant.
+        start = starts[0]
+        following = db.execute(
+            "select n.id,n.preorder,n.document_id,o.ordinal from navigation v "
+            "join nodes n on n.id=v.target_node "
+            "join occurrences o on o.document_id=n.document_id and o.edition_id=v.edition_id "
+            "where v.edition_id=? and (o.ordinal>? or (o.ordinal=? and n.preorder>?)) "
+            "and json_extract(v.payload,'$.target.state')='resolved_node' "
+            "order by o.ordinal,n.preorder limit 1",
+            (book_id, start["ordinal"], start["ordinal"], node["preorder"]),
+        ).fetchone()
+        if (
+            following
+            and db.execute(
+                "select count(*) from occurrences where edition_id=? and document_id=?",
+                (book_id, following["document_id"]),
+            ).fetchone()[0]
+            != 1
+        ):
+            return None
+        parts = []
+        for occurrence in db.execute(
+            "select o.id,o.ordinal,o.document_id,d.root_id from occurrences o "
+            "join documents d on d.id=o.document_id and d.edition_id=o.edition_id "
+            "where o.edition_id=? and o.ordinal>=? order by o.ordinal",
+            (book_id, start["ordinal"]),
+        ):
+            last = (
+                following is not None and occurrence["ordinal"] == following["ordinal"]
+            )
+            if last and following["preorder"] == 0:
+                break
+            parts.append(
+                {
+                    "document_id": occurrence["document_id"],
+                    "reading_occurrence_id": occurrence["id"],
+                    "start": {
+                        "node_id": node["id"]
+                        if occurrence["id"] == start["id"]
+                        else occurrence["root_id"],
+                        "side": "before",
+                        "offset": None,
+                    },
+                    "end": {
+                        "node_id": following["id"] if last else occurrence["root_id"],
+                        "side": "before" if last else "after",
+                        "offset": None,
+                    },
+                }
+            )
+            if last:
+                break
+        return parts
+
     def read(
         self,
         book_id,
@@ -291,6 +355,7 @@ class BookModel:
         byte_budget=16000,
         node_budget=100,
         related_offset=0,
+        _reader=False,
     ):
         if (
             not 2048 <= byte_budget <= 60000
@@ -335,6 +400,13 @@ class BookModel:
                 "citations": [],
                 "next_cursor": None,
             }
+            title = db.execute(
+                "select label from navigation where id=? and edition_id=? "
+                "union all select label from entities where id=? and edition_id=? limit 1",
+                (target_id, book_id, target_id, book_id),
+            ).fetchone()
+            if title:
+                response["selection_title"] = title[0]
             if entity and not cursor:
                 related = db.execute(
                     "select id,kind,payload from entities where edition_id=? and (json_extract(payload,'$.recipe_id')=? or json_extract(payload,'$.source_recipe_id')=?) order by kind,coalesce(json_extract(payload,'$.ordinal'),0),id limit 17 offset ?",
@@ -428,6 +500,23 @@ class BookModel:
                         raw = node["text"]
                         item["source_text_range"] = {"start": offset, "end": end}
                         node["text"] = raw[offset:end]
+                    if _reader:
+                        # The browser renders text and retained table boundaries;
+                        # CSS attributes and parser paths must not crowd out text.
+                        item["node"] = node = {
+                            k: v
+                            for k, v in node.items()
+                            if k
+                            in {
+                                "id",
+                                "kind",
+                                "content_kind",
+                                "text",
+                                "source_tag",
+                                "table_row_span",
+                                "table_column_span",
+                            }
+                        }
                     size = len(canonical(item))
                     if used + size > byte_budget:
                         if response["nodes"]:

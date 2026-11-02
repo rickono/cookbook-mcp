@@ -66,9 +66,16 @@ class Library:
         byte_budget=16000,
         node_budget=100,
         related_offset=0,
+        _reader=False,
     ):
         return self.model(publication_id).read(
-            book_id, target_id, cursor, byte_budget, node_budget, related_offset
+            book_id,
+            target_id,
+            cursor,
+            byte_budget,
+            node_budget,
+            related_offset,
+            _reader=_reader,
         )
 
     def get_supporting_work(

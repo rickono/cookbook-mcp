@@ -572,7 +572,7 @@ def test_native_snapshot_occurrences_and_cursor_binding(
         assert client.get("/reader/read", params={"at": bad}).status_code == 404
 
 
-def test_native_navigation_reads_source_after_empty_anchor(tmp_path):
+def native_navigation_model(tmp_path):
     """Authored navigation marks a source interval, not an empty anchor subtree."""
     import sqlite3
 
@@ -659,7 +659,11 @@ def test_native_navigation_reads_source_after_empty_anchor(tmp_path):
                     json.dumps(payload),
                 ),
             )
-    model = BookModel(path, "pub")
+    return BookModel(path, "pub")
+
+
+def test_native_navigation_reads_source_after_empty_anchor(tmp_path):
+    model = native_navigation_model(tmp_path)
     first = model.read("book", "nav-first")
     assert (
         "".join(item["node"].get("text", "") for item in first["nodes"])
@@ -711,3 +715,117 @@ def test_read_delivery_validates_source_once_per_request(
         assert len(reads) == 1
         assert client.get("/reader/content", params={"at": at}).status_code == 200
         assert len(reads) == 2
+
+
+def test_native_chapter_crosses_image_only_document_to_next_authored_chapter(tmp_path):
+    import sqlite3
+
+    model = native_navigation_model(tmp_path)
+    with sqlite3.connect(model.path) as db:
+        db.execute("delete from navigation")
+        for ordinal, doc, text in [
+            (0, "cover", ""),
+            (2, "dessert", "Next chapter must stay out."),
+        ]:
+            root = doc + "-root"
+            db.execute(
+                "insert into documents values(?,?,?,?,?)",
+                (doc, "book", doc + ".xhtml", root, '{"parser_diagnostics":[]}'),
+            )
+            payload = {
+                "id": root,
+                "kind": "text" if text else "element",
+                "content_kind": "text" if text else "image",
+                "child_ids": [],
+                "source_tag": "img",
+                "text": text,
+            }
+            db.execute(
+                "insert into nodes values(?,?,?,?,?,?,?,?,?,?)",
+                (
+                    root,
+                    doc,
+                    None,
+                    0,
+                    0,
+                    payload["kind"],
+                    payload["content_kind"],
+                    "/",
+                    text,
+                    json.dumps(payload),
+                ),
+            )
+            nav = {
+                "id": "nav-" + doc,
+                "target": {"state": "resolved_node", "node_id": root},
+            }
+            db.execute(
+                "insert into navigation values(?,?,?,?,?,?,?,?)",
+                (
+                    nav["id"],
+                    "book",
+                    None,
+                    "toc",
+                    "Main Dishes" if doc == "cover" else "Desserts",
+                    root,
+                    ordinal,
+                    json.dumps(nav),
+                ),
+            )
+        for ordinal, doc in enumerate(["cover", "doc", "dessert"]):
+            db.execute(
+                "insert into occurrences values(?,?,?,?,?)",
+                (
+                    doc + "-occ",
+                    "book",
+                    doc,
+                    ordinal,
+                    json.dumps({"id": doc + "-occ", "ordinal": ordinal}),
+                ),
+            )
+    result = model.read("book", "nav-cover")
+    text = "".join(x["node"].get("text", "") for x in result["nodes"])
+    assert text == "First source section.Second source section."
+    assert result["selection_title"] == "Main Dishes"
+    assert [c["reading_occurrence_id"] for c in result["citations"]] == [
+        "cover-occ",
+        "doc-occ",
+    ]
+    assert result["next_cursor"] is None
+    # Every chunk stays in the same chapter and preserves exact source order.
+    chunks = []
+    cursor = None
+    while True:
+        result = model.read("book", "nav-cover", cursor=cursor, node_budget=1)
+        chunks.extend(x["node"].get("text", "") for x in result["nodes"])
+        cursor = result["next_cursor"]
+        if not cursor:
+            break
+    assert "".join(chunks) == text
+
+
+def test_browser_projection_keeps_text_inside_existing_read_limit(tmp_path):
+    import sqlite3
+
+    from cookbook.storage import canonical
+
+    model = native_navigation_model(tmp_path)
+    with sqlite3.connect(model.path) as db:
+        for node_id, raw in db.execute(
+            "select id,payload from nodes where node_kind='element'"
+        ).fetchall():
+            node = json.loads(raw)
+            node["attributes"] = {"class": "decorative-parser-metadata " * 1000}
+            db.execute(
+                "update nodes set payload=? where id=?", (json.dumps(node), node_id)
+            )
+    projected = model.read("book", "nav-first", _reader=True)
+    assert (
+        "".join(n["node"].get("text", "") for n in projected["nodes"])
+        == "First source section."
+    )
+    assert len(canonical(projected)) <= 16000
+    assert all("attributes" not in n["node"] for n in projected["nodes"])
+    # The ordinary source API still returns full retained node metadata.
+    ordinary = model.read("book", "nav-first", byte_budget=60000)
+    assert any("attributes" in n["node"] for n in ordinary["nodes"])
