@@ -263,7 +263,7 @@ class Reader:
                 await self.write(key, owner, version)
                 await self.revoke([session])
                 return None
-            if request.url.path != "/reader/session":
+            if request.url.path not in ("/reader/session", "/reader/updates"):
                 session["seen"] = now
             for attempt in range(3):
                 try:
@@ -312,9 +312,15 @@ class Reader:
                 "body{font:18px/1.6 system-ui;margin:0;color:#20251f;background:#faf8f2}main{max-width:65ch;padding:1rem;margin:auto}a,button{display:inline-block;min-height:44px;box-sizing:border-box;padding:.5rem}button{font:inherit}.source-text{white-space:pre-wrap;overflow-wrap:anywhere}pre{white-space:pre-wrap;overflow-wrap:anywhere}summary{min-height:44px;cursor:pointer}li{margin-block:1rem;overflow-wrap:anywhere}:focus-visible{outline:3px solid #375d9c;outline-offset:3px}",
                 media_type="text/css",
             )
-        if path == "/reader/content.js":
+        if path in ("/reader/content.js", "/reader/updates.js"):
             return Response(
-                Path(__file__).with_name("reader_content.js").read_text(),
+                Path(__file__)
+                .with_name(
+                    "reader_updates.js"
+                    if path.endswith("updates.js")
+                    else "reader_content.js"
+                )
+                .read_text(),
                 media_type="text/javascript",
             )
         if path == "/reader/session.js":
@@ -427,7 +433,7 @@ class Reader:
         if not auth:
             destination = (
                 request.query_params.get("at")
-                if path in ("/reader/read", "/reader/content")
+                if path in ("/reader/read", "/reader/content", "/reader/updates")
                 else None
             )
             if destination:
@@ -437,7 +443,7 @@ class Reader:
                     destination = None
             return self.expired(destination)
         subject, session = auth
-        if path in ("/reader/read", "/reader/content"):
+        if path in ("/reader/read", "/reader/content", "/reader/updates"):
             return await deliver(self, request, library)
         if path == "/reader/session":
             return JSONResponse({"authenticated": True, "csrf": session["csrf"]})
@@ -599,6 +605,8 @@ class Reader:
             "/reader/session",
             "/reader/read",
             "/reader/content",
+            "/reader/updates",
+            "/reader/updates.js",
             "/reader/login",
             "/reader/callback",
             "/reader/style.css",
