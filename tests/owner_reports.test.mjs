@@ -7,8 +7,8 @@ function fixture(responses) {
  const events={}, sent=[], status={}, main={replaceChildren(){this.cleared=true;}}, fields={reference:'server-reference',csrf:'csrf',description:'Amount seems incomplete',proposal:'',region:''};
  const form={addEventListener(name,fn){events[name]=fn;},reset(){fields.description='';fields.proposal='';fields.region='';}};
  const location={href:'https://reader.example/reader/read?at=source',replace(url){this.redirect=url;}};
- vm.runInNewContext(script,{document:{querySelector:q=>({'#owner-report':form,'#report-status':status,main}[q]),addEventListener:(name,fn)=>{events[name]=fn;}},location,URL,URLSearchParams,AbortSignal,crypto:{randomUUID:()=> 'a'.repeat(32)},FormData:class {constructor(){return Object.entries(fields);}},fetch:async(url,options)=>{sent.push(JSON.parse(options.body));const response=responses.shift();if(response instanceof Error) throw response; return response;}});
- return {fields,status,main,location,sent,submit:()=>events.submit({preventDefault(){}}),expire:()=>events['reader-expired']()};
+ vm.runInNewContext(script,{document:{querySelector:q=>({'#owner-report':form,'#report-status':status,main}[q]),addEventListener:(name,fn)=>{events[name]=fn;}},location,URL,URLSearchParams,AbortSignal,crypto:{randomUUID:()=> 'a'.repeat(32)},FormData:class {constructor(){return Object.entries(fields);}},fetch:async(url,options)=>{sent.push(JSON.parse(options.body));const response=await responses.shift();if(response instanceof Error) throw response; return response;}});
+ return {fields,status,main,location,sent,submit:()=>events.submit({preventDefault(){}}),expire:()=>events['reader-expired'](),unmount:()=>events['reader-unmounted']?.()};
 }
 const response=(status,data)=>({ok:status===200,status,json:async()=>data});
 test('ambiguous response retains draft and retries exactly the same submission before receipt',async()=>{
@@ -28,4 +28,13 @@ test('expiry clears protected draft and returns to sign in without resubmission'
 });
 test('passive session expiry clears the draft held by the report form',async()=>{
  const f=fixture([new Error('timeout')]); await f.submit(); f.expire(); assert.equal(f.fields.description,'');
+});
+
+test('departing a mounted report clears its draft and ignores a late receipt',async()=>{
+ let settle;const f=fixture([new Promise(resolve=>settle=resolve)]);
+ const submitted=f.submit();f.unmount();
+ assert.equal(f.fields.description,'');
+ settle(response(200,{status:'received',receipt_id:'late'}));await submitted;
+ assert.doesNotMatch(f.status.textContent,/Received/);
+ await f.submit();assert.equal(f.sent.length,1);
 });

@@ -1,8 +1,14 @@
 (() => {
 // Progressive enhancement. Protected content stays only in the live document.
+const mount = document.querySelector('main');
+let dead = false;
+const active = () => !dead && mount?.isConnected !== false;
+document.addEventListener('reader-expired', () => {dead = true;});
+document.addEventListener('reader-unmounted', () => {dead = true;});
 const continuation = document.querySelector('[data-next-text]');
 if (continuation) continuation.addEventListener('click', async event => {
   event.preventDefault();
+  if (!active()) return;
   if (continuation.getAttribute('aria-disabled') === 'true') return;
   continuation.setAttribute('aria-disabled', 'true');
   const status = document.querySelector('[data-reading-status]');
@@ -12,6 +18,7 @@ if (continuation) continuation.addEventListener('click', async event => {
     const response = await fetch('/reader/content?' + url.searchParams.toString(), {
       cache: 'no-store', signal: AbortSignal.timeout(10000)
     });
+    if (!active()) return;
     if (response.status === 401) {
       document.dispatchEvent?.(new Event('reader-expired'));
       document.querySelector('main').replaceChildren();
@@ -20,6 +27,7 @@ if (continuation) continuation.addEventListener('click', async event => {
     }
     if (!response.ok) throw new Error('unavailable');
     const data = await response.json();
+    if (!active()) return;
     if (data.state === 'withheld') {
       document.querySelector('#text').replaceChildren();
       status.textContent = 'Text withheld by current withdrawal or supersession.';
@@ -83,7 +91,7 @@ if (continuation) continuation.addEventListener('click', async event => {
     } else continuation.remove();
     chunk.focus();
   } catch {
-    status.textContent = 'Text continuation interrupted. Earlier text remains; retry Continue text.';
+    if (active()) status.textContent = 'Text continuation interrupted. Earlier text remains; retry Continue text.';
   } finally {
     continuation.removeAttribute('aria-disabled');
   }

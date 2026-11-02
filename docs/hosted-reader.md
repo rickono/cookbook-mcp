@@ -126,3 +126,8 @@ phone/tablet reflow/zoom, keyboard and VoiceOver against the deployed service.
 Semantic labels, responsive styling and 44px controls are implemented; no actual
 device/accessibility or hosted performance audit is claimed. Keep raw evidence,
 credentials and books outside Git/GitHub.
+
+The assembled serving-only regression command, local synthetic browser harness,
+configuration checklist and outstanding evidence gates are recorded in
+[reader-release.md](reader-release.md). Passing those synthetic checks alone does
+not establish release acceptance.
