@@ -229,11 +229,40 @@ Live checks found two defects that the small synthetic preview did not expose:
 - Authored EPUB contents destinations may be empty anchors. Their subtree alone
   contains no text. A navigation selection now spans retained source order from
   its destination to the next authored destination in the same document, or to
-  the document end. Direct node selections retain their existing subtree scope.
+  the document end. The later chapter-navigation correction below extends this
+  interval across source documents. Direct node selections retain their subtree scope.
   Bounded cursors and exact source endpoints remain; a navigation interval never
   establishes semantic recipe completeness or approval. An empty-anchor fixture
   failed before the fix, then returned each distinct section without crossing the
   next authored destination, including one-node continuation chunks.
+
+### Chapter navigation and reading space
+
+An authored chapter destination can point to an image-only separator document.
+Stopping at that document returned whitespace while reporting the end of the
+selected text. Chapter navigation now follows the edition's retained reading
+order to the next authored destination, preserving exact source endpoints and
+occurrence identifiers. Ambiguous document occurrences retain the narrower
+document selection. This does not infer recipe boundaries or approval.
+
+The browser projection omits retained parser and CSS metadata before applying
+the existing byte limit. It requests the existing 60,000-byte and 300-node
+maximum; ordinary source API responses retain their node metadata. The selected
+chapter or recipe supplies the main heading, authored contents precede source
+document links, and repeated book metadata takes less space.
+
+The serving-only release selection passed 174 Python tests, with six Linux-only
+skips, and 51 Node tests. Synthetic regressions cover an image-only chapter
+separator, exclusion of the following chapter, exact continuation reconstruction,
+and text delivery within the unchanged byte limit. A 390-pixel Chrome preview
+using invented recipes displayed the chapter heading and recipe text. A separate
+read-only check against the reported publication returned 4,132 characters from
+five source documents where the old selection returned four newline characters.
+Private source material and screenshots remain outside Git.
+
+These are candidate-code observations. Deployment is held during a concurrent
+publication replacement; no Machine restart, image change, or configuration
+change forms part of this verification.
 
 The search comparison ran five alternating before/after pairs on the same live
 one-CPU VM and immutable publication, with the existing keyword collection already

@@ -31,13 +31,6 @@ def read_native(library, loc):
         "next_contents": None,
         "adjacent": [],
     }
-    for occurrence in structure["reading_order"]:
-        data["contents"].append(
-            {
-                "title": "Reading occurrence " + str(occurrence["ordinal"] + 1),
-                "at": encode_location({**base, "target_id": occurrence["id"]}),
-            }
-        )
     for nav in structure["navigation"]:
         data["contents"].append(
             {
@@ -45,6 +38,13 @@ def read_native(library, loc):
                 "at": encode_location({**base, "target_id": nav["id"]})
                 if nav["target"]["state"] == "resolved_node"
                 else None,
+            }
+        )
+    for occurrence in structure["reading_order"]:
+        data["contents"].append(
+            {
+                "title": "Source document " + str(occurrence["ordinal"] + 1),
+                "at": encode_location({**base, "target_id": occurrence["id"]}),
             }
         )
     more = [
@@ -66,8 +66,13 @@ def read_native(library, loc):
         loc["target_id"],
         cursor=loc.get("cursor"),
         related_offset=loc.get("related_offset", 0),
+        byte_budget=60000,
+        node_budget=300,
+        _reader=True,
     )
     data.update(result)
+    if result.get("selection_title"):
+        data["citation"]["section_title"] = result["selection_title"]
     data["text_blocks"] = project_blocks(library, pub, result["nodes"])
     data["text"] = "".join(b["text"] for b in data["text_blocks"])
     data["state"] = "partial_text" if result["next_cursor"] else "complete_text"
@@ -105,6 +110,7 @@ def read_native(library, loc):
             loc["target_id"],
             related_offset=loc.get("related_offset", 0),
             node_budget=1,
+            _reader=True,
         )
     )
     data["related"] = [

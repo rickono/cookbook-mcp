@@ -166,18 +166,18 @@ async def deliver(reader, request, library, owner=None, csrf=""):
         )
     body += (
         '</nav><header class="reading-head"><p class="kicker">'
-        + escape(c["format"] + " · " + c["title"])
+        + escape(c["format"] + (" · " + c["title"] if c.get("section_title") else ""))
         + "</p><h1>"
         + escape(c.get("section_title", c["title"]))
         + '</h1><p class="reading-byline">'
-        + escape(c["title"] + " · " + ", ".join(c["authors"]))
+        + escape(", ".join(c["authors"]))
         + "</p></header>"
     )
     body += (
         '<div class="reading-layout"><section class="reading-body"><p class="reading-status" data-reading-status role="status">'
         + {
             "partial_text": "Partial text — more text remains.",
-            "complete_text": "End of section text. Loaded text does not establish a complete recipe or supporting work.",
+            "complete_text": "End of selected source text.",
             "withheld": "Text withheld by current withdrawal or supersession.",
         }.get(data["state"], "Book contents")
         + "</p>"
@@ -190,7 +190,7 @@ async def deliver(reader, request, library, owner=None, csrf=""):
             + (
                 "Approved content"
                 if c["eligibility"]["eligible"]
-                else "Unapproved content — readable text is not approval."
+                else "Unapproved source text · completeness not verified"
             )
             + "</p>"
         )
@@ -221,7 +221,7 @@ async def deliver(reader, request, library, owner=None, csrf=""):
                 indent=2,
             )
         )
-        + "</pre><p>Corrections and crop confirmation do not establish approval. Printed page labels remain unverified unless source metadata establishes them.</p></details>"
+        + "</pre><p>Reading a section does not establish complete recipe content or supporting preparations. Corrections and crop confirmation do not establish approval. Printed page labels remain unverified unless source metadata establishes them.</p></details>"
     )
     body += (
         '<details class="contents-panel"'

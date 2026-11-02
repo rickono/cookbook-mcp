@@ -102,7 +102,7 @@ if (continuation) continuation.addEventListener('click', async event => {
     current.searchParams.set('at', url.searchParams.get('at'));
     current.hash = chunk.id;
     history.replaceState(null, '', current);
-    status.textContent = data.next_text ? 'Partial text — more text remains.' : 'End of section text. Loaded text does not establish a complete recipe or supporting work.';
+    status.textContent = data.next_text ? 'Partial text — more text remains.' : 'End of selected source text.';
     if (data.next_text) {
       url.searchParams.set('at', data.next_text);
       continuation.href = url.pathname + url.search;
