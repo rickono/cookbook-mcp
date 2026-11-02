@@ -22,6 +22,7 @@
     status.textContent = ''; retry.hidden = true;
   }
   document.addEventListener('reader-expired', expire);
+  document.addEventListener('reader-unmounted', expire);
   async function response(url, options={}) {
     const r = await fetch(url, {cache:'no-store', signal:timeout(), ...options});
     if (r.status === 401) {

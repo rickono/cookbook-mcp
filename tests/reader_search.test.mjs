@@ -26,7 +26,7 @@ function fixture() {
   const location={href:'https://reader.example/reader/search',replace(url){this.replaced=url;}};
   const results=[];
   const reading=new Element('main');reading.append(new Element('article'));
-  class Parser {parseFromString(body){return body==='reading'?{querySelector:()=>reading,querySelectorAll:()=>[]}:{querySelectorAll:()=>[]};}}
+  class Parser {parseFromString(body){return body==='reading'?{querySelector:()=>reading,querySelectorAll:q=>q==='link[rel="stylesheet"][href]'?[Object.assign(new Element('link'),{href:'/reader/presentation.css'})]:[]}:{querySelectorAll:()=>[]};}}
   const fetch=async(url,options={})=>{
     requests.push([url,options]);
     if(url==='/reader/session')return {ok:true,json:async()=>({csrf:'synthetic'})};
@@ -96,4 +96,11 @@ test('search within the opened book retains the originating query',async()=>{
  const scope=new Element('a');scope.href='https://reader.example/reader/search?at='+Buffer.from(JSON.stringify({book_id:'new-book'})).toString('base64url');
  f.click(scope);await flush();
  assert.equal(f.form.elements.query.value,'salt');assert.equal(f.form.elements.book_id.value,'new-book');
+});
+
+test('mounted reading carries its presentation stylesheet into the live document',async()=>{
+ const f=fixture();await flush();f.form.elements.query.value='salt';
+ f.results.push({publication_id:'pinned',groups:{content:group([hit('a')]),section:group()}});f.submit();await flush();
+ f.click(f.nodes['#content-results'].childNodes[0].childNodes[0]);await flush();
+ assert.ok(f.main.childNodes.some(n=>n.href==='/reader/presentation.css'));
 });

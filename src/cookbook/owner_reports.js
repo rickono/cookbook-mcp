@@ -3,9 +3,9 @@
   if (!form) return;
   const status = document.querySelector('#report-status');
   let pending = null, busy = false, expired = false;
-  document.addEventListener('reader-expired', () => {
-    expired = true; form.reset(); pending = null;
-  });
+  function discard() {expired = true; form.reset(); pending = null;}
+  document.addEventListener('reader-expired', discard);
+  document.addEventListener('reader-unmounted', discard);
   form.addEventListener('submit', async event => {
     event.preventDefault();
     if (busy || expired) return;
@@ -31,6 +31,7 @@
         return;
       }
       const data = await response.json();
+      if (expired) return;
       if (response.ok && data.status === 'received') {
         status.textContent = 'Received, not verified. Receipt: ' + data.receipt_id;
         pending = null; form.reset();
@@ -38,7 +39,7 @@
         status.textContent = ({rate_limited:'Rate limit reached. Retry this report later.', submission_conflict:'Submission conflict. Existing receipt was not overwritten.', reporting_unavailable:'Reporting unavailable. Draft remains in this tab.', receipt_unconfirmed:'Receipt unconfirmed. Retry the same report.'})[data.error] || 'Report not confirmed. Retry or correct the fields.';
         if (response.status === 400) pending = null;
       }
-    } catch { status.textContent = 'Response timed out or connection failed. Receipt unconfirmed. Retry the same report.'; }
+    } catch { if (!expired) status.textContent = 'Response timed out or connection failed. Receipt unconfirmed. Retry the same report.'; }
     finally { busy = false; }
   });
 })();

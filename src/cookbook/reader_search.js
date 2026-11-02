@@ -138,10 +138,18 @@
         saved = document.createDocumentFragment();
         saved.append(...main.childNodes);
       }
+      document.dispatchEvent(new Event('reader-unmounted'));
       main.replaceChildren(...doc.querySelector('main').childNodes);
+      for (const declared of doc.querySelectorAll('link[rel="stylesheet"][href]')) {
+        const href = declared.getAttribute('href');
+        if (!/^\/reader\/[a-z_-]+\.css$/.test(href)) continue;
+        const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = href;
+        main.append(style);
+      }
       history.replaceState(null, '', href);
       const back = text('button', 'Return to search results');
       back.addEventListener('click', () => {
+        document.dispatchEvent(new Event('reader-unmounted'));
         main.replaceChildren(saved); saved = null;
         history.replaceState(null, '', '/reader/search');
         status.textContent = 'Search restored.';
@@ -166,6 +174,7 @@
       e.preventDefault();
       const at = new URL(scopeLink.href).searchParams.get('at');
       const loc = JSON.parse(atob(at.replace(/-/g,'+').replace(/_/g,'/')));
+      document.dispatchEvent(new Event('reader-unmounted'));
       main.replaceChildren(saved); saved = null;
       history.replaceState(null, '', '/reader/search');
       const option = text('option', 'Current book'); option.value = loc.book_id;
