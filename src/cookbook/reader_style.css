@@ -78,6 +78,7 @@ a {
   text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
   display: inline-flex;
   align-items: center;
+  min-width: 44px;
   min-height: 44px;
   max-width: 100%;
 }

@@ -104,16 +104,37 @@ the polished layout and explicitly removed kitchen mode from the requested scope
 
 | Gate | Observation or remaining requirement |
 | --- | --- |
-| Assembled HTTP and regressions | 161 passed after remediation; six Linux-only serving checks skipped on macOS. |
+| Assembled HTTP and regressions | 161 passed on macOS with six Linux-only skips. [Linux CI](https://github.com/rickono/cookbook-mcp/actions/runs/41380576790) subsequently passed all 167, including serving enforcement; the preview boundary test also passed. |
 | Browser scripts | 43 Node DOM simulations passed after UI polish, including search-mounted enhancement initialization; these are not browser rendering. |
 | Local browser | The initial HTTPS harness failed with `ERR_CERT_AUTHORITY_INVALID`; no trust change was made. The separate synthetic HTTP loopback preview later exercised Chrome catalog, search-mounted reading, saved places and decoded sample originals, with 390/320px reading reflow. This proves local interaction only. |
 | Identity and Mac-off | Deployment is now owner-authorized. Dedicated live web-client credentials and verified callback/issuer/rotation configuration still require provisioning. Real login, issued refresh token, actual renewal and Mac-off operation remain unverified. |
 | Shared storage | LocalStore conditional-write behavior observed; live S3 consistency/CAS, least-privilege policies, replica/restart durability and backup recovery remain unverified. No production storage credentials/policy evidence supplied. |
 | Native search | Real Library native resolution and SQLite section retrieval covered; no running Typesense mixed-publication service supplied. Actual typo/ranking behavior remains unverified. |
-| Originals/resource enforcement | Authenticated synthetic JPEG bytes and injected scanned rendering outcomes covered; a sample original decoded in local Chrome. Hosted representative originals and Linux serving enforcement still require observation. Refusals do not count as successful display or incident repair. |
+| Originals/resource enforcement | Authenticated synthetic JPEG bytes and injected scanned rendering outcomes covered; a sample original decoded in local Chromium. Linux CI passed all six synthetic decoder enforcement checks. Hosted representative originals still require observation. Refusals do not count as successful display or incident repair. |
 | Devices/accessibility | Local Chrome 390/320px reading reflow observed. Safari, iPhone/iPad, VoiceOver, full keyboard/focus/contrast/44px target checks, tablet orientations, 1280px desktop, 200/400% zoom and orientation during reading/failure remain unverified. Kitchen mode and its former 52px target requirement were removed at the owner's request. |
 | Performance/budgets | No authorized hosted workload or network shaper supplied. Still require 10 Mbps/100ms RTT, at least 20 warm mixed-format repetitions, separate cold start, action acknowledgement <=200ms, first usable text/search p95 <=5s, actionable metadata/text/search <=10s and images <=30s. Browser timeout logic and local timing are not measured network evidence. |
 | Privacy | Synthetic HTTP checks cover no-store/CSP/frame/referrer/nosniff, CSRF/Origin, escaping, token custody, logout and expiry. Actual browser cache/storage/history, deployed edge/client logs and CDN behavior need inspection. |
+
+### Pre-deployment browser check
+
+After the main integration landed as
+`5ba846efa2b389a8f805690a49ac25e8249b9378`, the local synthetic preview was
+checked in Chromium 152.0.7977.169 / Electron 44.10.0. Catalog, search, bookmarks,
+native/scanned reading and original views were sampled at 320 and 1280 CSS px.
+Computed bounds, visible form labels and foreground/background color contrast
+were inspected; this was a focused check, not a complete accessibility audit.
+
+The Books breadcrumb measured 40.6 × 44px. The shared link rule now gives it a
+44px minimum width. Rechecking reading with all details expanded found no
+sampled targets below 44px, missing input labels, page overflow or text contrast
+failures. The sampled catalog, search, bookmarks and original views passed the
+same checks. Tab reached the skip link with a visible 3px focus outline; Enter
+moved focus to `main#reader-main`. A synthetic 1000 × 1400 original decoded in
+the browser. No service worker controlled the page; local/session storage were
+empty after removing the obsolete demo kitchen preference left by the prototype.
+
+These observations do not establish Safari/VoiceOver, real device, full keyboard,
+zoom, network, identity-provider, cloud persistence or hosted acceptance.
 
 ## Reviewable deployment configuration checklist
 
