@@ -1,0 +1,47 @@
+name: Reader release
+
+on:
+  pull_request:
+  push:
+    branches: [main, integration/spec-98]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reader-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  serving:
+    name: Linux serving and reader journeys
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: '0.11.14'
+      - name: Install locked dependencies
+        run: uv sync --frozen
+      # Deliberately explicit: discovery can invoke ingestion/OCR, which requires
+      # the separate Linux VM/cgroup admission workflow. These tests serve only
+      # synthetic fixtures; rendering enforcement uses synthetic decoders.
+      - name: Verify assembled reader and Linux serving limits
+        run: python scripts/verify_reader_release.py
+      - name: Verify loopback preview boundary
+        run: uv run pytest -q tests/test_reader_preview.py
+      - name: Check reader code
+        run: |
+          uv run ruff check src/cookbook/reader*.py src/cookbook/owner_reports.py src/cookbook/owner_report_config.py src/cookbook/personal_config.py scripts/preview_reader.py scripts/verify_reader_release.py tests/test_reader*.py tests/reader_release_fixture.py
+          uv run ruff format --check src/cookbook/reader*.py src/cookbook/owner_reports.py src/cookbook/owner_report_config.py src/cookbook/personal_config.py scripts/preview_reader.py scripts/verify_reader_release.py tests/test_reader*.py tests/reader_release_fixture.py
+          git diff --check

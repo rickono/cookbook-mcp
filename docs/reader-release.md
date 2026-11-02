@@ -7,7 +7,7 @@ Prepared base: `integration/spec-98` at
 `74b21a8f0de1a4b9d88b4bb1a4bd0500ad25fbd5`, containing #99–106.
 **Release acceptance remains pending external evidence.** Parent integration and
 code review can proceed; merging this work does not establish release acceptance.
-No deployment, provider/account changes, OCR, ingestion or inference was performed.
+The implementation and local preview do not establish a deployed release.
 
 ## Repeatable safe checks
 
@@ -15,6 +15,7 @@ Run from the repository root:
 
 ```sh
 python3 scripts/verify_reader_release.py
+uv run pytest -q tests/test_reader_preview.py
 uv run ruff check scripts/verify_reader_release.py tests/reader_release_fixture.py tests/test_reader_release.py
 uv run ruff format --check scripts/verify_reader_release.py tests/reader_release_fixture.py tests/test_reader_release.py
 git diff --check
@@ -25,6 +26,10 @@ manifest, serving-rendering and legacy/owner report regressions plus browser-scr
 DOM simulations. It never discovers the ingestion/model/OCR suite. Existing Linux
 serving-enforcement tests skip on macOS; a skip is not enforcement proof. Keep the
 separate mandatory OCR launcher and all resource ceilings unchanged.
+
+The `Reader release` GitHub Actions workflow repeats this explicit selection on
+Ubuntu with Python 3.12, Node 22 and the locked dependencies. Its synthetic decoder
+checks execute the Linux serving limits; it does not discover or invoke OCR tests.
 
 `tests/test_reader_release.py` adds a single cross-feature HTTP journey over real
 Library, publication and storage adapters: sign-in, catalog, section search,
@@ -48,7 +53,7 @@ synthetic artifacts stay outside Git.
 ## Integration fixes
 
 Search-mounted reading now carries trusted first-party response stylesheets into
-the live document, including the reading/kitchen stylesheet formerly lost with the
+the live document, including the reading stylesheet formerly lost with the
 parsed response head. The existing first-party script initialization remains.
 A mount-departure event clears personal/report drafts and invalidates continuation
 handlers. Late continuation responses after departure or authorization expiry
@@ -80,7 +85,7 @@ Open `/reader/login`. Its synthetic same-origin issuer has no `/authorize` route
 so the expected 404 address contains the real transaction's `state`. Navigate to
 `/reader/callback?code=synthetic&state=<that-state>&iss=https%3A%2F%2F127.0.0.1%3A9443%2F`
 in the same browser to simulate the external provider response, then exercise
-catalog/search/read/continuation/bookmarks/original selection/kitchen/return/logout.
+catalog/search/read/continuation/bookmarks/original selection/return/logout.
 This tests production callback correlation and browser cookie custody, not a real
 provider login. Scanned reporting and faults are covered by the HTTP/DOM selection;
 this small browser fixture does not claim all mixed-format acceptance scenarios.
@@ -93,24 +98,27 @@ Local verification on 2026-11-01 (America/Chicago), macOS, Python 3.12.11,
 Node v22.23.1. Fixture identities are invented (`book-0`, `section-0`, `image-0`);
 publication IDs are generated per run and source hashes derive solely from the
 synthetic fixture. The base above plus this commit identify the tested code; there
-is **no tested deployment**. There is **no observed reader browser version**.
+is **no tested deployment**. Later synthetic loopback browser observations are
+recorded in [reader-local-preview.md](reader-local-preview.md). The owner accepted
+the polished layout and explicitly removed kitchen mode from the requested scope.
 
 | Gate | Observation or remaining requirement |
 | --- | --- |
 | Assembled HTTP and regressions | 161 passed after remediation; six Linux-only serving checks skipped on macOS. |
-| Browser scripts | 42 Node DOM simulations passed after remediation; these are not browser rendering. |
-| Browser attempt | T3 preview reached `chrome-error://chromewebdata/`; snapshot timed out after 15s; navigation explicitly failed `ERR_CERT_AUTHORITY_INVALID` for the local self-signed certificate. No protected reader view or image was observed. A browser-trusted local TLS endpoint is absent. No interstitial bypass or trust change was made. |
-| Identity and Mac-off | No dedicated live web-client credentials, verified callback/issuer/rotation configuration, authorized hosted deployment or Mac-off test environment supplied. Real login, issued refresh token and actual renewal remain unverified. |
+| Browser scripts | 43 Node DOM simulations passed after UI polish, including search-mounted enhancement initialization; these are not browser rendering. |
+| Local browser | The initial HTTPS harness failed with `ERR_CERT_AUTHORITY_INVALID`; no trust change was made. The separate synthetic HTTP loopback preview later exercised Chrome catalog, search-mounted reading, saved places and decoded sample originals, with 390/320px reading reflow. This proves local interaction only. |
+| Identity and Mac-off | Deployment is now owner-authorized. Dedicated live web-client credentials and verified callback/issuer/rotation configuration still require provisioning. Real login, issued refresh token, actual renewal and Mac-off operation remain unverified. |
 | Shared storage | LocalStore conditional-write behavior observed; live S3 consistency/CAS, least-privilege policies, replica/restart durability and backup recovery remain unverified. No production storage credentials/policy evidence supplied. |
 | Native search | Real Library native resolution and SQLite section retrieval covered; no running Typesense mixed-publication service supplied. Actual typo/ranking behavior remains unverified. |
-| Originals/resource enforcement | Authenticated synthetic JPEG bytes and injected scanned rendering outcomes covered. No browser-visible decoded original or Linux serving-enforcement run observed. Refusals do not count as successful display or incident repair. |
-| Devices/accessibility | No Safari, iPhone/iPad, VoiceOver or equivalent device test session supplied. Keyboard, focus, contrast, actual 44/52px targets, 320px reflow, 390px phone, tablet orientations, 1280px desktop, 200/400% zoom and orientation during reading/failure remain unverified. |
+| Originals/resource enforcement | Authenticated synthetic JPEG bytes and injected scanned rendering outcomes covered; a sample original decoded in local Chrome. Hosted representative originals and Linux serving enforcement still require observation. Refusals do not count as successful display or incident repair. |
+| Devices/accessibility | Local Chrome 390/320px reading reflow observed. Safari, iPhone/iPad, VoiceOver, full keyboard/focus/contrast/44px target checks, tablet orientations, 1280px desktop, 200/400% zoom and orientation during reading/failure remain unverified. Kitchen mode and its former 52px target requirement were removed at the owner's request. |
 | Performance/budgets | No authorized hosted workload or network shaper supplied. Still require 10 Mbps/100ms RTT, at least 20 warm mixed-format repetitions, separate cold start, action acknowledgement <=200ms, first usable text/search p95 <=5s, actionable metadata/text/search <=10s and images <=30s. Browser timeout logic and local timing are not measured network evidence. |
 | Privacy | Synthetic HTTP checks cover no-store/CSP/frame/referrer/nosniff, CSRF/Origin, escaping, token custody, logout and expiry. Actual browser cache/storage/history, deployed edge/client logs and CDN behavior need inspection. |
 
 ## Reviewable deployment configuration checklist
 
-Provisioning and live changes belong to a separate authorized deployment step.
+The owner has authorized the deployment step; provisioning credentials are still
+required before live identity and storage changes can be performed.
 Use [hosted-reader.md](hosted-reader.md), [reader-personal.md](reader-personal.md),
 [owner-reports.md](owner-reports.md) and [hosted-runtime.md](hosted-runtime.md)
 as the exact configuration contracts. Before release, attach source-safe evidence
