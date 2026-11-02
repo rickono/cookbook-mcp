@@ -82,6 +82,14 @@ The library runtime credential remains read-only. LocalStore is synthetic-test
 infrastructure, not a hosted fallback. Accepted-operation entries contain only a
 fingerprint/result; records contain no access tokens, CSRF values or book text.
 
+The deployed R2 grant uses a separate bucket-scoped Object Read & Write token.
+R2 permanent tokens do not enforce the finer operation/prefix policy above;
+listing and deletion are also allowed within this one metadata-only bucket.
+The key cannot administer buckets or access library, session or report stores.
+Live synthetic conditional-write and cross-bucket denial checks verify this
+provider boundary. Backups require independent authority; this grant does not
+provide access to a backup bucket.
+
 ## Proof still required
 
 `tests/test_reader_personal.py` uses two authenticated sessions through the

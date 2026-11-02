@@ -80,6 +80,27 @@ hour ends; a generous clock-skew buffer is appropriate. Back up observations
 independently of publication retention, keeping owner descriptions private.
 No deployment, bucket provisioning or identity changes are performed here.
 
+### R2 deployment permissions
+
+The reader deployment uses a dedicated US R2 bucket with its own bucket-scoped
+Object Read & Write token. Permanent R2 tokens grant bucket-level operations;
+they do not implement the finer GetObject/PutObject-only prefix policy above.
+The key can list objects and mutate the hourly limit records in this one bucket.
+It has no authority over library, session, personal or legacy agent-report buckets.
+
+An indefinite bucket lock on `owner-observations/receipts/` enforces the accepted
+receipt boundary at the provider: overwrite and delete both fail, while first
+creation remains allowed. No object-expiry lifecycle is configured. R2's default
+incomplete-multipart cleanup does not delete completed receipts. Live synthetic
+checks verified conditional writes, cross-bucket denial and both lock refusals.
+
+R2 checks the lock before `If-None-Match` and returns
+`ObjectLockedByBucketPolicy` instead of the usual precondition error. The storage
+adapter treats this as a conflict only for conditional creation, allowing report
+intake to read and verify the existing durable receipt. Locked updates and access
+denials remain errors. A focused regression failed before this adjustment and
+passed afterwards; live provider checks remain separate from its stubbed test.
+
 ## Verification and remaining proof
 
 `uv run pytest -q tests/test_owner_reports.py` exercises the assembled public HTTP

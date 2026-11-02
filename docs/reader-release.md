@@ -138,6 +138,23 @@ zoom, network, identity-provider, cloud persistence or hosted acceptance.
 
 ## Reviewable deployment configuration checklist
 
+Provisioning on 2026-11-01 created a dedicated confidential Cookbook Reader web
+client, exact hosted callback/logout/origin restrictions, authorization-code and
+refresh grants, rotating refresh tokens with seven-day idle/thirty-day maximum
+lifetimes, Google login and only the existing API's user-delegated `library:read`
+permission. The client has no Management API, machine-to-machine or anonymous
+library grant. Existing clients and the API's offline-access setting were retained.
+
+Three separate private US R2 buckets and bucket-scoped runtime keys were created.
+Live source-free probes passed conditional create/update/read, stale/duplicate
+write refusal, and cross-bucket access denial. An indefinite lock on accepted
+owner receipts refused overwrite and deletion. R2's lock-before-precondition
+error required a conditional-create conflict adapter; a regression first failed
+on that provider error and then passed with unrelated failures still propagated.
+Actual operation-level grant limits are documented in the storage contracts.
+This provisioning record does not establish a deployed reader, restart/backup
+recovery, real login/renewal, Mac-off operation or device/performance acceptance.
+
 The owner has authorized the deployment step; provisioning credentials are still
 required before live identity and storage changes can be performed.
 Use [hosted-reader.md](hosted-reader.md), [reader-personal.md](reader-personal.md),

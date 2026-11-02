@@ -224,12 +224,14 @@ class S3Store:
             )
             return r["ETag"]
         except ClientError as e:
-            if e.response["Error"]["Code"] in (
+            code = e.response["Error"]["Code"]
+            # R2 checks retention locks before If-None-Match on an existing object.
+            if code in (
                 "PreconditionFailed",
                 "412",
                 "ConditionalRequestConflict",
                 "409",
-            ):
+            ) or (expected is None and code == "ObjectLockedByBucketPolicy"):
                 raise Conflict("conditional write conflict") from None
             raise
 
