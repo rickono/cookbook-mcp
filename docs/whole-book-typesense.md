@@ -4,7 +4,7 @@ The integration for [Publish whole-book structure and Typesense retrieval throug
 adds native EPUB source capture and an owned Typesense keyword index to the
 existing immutable publication lifecycle. The original books remain authoritative.
 The [whole-book model](whole-book-model.md) defines the records; agreed terminology
-is in [CONTEXT.md](../CONTEXT.md).
+is in [GLOSSARY.md](../GLOSSARY.md).
 
 ## Publication and coverage
 
