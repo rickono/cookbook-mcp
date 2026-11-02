@@ -7,7 +7,8 @@ Prepared base: `integration/spec-98` at
 `74b21a8f0de1a4b9d88b4bb1a4bd0500ad25fbd5`, containing #99–106.
 **Release acceptance remains pending external evidence.** Parent integration and
 code review can proceed; merging this work does not establish release acceptance.
-The implementation and local preview do not establish a deployed release.
+The implementation and local preview do not establish release acceptance.
+Observed provisioning and hosted checks are recorded below.
 
 ## Repeatable safe checks
 
@@ -107,9 +108,9 @@ the polished layout and explicitly removed kitchen mode from the requested scope
 | Assembled HTTP and regressions | 161 passed on macOS with six Linux-only skips. [Linux CI](https://github.com/rickono/cookbook-mcp/actions/runs/41380576790) subsequently passed all 167, including serving enforcement; the preview boundary test also passed. |
 | Browser scripts | 43 Node DOM simulations passed after UI polish, including search-mounted enhancement initialization; these are not browser rendering. |
 | Local browser | The initial HTTPS harness failed with `ERR_CERT_AUTHORITY_INVALID`; no trust change was made. The separate synthetic HTTP loopback preview later exercised Chrome catalog, search-mounted reading, saved places and decoded sample originals, with 390/320px reading reflow. This proves local interaction only. |
-| Identity and Mac-off | Deployment is now owner-authorized. Dedicated live web-client credentials and verified callback/issuer/rotation configuration still require provisioning. Real login, issued refresh token, actual renewal and Mac-off operation remain unverified. |
-| Shared storage | LocalStore conditional-write behavior observed; live S3 consistency/CAS, least-privilege policies, replica/restart durability and backup recovery remain unverified. No production storage credentials/policy evidence supplied. |
-| Native search | Real Library native resolution and SQLite section retrieval covered; no running Typesense mixed-publication service supplied. Actual typo/ranking behavior remains unverified. |
+| Identity and Mac-off | Deployment is now owner-authorized. The dedicated client is provisioned. Real hosted login and encrypted refresh-token issuance passed; actual renewal and Mac-off operation remain unverified. |
+| Shared storage | Live private R2 conditional writes, lock behavior and cross-bucket denial passed. A real bookmark was acknowledged durably. Independent backup roundtrip and isolated restore passed; ongoing backup cadence, replica/restart journeys and full personal/report acceptance remain pending. |
+| Native search | Real Library native resolution and SQLite section retrieval covered; live Typesense returns native matches. Hosted search exposed repeated control reads; the bounded fix and source-safe comparison are recorded below. Full typo/ranking and mixed-format browser acceptance remains pending. |
 | Originals/resource enforcement | Authenticated synthetic JPEG bytes and injected scanned rendering outcomes covered; a sample original decoded in local Chromium. Linux CI passed all six synthetic decoder enforcement checks. Hosted representative originals still require observation. Refusals do not count as successful display or incident repair. |
 | Devices/accessibility | Local Chrome 390/320px reading reflow observed. Safari, iPhone/iPad, VoiceOver, full keyboard/focus/contrast/44px target checks, tablet orientations, 1280px desktop, 200/400% zoom and orientation during reading/failure remain unverified. Kitchen mode and its former 52px target requirement were removed at the owner's request. |
 | Performance/budgets | No authorized hosted workload or network shaper supplied. Still require 10 Mbps/100ms RTT, at least 20 warm mixed-format repetitions, separate cold start, action acknowledgement <=200ms, first usable text/search p95 <=5s, actionable metadata/text/search <=10s and images <=30s. Browser timeout logic and local timing are not measured network evidence. |
@@ -155,8 +156,8 @@ Actual operation-level grant limits are documented in the storage contracts.
 This provisioning record does not establish a deployed reader, restart/backup
 recovery, real login/renewal, Mac-off operation or device/performance acceptance.
 
-The owner has authorized the deployment step; provisioning credentials are still
-required before live identity and storage changes can be performed.
+The owner authorized provisioning and cutover. Live identity and isolated storage
+are configured; outstanding acceptance gates remain open.
 Use [hosted-reader.md](hosted-reader.md), [reader-personal.md](reader-personal.md),
 [owner-reports.md](owner-reports.md) and [hosted-runtime.md](hosted-runtime.md)
 as the exact configuration contracts. Before release, attach source-safe evidence
@@ -192,6 +193,57 @@ passages, personal descriptions, private paths and raw evidence outside Git/GitH
 - Run the outstanding observed device, accessibility, Typesense, Linux rendering,
   hosted durability/Mac-off and shaped-network journeys above. Record failure and
   recovery as well as success; missing prerequisites remain acceptance blockers.
+
+## First hosted cutover and live remediation
+
+Observed 2026-11-02 UTC on the existing Fly Machine and encrypted volume, retaining
+one shared CPU and 1024 MiB. The guarded image update preserved services, mount,
+resources and the repaired active publication. Public health returned 200;
+anonymous MCP/readiness access returned 401. The reader sent no-store, CSP,
+referrer/frame/nosniff protections and a secure HttpOnly SameSite=Lax transaction
+cookie. Actual Chrome sign-in returned to the catalog through Auth0; the private
+R2 session envelope contained both an access token and a refresh token.
+No credential values or browser cookies are part of this record.
+
+A real bookmark received a durable acknowledgement. Private operator tooling
+snapshots the separate metadata stores into an independently keyed, private,
+locked backup bucket and verifies cloud readback plus an isolated LocalStore
+restore. A synthetic two-object roundtrip passed before cutover. The backup key
+is absent from the runtime. This is a **manual operator workflow**; no periodic
+backup schedule or recovery-point objective is established. Restored session
+evidence is forensic only and must not revive logged-out sessions.
+
+Live checks found two defects that the small synthetic preview did not expose:
+
+- A twenty-hit section search made sixty serial reads of the current withdrawal
+  control object. One fresh snapshot per query now supplies suppression and
+  citation eligibility together; subsequent queries still reload current control
+  state and fail closed on corrupt/unavailable decisions. The regression failed
+  with sixty reads before the fix and passed with one afterward.
+- Authored EPUB contents destinations may be empty anchors. Their subtree alone
+  contains no text. A navigation selection now spans retained source order from
+  its destination to the next authored destination in the same document, or to
+  the document end. Direct node selections retain their existing subtree scope.
+  Bounded cursors and exact source endpoints remain; a navigation interval never
+  establishes semantic recipe completeness or approval. An empty-anchor fixture
+  failed before the fix, then returned each distinct section without crossing the
+  next authored destination, including one-node continuation chunks.
+
+The search comparison ran five alternating before/after pairs on the same live
+one-CPU VM and immutable publication, with the existing keyword collection already
+prepared. All twenty rows and complete response digests matched in every pair.
+Section retrieval median was 11.012 s (10.271–13.148 s) before and 0.242 s
+(0.209–0.450 s) after; measured remote control reads accounted for nearly all
+elapsed time. The change reduces those reads from sixty to one. These are
+server-side section-query observations, **not** a shaped-network browser p95 or
+full reader timing acceptance. Native search, browser authentication and response
+paint were outside that comparison. Private raw evidence stays outside Git.
+
+The safe release selection passed 167 Python tests with six Linux-only skips on
+macOS, and 43 Node checks. Full hosted browser journeys, refresh renewal, supported
+original display, device/accessibility checks and shaped-network budgets still
+require observed evidence. The source-image limitation reported by the independent
+repair is unchanged; no rendering ceiling, OCR or inference was invoked here.
 
 ## Two-axis remediation disposition
 
