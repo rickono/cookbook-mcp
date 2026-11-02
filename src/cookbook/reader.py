@@ -27,6 +27,21 @@ TRANSACTION = "__Host-reader-login"
 IDLE = 7 * 86400
 LIFETIME = 30 * 86400
 
+# Public generic first-party assets; protected routes are registered separately.
+ASSETS = {
+    "/reader/presentation.css": ("reader_presentation.css", "text/css"),
+    "/reader/presentation.js": ("reader_presentation.js", "text/javascript"),
+    "/reader/style.css": ("reader_style.css", "text/css"),
+    "/reader/personal.js": ("reader_personal.js", "text/javascript"),
+    "/reader/search.js": ("reader_search.js", "text/javascript"),
+    "/reader/original.js": ("reader_original.js", "text/javascript"),
+    "/reader/original.css": ("reader_original.css", "text/css"),
+    "/reader/reports.js": ("owner_reports.js", "text/javascript"),
+    "/reader/content.js": ("reader_content.js", "text/javascript"),
+    "/reader/updates.js": ("reader_updates.js", "text/javascript"),
+    "/reader/session.js": ("reader_session.js", "text/javascript"),
+}
+
 
 def opaque():
     return secrets.token_urlsafe(32)
@@ -328,61 +343,10 @@ class Reader:
 
     async def dispatch(self, request, library):
         path = request.url.path
-        if path in ("/reader/presentation.css", "/reader/presentation.js"):
+        if path in ASSETS:
+            filename, media_type = ASSETS[path]
             return Response(
-                Path(__file__)
-                .with_name(
-                    path.rsplit("/", 1)[1].replace(
-                        "presentation.", "reader_presentation."
-                    )
-                )
-                .read_text(),
-                media_type="text/css" if path.endswith(".css") else "text/javascript",
-            )
-        if path == "/reader/style.css":
-            return Response(
-                "body{font:18px/1.6 system-ui;margin:0;color:#20251f;background:#faf8f2}main{max-width:65ch;padding:1rem;margin:auto}a,button{display:inline-block;min-height:44px;box-sizing:border-box;padding:.5rem}button,input,select{font:inherit;max-width:100%;min-height:44px;box-sizing:border-box}label{display:block}#owner-report label{display:block}#owner-report textarea,#owner-report input:not([type=hidden]){box-sizing:border-box;max-width:100%;width:100%;font:inherit;min-height:44px}.source-text{white-space:pre-wrap;overflow-wrap:anywhere}pre{white-space:pre-wrap;overflow-wrap:anywhere}summary{min-height:44px;cursor:pointer}li{margin-block:1rem;overflow-wrap:anywhere}:focus-visible{outline:3px solid #375d9c;outline-offset:3px}",
-                media_type="text/css",
-            )
-        if path == "/reader/personal.js":
-            return Response(
-                Path(__file__).with_name("reader_personal.js").read_text(),
-                media_type="text/javascript",
-            )
-        if path == "/reader/search.js":
-            return Response(
-                Path(__file__).with_name("reader_search.js").read_text(),
-                media_type="text/javascript",
-            )
-        if path in ("/reader/original.js", "/reader/original.css"):
-            return Response(
-                Path(__file__)
-                .with_name(
-                    path.rsplit("/", 1)[1].replace("original.", "reader_original.")
-                )
-                .read_text(),
-                media_type="text/css" if path.endswith(".css") else "text/javascript",
-            )
-        if path == "/reader/reports.js":
-            return Response(
-                Path(__file__).with_name("owner_reports.js").read_text(),
-                media_type="text/javascript",
-            )
-        if path in ("/reader/content.js", "/reader/updates.js"):
-            return Response(
-                Path(__file__)
-                .with_name(
-                    "reader_updates.js"
-                    if path.endswith("updates.js")
-                    else "reader_content.js"
-                )
-                .read_text(),
-                media_type="text/javascript",
-            )
-        if path == "/reader/session.js":
-            return Response(
-                """async function check(){try{let r=await fetch('/reader/session',{cache:'no-store'});if(r.status===401){document.dispatchEvent(new Event('reader-expired'));document.querySelector('main').replaceChildren();const at=new URL(location.href).searchParams.get('at');location.replace(at?'/reader/login?'+new URLSearchParams({return:at}):'/reader');}}catch{}}setInterval(check,60000);addEventListener('pageshow',check);addEventListener('focus',check);document.addEventListener('visibilitychange',()=>{if(!document.hidden)check()});""",
-                media_type="text/javascript",
+                Path(__file__).with_name(filename).read_text(), media_type=media_type
             )
         if path == "/reader/login":
             # Only named, opaque destinations; never accept a URL supplied by a client.
@@ -432,6 +396,8 @@ class Reader:
             if (
                 any(len(q.getlist(k)) != 1 for k in ("state", "code", "iss"))
                 or len(q["state"]) != 43
+                or not q["code"]
+                or "error" in q
             ):
                 return self.expired()
             key = "reader/transactions/" + digest(q["state"])
@@ -476,6 +442,8 @@ class Reader:
             }
             await self.write(owner_key, owner, version)
             destination = txn.get("destination", "catalog")
+            if destination != "catalog":
+                decode_location(destination)
             r = RedirectResponse(
                 "/reader/catalog"
                 if destination == "catalog"
@@ -485,6 +453,26 @@ class Reader:
             self.cookie(r, COOKIE, sid, LIFETIME)
             self.cookie(r, TRANSACTION, "", 0)
             return r
+        if path == "/reader/signed-out":
+            provider = (
+                self.verifier.issuer
+                + "v2/logout?"
+                + urlencode(
+                    {
+                        "client_id": self.config.client_id,
+                        "returnTo": self.config.origin + "/reader",
+                    }
+                )
+            )
+            return self.page(
+                '<p role="status">Reader signed out on this device. Refresh-token revocation was attempted. '
+                "If the provider is unavailable, reader logout still stands; provider SSO may remain active.</p>"
+                '<a href="' + escape(provider) + '">Continue to Auth0 SSO sign-out</a>'
+                "<p>This does not sign out Google or MCP, immediately revoke a copied valid access token, "
+                'or erase content already delivered.</p><a href="/reader/login">Sign in again</a>'
+            )
+        if path == "/reader/signin-failed":
+            return self.expired()
         auth = await self.authenticate(request)
         if not auth:
             destination = (
@@ -578,17 +566,7 @@ class Reader:
                 '<p role="status">Reader signed out. Google, MCP and copied access tokens may remain signed in.</p><a href="/reader/login">Sign in again</a>'
             )
             if data["scope"] == "device":
-                r = RedirectResponse(
-                    self.verifier.issuer
-                    + "v2/logout?"
-                    + urlencode(
-                        {
-                            "client_id": self.config.client_id,
-                            "returnTo": self.config.origin + "/reader",
-                        }
-                    ),
-                    status_code=303,
-                )
+                r = RedirectResponse("/reader/signed-out", status_code=303)
             self.cookie(r, COOKIE, "", 0)
             r.headers["Clear-Site-Data"] = '"cache", "storage"'
             return r
@@ -704,6 +682,11 @@ class Reader:
                     "reader_unavailable",
                     "Reader unavailable. Retry or sign in again.",
                 )
+            if request.url.path == "/reader/callback" and response.status_code != 303:
+                # Every failure, including storage/timeout/origin rejection, leaves
+                # the transient protocol URL before rendering any reader UI.
+                response = RedirectResponse("/reader/signin-failed", status_code=303)
+                self.cookie(response, TRANSACTION, "", 0)
             response.headers.update(
                 {
                     "Cache-Control": "private, no-store",
@@ -718,30 +701,22 @@ class Reader:
             return response
 
         for path in (
+            *ASSETS,
             "/reader",
             "/reader/catalog",
             "/reader/book",
             "/reader/bookmarks",
-            "/reader/personal.js",
             "/reader/session",
             "/reader/read",
             "/reader/content",
             "/reader/updates",
-            "/reader/updates.js",
             "/reader/login",
             "/reader/callback",
-            "/reader/style.css",
-            "/reader/session.js",
-            "/reader/content.js",
+            "/reader/signin-failed",
+            "/reader/signed-out",
             "/reader/search",
-            "/reader/search.js",
             "/reader/original",
             "/reader/image",
-            "/reader/original.js",
-            "/reader/original.css",
-            "/reader/presentation.css",
-            "/reader/presentation.js",
-            "/reader/reports.js",
         ):
             app.routes.insert(0, Route(path, endpoint))
         app.routes.insert(

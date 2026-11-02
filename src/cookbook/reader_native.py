@@ -1,6 +1,8 @@
 """Browser projection of the existing bounded native BookModel contract."""
 
-from .storage import IntegrityError
+import hashlib
+
+from .storage import IntegrityError, canonical
 
 
 def read_native(library, loc):
@@ -114,18 +116,26 @@ def read_native(library, loc):
     ]
     data["references"] = []
     for item in result["nodes"]:
-        for link in item.get("source_links", []):
+        for index, link in enumerate(item.get("source_links", [])):
+            reference_id = hashlib.sha256(
+                canonical([item["node"]["id"], index, link])
+            ).hexdigest()
             target = link["target"]
             if target["state"] == "resolved_node":
                 data["references"].append(
                     {
+                        "id": reference_id,
                         "label": "Authored source reference",
                         "at": encode_location({**base, "target_id": target["node_id"]}),
                     }
                 )
             else:
                 data["references"].append(
-                    {"label": "Source reference: " + target["state"], "at": None}
+                    {
+                        "id": reference_id,
+                        "label": "Source reference: " + target["state"],
+                        "at": None,
+                    }
                 )
     data["next_related"] = (
         move({**loc, **base}, related_offset=related["next_related_offset"])

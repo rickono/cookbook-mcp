@@ -339,7 +339,7 @@ def test_native_snapshot_occurrences_and_cursor_binding(
         (
             "root",
             0,
-            1,
+            2,
             "element",
             "document",
             "",
@@ -347,7 +347,7 @@ def test_native_snapshot_occurrences_and_cursor_binding(
                 "id": "root",
                 "kind": "element",
                 "content_kind": "link",
-                "child_ids": ["body"],
+                "child_ids": ["body", "tail"],
                 "source_tag": "body",
             },
         ),
@@ -361,6 +361,42 @@ def test_native_snapshot_occurrences_and_cursor_binding(
             {"id": "body", "kind": "text", "text": "αβ🍲 beans " * 5000},
         ),
     ]
+    nodes.append(
+        (
+            "tail",
+            2,
+            2,
+            "element",
+            "link",
+            "",
+            {
+                "id": "tail",
+                "kind": "element",
+                "content_kind": "link",
+                "child_ids": [],
+                "source_tag": "a",
+            },
+        )
+    )
+    for link_id, state, node in (
+        ("late-resolved", "resolved_node", "body"),
+        ("late-unresolved", "unresolved_link", None),
+    ):
+        db.execute(
+            "insert into links values(?,?,?,?,?,?,?,?)",
+            (
+                link_id,
+                "book-0",
+                "doc",
+                "tail",
+                "doc",
+                node,
+                state,
+                json.dumps(
+                    {"target": {"state": state, "node_id": node, "document_id": "doc"}}
+                ),
+            ),
+        )
     for id, ordinal, end, kind, content, text, payload in nodes:
         db.execute(
             "insert into nodes values(?,?,?,?,?,?,?,?,?,?)",
@@ -464,14 +500,23 @@ def test_native_snapshot_occurrences_and_cursor_binding(
         ).json()
         assert first["citation"]["model_snapshot_id"] == "snapshot-1"
         assert first["citations"][0]["reading_occurrence_id"] == "occ-1"
+        assert len(first["references"]) == 1
         chunks = [first["text"]]
         while first["next_text"]:
-            first = client.get(
-                "/reader/content", params={"at": first["next_text"]}
-            ).json()
+            chunk_at = first["next_text"]
+            first = client.get("/reader/content", params={"at": chunk_at}).json()
             assert first["citations"][0]["reading_occurrence_id"] == "occ-1"
             chunks.append(first["text"])
         assert "".join(chunks) == "αβ🍲 beans " * 5000
+        assert len(first["references"]) == 2
+        assert first["references"][0]["at"]
+        assert first["references"][1]["at"] is None
+        assert "unresolved" in first["references"][1]["label"]
+
+        retry = client.get("/reader/content", params={"at": chunk_at}).json()
+        assert retry["references"] == first["references"]
+        assert len({ref["id"] for ref in retry["references"]}) == 2
+        assert all(len(ref["id"]) == 64 for ref in retry["references"])
         recipe = destination(
             pub, source, target_id="recipe", model_snapshot_id="snapshot-1"
         )

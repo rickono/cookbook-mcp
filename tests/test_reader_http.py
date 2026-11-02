@@ -129,7 +129,7 @@ def test_denied_identity_cannot_create_reader_session(reader_env, mint, claims):
     app, identity, _ = reader_env
     identity.tokens = {"access_token": mint(**claims)}
     with TestClient(app(), base_url="https://reader.example") as client:
-        assert login(client).status_code == 401
+        assert login(client).headers["location"] == "/reader/signin-failed"
         for path in ("/reader", "/reader/catalog", "/reader/session"):
             r = client.get(path)
             assert r.status_code == 401 and "Beans" not in r.text
@@ -156,12 +156,15 @@ def test_oauth_correlation_redirect_and_replay(reader_env):
         )
         with TestClient(app(), base_url="https://reader.example") as other:
             assert other.get("/reader/callback", params=params).status_code == 401
-        assert (
-            client.get(
-                "/reader/callback", params=params, follow_redirects=False
-            ).status_code
-            == 303
-        )
+        # A rejected response clears browser correlation; start a fresh login.
+        fresh = client.get("/reader/login", follow_redirects=False)
+        params["state"] = parse_qs(urlsplit(fresh.headers["location"]).query)["state"][
+            0
+        ]
+        accepted = client.get("/reader/callback", params=params, follow_redirects=False)
+        assert accepted.status_code == 303
+        assert accepted.headers["location"] == "/reader/catalog"
+        assert client.get("/reader/session").status_code == 200
         assert client.get("/reader/callback", params=params).status_code == 401
 
 
@@ -198,9 +201,16 @@ def test_logout_scopes_and_csrf_even_when_provider_refuses(reader_env):
             headers={"Origin": "https://reader.example"},
             follow_redirects=False,
         )
-        assert r.status_code == 303 and r.headers["location"].startswith(
-            "https://issuer.example/v2/logout?"
-        )
+        assert r.status_code == 303 and r.headers["location"] == "/reader/signed-out"
+        signed_out = first.get(r.headers["location"])
+        assert signed_out.status_code == 200
+        assert 'href="https://issuer.example/v2/logout?' in signed_out.text
+        assert "provider is unavailable" in signed_out.text
+        assert "Google" in signed_out.text and "MCP" in signed_out.text
+        assert "copied" in signed_out.text
+        assert "form-action 'self'" in signed_out.headers["content-security-policy"]
+        assert "Max-Age=0" in r.headers["set-cookie"]
+        assert "no-store" in signed_out.headers["cache-control"]
         first.cookies.set("__Host-reader", copied)
         assert first.get("/reader/catalog").status_code == 401
         assert second.get("/reader/catalog").status_code == 200
@@ -347,7 +357,10 @@ def test_confidential_exchange_pkce_and_oidc_nonce(
             },
             follow_redirects=False,
         )
-        assert r.status_code == (303 if valid_nonce else 401)
+        assert r.status_code == 303
+        assert r.headers["location"] == (
+            "/reader/catalog" if valid_nonce else "/reader/signin-failed"
+        )
         assert client.get("/reader/catalog").status_code == (
             200 if valid_nonce else 401
         )
@@ -582,3 +595,72 @@ def test_renewal_respects_other_device_activity_and_logout(
         identity.renew = renewal
         assert first.get("/reader/catalog").status_code == (401 if logout else 200)
         assert second.get("/reader/catalog").status_code == (401 if logout else 200)
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "malformed",
+        "issuer",
+        "provider_error",
+        "duplicate",
+        "empty_code",
+        "exchange",
+        "storage",
+        "consume",
+        "save",
+    ],
+)
+def test_failed_callback_cleans_protocol_url_before_signin(
+    reader_env, monkeypatch, fault
+):
+    app, identity, _ = reader_env
+    application = app()
+    with TestClient(application, base_url="https://reader.example") as client:
+        start = client.get("/reader/login", follow_redirects=False)
+        state = parse_qs(urlsplit(start.headers["location"]).query)["state"][0]
+        params = {
+            "state": state,
+            "code": "synthetic-code",
+            "iss": "https://issuer.example/",
+        }
+        if fault == "malformed":
+            params["state"] = "private-state"
+        elif fault == "issuer":
+            params["iss"] = "https://private-provider.example/"
+        elif fault == "provider_error":
+            params["error"] = "private-provider-error"
+        elif fault == "duplicate":
+            params["code"] = ["synthetic-code", "private-code"]
+        elif fault == "empty_code":
+            params["code"] = ""
+        elif fault == "exchange":
+
+            async def refuse(*args):
+                raise RuntimeError("private-provider-error")
+
+            monkeypatch.setattr(identity, "exchange", refuse)
+        else:
+
+            def refuse_store(*args, **kwargs):
+                raise RuntimeError("private-storage-error")
+
+            method = "read_version" if fault == "storage" else "put_bytes"
+            if fault == "save":
+                original = LocalStore.put_bytes
+
+                def refuse_store(self, key, *args, **kwargs):
+                    if "/owners/" in key:
+                        raise RuntimeError("private-storage-error")
+                    return original(self, key, *args, **kwargs)
+
+            monkeypatch.setattr(LocalStore, method, refuse_store)
+        response = client.get("/reader/callback", params=params, follow_redirects=False)
+        assert response.status_code == 303
+        assert response.headers["location"] == "/reader/signin-failed"
+        assert "private-" not in response.text and "synthetic-code" not in response.text
+        assert "__Host-reader-login=" in response.headers["set-cookie"]
+        clean = client.get(response.headers["location"])
+        assert clean.status_code == 401 and "Sign in" in clean.text
+        assert not clean.url.query
+        assert state not in clean.text and "private-" not in clean.text

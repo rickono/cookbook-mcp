@@ -97,8 +97,8 @@ is **no tested deployment**. There is **no observed reader browser version**.
 
 | Gate | Observation or remaining requirement |
 | --- | --- |
-| Assembled HTTP and regressions | 150 passed; six Linux-only serving checks skipped. |
-| Browser scripts | 41 Node DOM simulations passed; these are not browser rendering. |
+| Assembled HTTP and regressions | 161 passed after remediation; six Linux-only serving checks skipped on macOS. |
+| Browser scripts | 42 Node DOM simulations passed after remediation; these are not browser rendering. |
 | Browser attempt | T3 preview reached `chrome-error://chromewebdata/`; snapshot timed out after 15s; navigation explicitly failed `ERR_CERT_AUTHORITY_INVALID` for the local self-signed certificate. No protected reader view or image was observed. A browser-trusted local TLS endpoint is absent. No interstitial bypass or trust change was made. |
 | Identity and Mac-off | No dedicated live web-client credentials, verified callback/issuer/rotation configuration, authorized hosted deployment or Mac-off test environment supplied. Real login, issued refresh token and actual renewal remain unverified. |
 | Shared storage | LocalStore conditional-write behavior observed; live S3 consistency/CAS, least-privilege policies, replica/restart durability and backup recovery remain unverified. No production storage credentials/policy evidence supplied. |
@@ -146,3 +146,38 @@ passages, personal descriptions, private paths and raw evidence outside Git/GitH
 - Run the outstanding observed device, accessibility, Typesense, Linux rendering,
   hosted durability/Mac-off and shaped-network journeys above. Record failure and
   recovery as well as success; missing prerequisites remain acceptance blockers.
+
+## Two-axis remediation disposition
+
+Single implementer pass based on `integration/spec-98` at
+`a4700cb9244bee3fb7f8941a84b24de0345660ea`:
+
+- SPEC P2 callback URL cleanup: every unsuccessful callback response, including
+  generic storage/timeout failures, redirects to the fixed same-origin sign-in
+  failure route before UI delivery. Transaction cookies are cleared; no provider
+  text is echoed. Correlation, issuer, PKCE and conditional consume remain required.
+- SPEC P2 continuation references: later bounded native chunks append authored
+  references with source-derived overlap identifiers, safe labels, truthful
+  unresolved states and chunk-bound return envelopes. HTTP and script simulations
+  cover late references and retry/overlap behavior.
+- SPEC P2 device logout: local invalidation and revocation attempt precede a
+  same-origin signed-out page. Its explicit Auth0 SSO link starts provider logout
+  without an external form redirect; restrictive CSP remains. The page explains
+  provider outage and Google/MCP/copied-token/delivered-content limits. Actual
+  Chromium/Safari provider navigation still needs observed browser verification.
+- STANDARDS P3 configuration duplication: one shared fail-closed storage validator
+  handles opt-in, required settings, HTTPS endpoint fallback and construction;
+  personal and owner-report authorities keep explicit separate exclusion lists.
+- STANDARDS P3 assets: one explicit first-party map supplies both public asset
+  dispatch and route registration. Existing private no-store headers are retained.
+- EXTERNAL P1 remains open: none of the missing browser/image, live identity,
+  shared storage, Typesense, Mac-off, device, VoiceOver or shaped-network evidence
+  above was supplied or waived. No host trust, deployment, account, identity or
+  production storage changes were made. These fixes do not establish release
+  acceptance.
+
+Remediation verification: the full explicit `verify_reader_release.py` allowlist
+passed (161 Python tests; six Linux-only skips; 42 Node simulations). Focused Ruff
+lint/format, Node syntax checks and `git diff --check` passed. The callback HTTP
+selection was rerun after tightening the correlation/replay assertions (36 passed).
+These are local synthetic results, with the same external limitations above.

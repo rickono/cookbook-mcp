@@ -78,14 +78,19 @@ instead of silently evicting a device. Retention/cleanup jobs are deployment wor
   stored encrypted for ten minutes. A conditional consume precedes code exchange.
 - `GET /reader/callback`: requires single code/state/iss values and the matching
   host-only transaction cookie. Tokens stay server-side. A 303 removes the callback
-  values before the catalog is loaded. Callback errors never echo provider text.
+  values before any reader UI is loaded. Every callback failure (including storage
+  failures) redirects to `/reader/signin-failed`, clears the transaction cookie,
+  and shows a generic sign-in prompt there. Provider parameters are never echoed.
 - `GET /reader/session`: verifies current access and supplies a CSRF token to the
   authorized tab. Passive checks do not extend inactivity. This reusable public
   session boundary supports subsequent reader adapters.
 - `POST /reader/logout`: URL-encoded `csrf` and `scope=device|all`, plus the exact
   Origin. Conditional server invalidation precedes attempted refresh revocation.
-  Device logout redirects to Auth0 SSO logout; provider failure cannot restore the
-  invalidated session. All-device logout invalidates every owner reader session.
+  Device logout redirects to the same-origin `/reader/signed-out` page, which offers
+  an explicit Auth0 SSO sign-out link. Follow that link to end provider SSO; the
+  local session is already invalidated even if Auth0 is unavailable. This keeps
+  `form-action 'self'` restrictive and avoids an external form redirect.
+  All-device logout invalidates every owner reader session.
 
 The session cookie is opaque `__Host-reader`, Secure, HttpOnly, Path=/,
 SameSite=Lax, with no Domain. It contains no tokens, claims or private content.

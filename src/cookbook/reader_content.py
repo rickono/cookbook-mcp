@@ -232,10 +232,17 @@ async def deliver(reader, request, library, owner=None, csrf=""):
         body += '<nav aria-label="Authored references">'
         for item in data["related"] + data.get("references", []):
             body += (
+                '<span data-reference-id="' + escape(item["id"]) + '">'
+                if item.get("id")
+                else ""
+            )
+            body += (
                 anchor(item["at"], item["label"], back=raw)
                 if item.get("at")
                 else "<p>" + escape(item["label"]) + " — target unavailable</p>"
             )
+            if item.get("id"):
+                body += "</span>"
         if data["next_related"]:
             body += anchor(data["next_related"], "More related targets", back=back)
         body += "</nav><p>Absent relationships do not establish complete supporting work.</p>"

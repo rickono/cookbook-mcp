@@ -1,5 +1,6 @@
 """Personal metadata through assembled HTTP; synthetic sources only."""
 
+import pytest
 from starlette.testclient import TestClient
 from test_reader_content import destination
 from test_reader_http import login
@@ -371,3 +372,49 @@ def test_native_saved_occurrences_never_guess_changed_snapshot(
         native_publication(published, tmp_path / "native-changed", snapshot="changed")
         rows = a.get("/reader/personal").json()["bookmarks"]
         assert len(rows) == 2 and all(row["state"] == "unavailable" for row in rows)
+
+
+@pytest.mark.parametrize(
+    "prefix,function",
+    [
+        ("PERSONAL", "cookbook.personal_config.personal_from_environment"),
+        (
+            "OWNER_REPORTS",
+            "cookbook.owner_report_config.owner_reports_from_environment",
+        ),
+    ],
+)
+def test_metadata_store_endpoint_validation_and_fallback(monkeypatch, prefix, function):
+    from importlib import import_module
+
+    module, name = function.rsplit(".", 1)
+    configure = getattr(import_module(module), name)
+    for key in list(__import__("os").environ):
+        if key.startswith(
+            ("PERSONAL_", "OWNER_REPORTS_", "READER_", "REPORTS_")
+        ) or key in ("S3_BUCKET", "AWS_ACCESS_KEY_ID"):
+            monkeypatch.delenv(key)
+    monkeypatch.setenv(prefix + "_S3_BUCKET", "isolated")
+    monkeypatch.setenv(prefix + "_AWS_ACCESS_KEY_ID", "isolated-key")
+    monkeypatch.setenv(prefix + "_AWS_SECRET_ACCESS_KEY", "synthetic")
+    observed = []
+
+    def make(*args):
+        observed.append(args)
+        return object()
+
+    monkeypatch.setenv("S3_ENDPOINT_URL", "http://unsafe.example")
+    with pytest.raises(ValueError, match="HTTPS"):
+        configure(make)
+    assert observed == []
+    monkeypatch.setenv("S3_ENDPOINT_URL", "https://fallback.example")
+    assert configure(make) is not None
+    assert observed[-1] == (
+        "https://fallback.example",
+        "isolated",
+        "isolated-key",
+        "synthetic",
+    )
+    monkeypatch.setenv(prefix + "_S3_ENDPOINT_URL", "https://dedicated.example")
+    assert configure(make) is not None
+    assert observed[-1][0] == "https://dedicated.example"
