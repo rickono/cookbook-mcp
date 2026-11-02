@@ -140,7 +140,15 @@ class IdentityProvider:
 
 class Reader:
     def __init__(
-        self, config, verifier, store, encryption_key, *, identity=None, clock=time.time
+        self,
+        config,
+        verifier,
+        store,
+        encryption_key,
+        *,
+        identity=None,
+        clock=time.time,
+        owner_reports=None,
     ):
         if urlsplit(verifier.issuer).scheme != "https" or not verifier.issuer.endswith(
             "/"
@@ -150,6 +158,7 @@ class Reader:
         self.cipher = Fernet(encryption_key)
         self.identity = identity or IdentityProvider(config, verifier)
         self.clock = clock
+        self.owner_reports = owner_reports
 
     async def read(self, key):
         raw, version = await asyncio.to_thread(self.store.read_version, key)
@@ -309,8 +318,22 @@ class Reader:
         path = request.url.path
         if path == "/reader/style.css":
             return Response(
-                "body{font:18px/1.6 system-ui;margin:0;color:#20251f;background:#faf8f2}main{max-width:65ch;padding:1rem;margin:auto}a,button{display:inline-block;min-height:44px;box-sizing:border-box;padding:.5rem}button{font:inherit}.source-text{white-space:pre-wrap;overflow-wrap:anywhere}pre{white-space:pre-wrap;overflow-wrap:anywhere}summary{min-height:44px;cursor:pointer}li{margin-block:1rem;overflow-wrap:anywhere}:focus-visible{outline:3px solid #375d9c;outline-offset:3px}",
+                "body{font:18px/1.6 system-ui;margin:0;color:#20251f;background:#faf8f2}main{max-width:65ch;padding:1rem;margin:auto}a,button{display:inline-block;min-height:44px;box-sizing:border-box;padding:.5rem}button{font:inherit}#owner-report label{display:block}#owner-report textarea,#owner-report input:not([type=hidden]){box-sizing:border-box;max-width:100%;width:100%;font:inherit;min-height:44px}.source-text{white-space:pre-wrap;overflow-wrap:anywhere}pre{white-space:pre-wrap;overflow-wrap:anywhere}summary{min-height:44px;cursor:pointer}li{margin-block:1rem;overflow-wrap:anywhere}:focus-visible{outline:3px solid #375d9c;outline-offset:3px}",
                 media_type="text/css",
+            )
+        if path in ("/reader/original.js", "/reader/original.css"):
+            return Response(
+                Path(__file__)
+                .with_name(
+                    path.rsplit("/", 1)[1].replace("original.", "reader_original.")
+                )
+                .read_text(),
+                media_type="text/css" if path.endswith(".css") else "text/javascript",
+            )
+        if path == "/reader/reports.js":
+            return Response(
+                Path(__file__).with_name("owner_reports.js").read_text(),
+                media_type="text/javascript",
             )
         if path in ("/reader/content.js", "/reader/updates.js"):
             return Response(
@@ -325,7 +348,7 @@ class Reader:
             )
         if path == "/reader/session.js":
             return Response(
-                """async function check(){try{let r=await fetch('/reader/session',{cache:'no-store'});if(r.status===401){document.querySelector('main').replaceChildren();const at=new URL(location.href).searchParams.get('at');location.replace(at?'/reader/login?'+new URLSearchParams({return:at}):'/reader');}}catch{}}setInterval(check,60000);addEventListener('pageshow',check);addEventListener('focus',check);document.addEventListener('visibilitychange',()=>{if(!document.hidden)check()});""",
+                """async function check(){try{let r=await fetch('/reader/session',{cache:'no-store'});if(r.status===401){document.dispatchEvent(new Event('reader-expired'));document.querySelector('main').replaceChildren();const at=new URL(location.href).searchParams.get('at');location.replace(at?'/reader/login?'+new URLSearchParams({return:at}):'/reader');}}catch{}}setInterval(check,60000);addEventListener('pageshow',check);addEventListener('focus',check);document.addEventListener('visibilitychange',()=>{if(!document.hidden)check()});""",
                 media_type="text/javascript",
             )
         if path == "/reader/login":
@@ -433,7 +456,14 @@ class Reader:
         if not auth:
             destination = (
                 request.query_params.get("at")
-                if path in ("/reader/read", "/reader/content", "/reader/updates")
+                if path
+                in (
+                    "/reader/read",
+                    "/reader/content",
+                    "/reader/updates",
+                    "/reader/original",
+                    "/reader/image",
+                )
                 else None
             )
             if destination:
@@ -443,8 +473,16 @@ class Reader:
                     destination = None
             return self.expired(destination)
         subject, session = auth
+        if path in ("/reader/original", "/reader/image"):
+            from .reader_original import deliver as original
+
+            return await original(self, request, library)
         if path in ("/reader/read", "/reader/content", "/reader/updates"):
-            return await deliver(self, request, library)
+            return await deliver(self, request, library, subject, session["csrf"])
+        if path == "/reader/reports":
+            from .owner_reports import intake
+
+            return await intake(self, request, subject, session)
         if path == "/reader/session":
             return JSONResponse({"authenticated": True, "csrf": session["csrf"]})
         if path == "/reader/logout":
@@ -539,6 +577,21 @@ class Reader:
         return Response(status_code=404)
 
     def failure(self, request, code, message):
+        if request.url.path in ("/reader/original", "/reader/image"):
+            from .reader_original import failure, link
+
+            at = request.query_params.get("at", "")
+            try:
+                decode_location(at)
+            except (ValueError, TypeError, UnicodeError):
+                return JSONResponse({"error": "invalid_destination"}, status_code=400)
+            return failure(
+                self,
+                at,
+                "Original interrupted or unavailable. Retry explicitly or return to text.",
+                503,
+                retry=link(at),
+            )
         if request.url.path == "/reader/read":
             at = request.query_params.get("at", "")
             try:
@@ -568,7 +621,9 @@ class Reader:
     def install(self, app, library):
         async def endpoint(request):
             try:
-                async with asyncio.timeout(10):
+                async with asyncio.timeout(
+                    30 if request.url.path == "/reader/image" else 10
+                ):
                     if (
                         f"{request.url.scheme}://{request.url.netloc}"
                         != self.config.origin
@@ -594,7 +649,7 @@ class Reader:
                     "X-Content-Type-Options": "nosniff",
                     "X-Frame-Options": "DENY",
                     "Strict-Transport-Security": "max-age=31536000",
-                    "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+                    "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
                 }
             )
             return response
@@ -612,6 +667,12 @@ class Reader:
             "/reader/style.css",
             "/reader/session.js",
             "/reader/content.js",
+            "/reader/original",
+            "/reader/image",
+            "/reader/original.js",
+            "/reader/original.css",
+            "/reader/reports.js",
         ):
             app.routes.insert(0, Route(path, endpoint))
+        app.routes.insert(0, Route("/reader/reports", endpoint, methods=["POST"]))
         app.routes.insert(0, Route("/reader/logout", endpoint, methods=["POST"]))

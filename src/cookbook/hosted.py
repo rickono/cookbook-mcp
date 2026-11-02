@@ -140,7 +140,15 @@ def reader_from_environment(verifier):
         os.environ["READER_AWS_ACCESS_KEY_ID"],
         os.environ["READER_AWS_SECRET_ACCESS_KEY"],
     )
-    return Reader(config, verifier, store, os.environ["READER_SESSION_KEY"].encode())
+    from .owner_report_config import owner_reports_from_environment
+
+    return Reader(
+        config,
+        verifier,
+        store,
+        os.environ["READER_SESSION_KEY"].encode(),
+        owner_reports=owner_reports_from_environment(s3_store),
+    )
 
 
 class PublicationUpdater:

@@ -1,0 +1,2 @@
+[data-original-image]{display:block;max-width:100%;height:auto;margin-block:1rem}.comparison-text,[data-compare]{display:none}.original-layout{min-width:0}.original-layout>*{min-width:0}.comparison-text{white-space:pre-wrap;overflow-wrap:anywhere}
+@media(min-width:1100px){body:has(.original-layout) main{max-width:1200px}[data-compare]{display:inline-block}.comparing{display:grid;grid-template-columns:1fr 1fr;gap:2rem}.comparing .comparison-text{display:block}}
