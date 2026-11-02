@@ -45,7 +45,12 @@ origin, with private no-store, no-referrer and the existing restrictive CSP.
 
 The generic continuation script appends through `textContent`, advances only after
 success, preserves earlier chunks on recoverable failure, focuses the new chunk and
-updates reference return destinations. No automatic retries or whole-book preload
+updates navigation return destinations. Authored references from later bounded native
+chunks append as text-safe controls in source order, with stable source-derived
+identifiers suppressing overlap/retry duplicates. Each keeps its originating
+chunk envelope and returns to that chunk's text; unresolved targets remain labelled
+and non-clickable. Initial authored reference controls keep their original return
+destination as later text loads. No automatic retries or whole-book preload
 occur. Without script, explicit chunk links remain usable. Final-chunk wording does
 not claim that earlier chunks are all present in the current document. Withdrawn text
 is empty under shared Library rules; a continuation encountering withdrawal clears

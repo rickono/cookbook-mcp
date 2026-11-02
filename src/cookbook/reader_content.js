@@ -2,6 +2,7 @@
 // Progressive enhancement. Protected content stays only in the live document.
 const mount = document.querySelector('main');
 let dead = false;
+const references = new Set([...document.querySelectorAll('[data-reference-id]')].map(el => el.getAttribute('data-reference-id')));
 const active = () => !dead && mount?.isConnected !== false;
 document.addEventListener('reader-expired', () => {dead = true;});
 document.addEventListener('reader-unmounted', () => {dead = true;});
@@ -66,6 +67,23 @@ if (continuation) continuation.addEventListener('click', async event => {
       paragraph.textContent = note;
       chunk.append(paragraph);
     }
+    const authored = document.createElement('nav');
+    authored.setAttribute('aria-label', 'Authored references');
+    for (const ref of data.references || []) {
+      if (!ref.id || references.has(ref.id)) continue;
+      const control = document.createElement(ref.at ? 'a' : 'p');
+      control.setAttribute('data-reference-id', ref.id);
+      control.textContent = ref.label + (ref.at ? '' : ' — target unavailable');
+      if (ref.at) {
+        const target = new URL('/reader/read', location.href);
+        target.search = new URLSearchParams({at: ref.at, back: url.searchParams.get('at')});
+        target.hash = 'text';
+        control.href = target.href;
+      }
+      authored.append(control);
+      references.add(ref.id);
+    }
+    if (authored.children.length) chunk.append(authored);
     document.querySelector('#text').append(chunk);
     // Advance only after a successful response: failed reads can be explicitly retried.
     const current = new URL(location.href);
@@ -76,7 +94,7 @@ if (continuation) continuation.addEventListener('click', async event => {
         target.searchParams.set('at', url.searchParams.get('at'));
         link.href = target.href;
       }
-      if (target.searchParams.get('back') === previous) {
+      if (!link.closest?.('[data-reference-id]') && target.searchParams.get('back') === previous) {
         target.searchParams.set('back', url.searchParams.get('at'));
         link.href = target.href;
       }
