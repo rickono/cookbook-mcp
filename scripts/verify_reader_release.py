@@ -21,6 +21,7 @@ PYTHON = [
     "hosted",
     "manifest_cache",
     "reports",
+    "storage_conditions",
     "rendering",
 ]
 NODE = [

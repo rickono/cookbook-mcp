@@ -60,6 +60,14 @@ transactions reside in shared storage. Stored object keys hash owner/session/sta
 identifiers; cookie values never become store paths. LocalStore is used only for
 synthetic tests, not a replica-local hosted session fallback.
 
+The R2 deployment implements separation with one dedicated private US bucket and
+bucket-scoped key per store. Permanent R2 keys are bucket-scoped rather than
+GetObject/PutObject-only prefix grants; their Object Read & Write permission also
+permits listing and deletion inside that bucket. Live admission checks verify
+denial against the other reader stores and library bucket. No runtime key has
+bucket-administration authority. See [receipt retention](owner-reports.md#r2-deployment-permissions)
+for the provider-enforced immutable report prefix.
+
 Keep the encryption key separate from backups. Expired transaction records can be
 purged after ten minutes; consumed transaction tombstones can be removed after
 that same window. Expired owner sessions are pruned on login/access; unused owner
