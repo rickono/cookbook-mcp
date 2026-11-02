@@ -136,7 +136,9 @@ async def deliver(reader, request, library, owner=None, csrf=""):
                 loc["publication_id"],
             ),
         )
-    data["source_location"] = await asyncio.to_thread(source_location, library, loc)
+    data["source_location"] = await asyncio.to_thread(
+        source_location, library, loc, _validated=data
+    )
     if data["source_location"].get("source_key"):
         for key in ("next_text", "next_related", "next_contents"):
             if data.get(key):
@@ -145,7 +147,7 @@ async def deliver(reader, request, library, owner=None, csrf=""):
                     source_key=data["source_location"]["source_key"],
                 )
     data["update"] = await asyncio.to_thread(
-        resolve_current, library, data["source_location"]
+        resolve_current, library, data["source_location"], _validated=data
     )
     if request.url.path == "/reader/content":
         return JSONResponse(data)

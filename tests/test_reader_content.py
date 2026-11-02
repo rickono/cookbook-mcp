@@ -686,3 +686,28 @@ def test_native_navigation_reads_source_after_empty_anchor(tmp_path):
         "".join(item["node"].get("text", "") for item in last["nodes"])
         == "Second source section."
     )
+
+
+def test_read_delivery_validates_source_once_per_request(
+    reader_env, published, monkeypatch
+):
+    from cookbook import reader_content
+
+    original = reader_content.read
+    reads = []
+
+    def read(library, location):
+        reads.append(location)
+        return original(library, location)
+
+    monkeypatch.setattr(reader_content, "read", read)
+    app, _, _ = reader_env
+    source = published[4].search("salt")["results"][0]["citation"]["source_id"]
+    at = destination(published[0].publication_id, source, section_id="section-0")
+    with TestClient(app(), base_url="https://reader.example") as client:
+        login(client)
+        response = client.get("/reader/content", params={"at": at})
+        assert response.status_code == 200 and response.json()["text"]
+        assert len(reads) == 1
+        assert client.get("/reader/content", params={"at": at}).status_code == 200
+        assert len(reads) == 2

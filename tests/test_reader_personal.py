@@ -418,3 +418,54 @@ def test_metadata_store_endpoint_validation_and_fallback(monkeypatch, prefix, fu
     monkeypatch.setenv(prefix + "_S3_ENDPOINT_URL", "https://dedicated.example")
     assert configure(make) is not None
     assert observed[-1][0] == "https://dedicated.example"
+
+
+def test_bookmark_and_resume_share_resolution_only_within_request(
+    reader_env, published, tmp_path, monkeypatch
+):
+    from cookbook import reader_personal
+
+    factory, _, _ = reader_env
+    state = reader_personal.PersonalState(LocalStore(tmp_path / "shared-place"))
+    at = destination(
+        published[0].publication_id, fixture_source(published), section_id="section-0"
+    )
+    with TestClient(
+        factory(personal_state=state), base_url="https://reader.example"
+    ) as client:
+        login(client)
+        csrf = client.get("/reader/session").json()["csrf"]
+        for action, identity in [("save", "a"), ("resume", "b")]:
+            operation = {
+                "action": action,
+                "at": at,
+                "operation_id": identity * 32,
+                "csrf": csrf,
+            }
+            if action == "save":
+                operation["name"] = "Fixture"
+            assert (
+                client.post(
+                    "/reader/personal",
+                    json=operation,
+                    headers={"Origin": "https://reader.example"},
+                ).status_code
+                == 200
+            )
+        original = reader_personal.resolve_current
+        calls = []
+
+        def resolve(library, location):
+            calls.append(location)
+            return original(library, location)
+
+        monkeypatch.setattr(reader_personal, "resolve_current", resolve)
+        result = client.get("/reader/personal").json()
+        assert (
+            result["bookmarks"][0]["state"]
+            == result["resume"][0]["state"]
+            == "available"
+        )
+        assert len(calls) == 1
+        assert client.get("/reader/personal").status_code == 200
+        assert len(calls) == 2

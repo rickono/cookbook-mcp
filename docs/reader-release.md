@@ -108,7 +108,7 @@ the polished layout and explicitly removed kitchen mode from the requested scope
 | Assembled HTTP and regressions | 161 passed on macOS with six Linux-only skips. [Linux CI](https://github.com/rickono/cookbook-mcp/actions/runs/41380576790) subsequently passed all 167, including serving enforcement; the preview boundary test also passed. |
 | Browser scripts | 43 Node DOM simulations passed after UI polish, including search-mounted enhancement initialization; these are not browser rendering. |
 | Local browser | The initial HTTPS harness failed with `ERR_CERT_AUTHORITY_INVALID`; no trust change was made. The separate synthetic HTTP loopback preview later exercised Chrome catalog, search-mounted reading, saved places and decoded sample originals, with 390/320px reading reflow. This proves local interaction only. |
-| Identity and Mac-off | Deployment is now owner-authorized. The dedicated client is provisioned. Real hosted login and encrypted refresh-token issuance passed; actual renewal and Mac-off operation remain unverified. |
+| Identity and Mac-off | Deployment is now owner-authorized. The dedicated client is provisioned. Real hosted login and encrypted refresh-token issuance passed; real provider refresh/rotation passed. Natural browser expiry and Mac-off operation remain unverified. |
 | Shared storage | Live private R2 conditional writes, lock behavior and cross-bucket denial passed. A real bookmark was acknowledged durably. Independent backup roundtrip and isolated restore passed; ongoing backup cadence, replica/restart journeys and full personal/report acceptance remain pending. |
 | Native search | Real Library native resolution and SQLite section retrieval covered; live Typesense returns native matches. Hosted search exposed repeated control reads; the bounded fix and source-safe comparison are recorded below. Full typo/ranking and mixed-format browser acceptance remains pending. |
 | Originals/resource enforcement | Authenticated synthetic JPEG bytes and injected scanned rendering outcomes covered; a sample original decoded in local Chromium. Linux CI passed all six synthetic decoder enforcement checks. Hosted representative originals still require observation. Refusals do not count as successful display or incident repair. |
@@ -202,10 +202,16 @@ resources and the repaired active publication. Public health returned 200;
 anonymous MCP/readiness access returned 401. The reader sent no-store, CSP,
 referrer/frame/nosniff protections and a secure HttpOnly SameSite=Lax transaction
 cookie. Actual Chrome sign-in returned to the catalog through Auth0; the private
-R2 session envelope contained both an access token and a refresh token.
+R2 session envelope contained both an access token and a refresh token. A real
+provider refresh grant then rotated the refresh token, retained verified owner/API
+authorization and passed encrypted conditional readback. Natural browser expiry
+was not simulated or claimed. The temporary account-wide provisioning token was
+revoked after setup; isolated runtime keys and the operator backup key remain.
 No credential values or browser cookies are part of this record.
 
-A real bookmark received a durable acknowledgement. Private operator tooling
+A real bookmark received a durable acknowledgement. The actual encrypted session
+and personal metadata subsequently passed cloud backup readback and isolated
+restore. Private operator tooling
 snapshots the separate metadata stores into an independently keyed, private,
 locked backup bucket and verifies cloud readback plus an isolated LocalStore
 restore. A synthetic two-object roundtrip passed before cutover. The backup key
@@ -239,7 +245,22 @@ server-side section-query observations, **not** a shaped-network browser p95 or
 full reader timing acceptance. Native search, browser authentication and response
 paint were outside that comparison. Private raw evidence stays outside Git.
 
-The safe release selection passed 167 Python tests with six Linux-only skips on
+The restarted browser subsequently showed both twenty-row search groups, opened
+a source-bound match and restored its query/results on return. Its session survived
+the image restart. The first cold native read offered the bounded failure page;
+an explicit retry returned nonempty source text and continuation controls.
+
+Saved-place loading exposed another repeated-validation path: reader delivery read
+the same source four times, resolution read an unchanged publication twice, and a
+bookmark plus its resume slot each repeated that work. Delivery now reuses only
+its already validated source result; same-publication resolution reuses its pinned
+validation after existing identity/locator guards. A metadata response shares
+resolution for identical locations within that one request. Separate requests
+always validate again, and a different current publication is still read and
+checked independently. Regressions verify the read counts, next-request
+unavailability and per-request bookmark/resume sharing.
+
+The safe release selection passed 170 Python tests with six Linux-only skips on
 macOS, and 43 Node checks. Full hosted browser journeys, refresh renewal, supported
 original display, device/accessibility checks and shaped-network budgets still
 require observed evidence. The source-image limitation reported by the independent

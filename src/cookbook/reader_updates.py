@@ -39,7 +39,7 @@ def unique_locator(db, source, key):
     return len(rows) == 1
 
 
-def source_location(library, location):
+def source_location(library, location, *, _validated=None):
     """Validate a location and return an identifier-only durable reference.
 
     #104 may store this value, then call resolve_current when opening it. Native
@@ -54,7 +54,7 @@ def source_location(library, location):
         if k
         not in {"cursor", "offset", "related_offset", "contents_offset", "source_key"}
     }
-    data = read(library, loc)  # Verify native target/snapshot and source bindings.
+    data = read(library, loc) if _validated is None else _validated
     if data["citation"].get("model_snapshot_id"):
         loc["model_snapshot_id"] = data["citation"]["model_snapshot_id"]
     if "section_id" in loc:
@@ -69,7 +69,7 @@ def source_location(library, location):
     return loc
 
 
-def resolve_current(library, location):
+def resolve_current(library, location, *, _validated=None):
     """Return available + opaque `at`, or unavailable; never return private text.
 
     An unavailable old publication can recover only from already retained source
@@ -79,8 +79,11 @@ def resolve_current(library, location):
     """
     from .reader_content import encode_location, read
 
+    pinned = _validated
     try:
-        pinned_state = read(library, location)["state"]
+        if pinned is None:
+            pinned = read(library, location)
+        pinned_state = pinned["state"]
     except IntegrityError:
         pinned_state = "unavailable"
     try:
@@ -124,7 +127,11 @@ def resolve_current(library, location):
                     return result
         elif "target_id" in loc and not loc.get("model_snapshot_id"):
             return result
-        data = read(library, candidate)
+        data = (
+            pinned
+            if current == location["publication_id"] and pinned is not None
+            else read(library, candidate)
+        )
         if data["state"] == "withheld":
             return result
         return {**result, "state": "available", "at": encode_location(candidate)}
