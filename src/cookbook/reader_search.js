@@ -24,9 +24,11 @@
     if (saved) {saved.replaceChildren(); saved = null;}
     main.replaceChildren();
   }
-  function expired() {clear(); location.replace('/reader');}
+  function discard() {document.dispatchEvent(new Event('reader-expired'));}
+  function expired() {discard(); location.replace('/reader');}
+  document.addEventListener('reader-expired', clear);
   // Explicitly discard even a back/forward-cache copy; a reload starts a fresh search.
-  addEventListener('pagehide', clear);
+  addEventListener('pagehide', discard);
   addEventListener('pageshow', e => {if (e.persisted) location.replace('/reader/search');});
   async function session() {
     const r = await fetch('/reader/session', {cache:'no-store', signal:timeout()});

@@ -21,7 +21,8 @@ function fixture() {
   const form=nodes['#search-form'];form.elements={query:new Element(),book_id:new Element(),kind:new Element()};form.reset=()=>{for(const e of Object.values(form.elements))e.value='';};
   const submit=new Element('button');form.querySelector=()=>submit;
   const main=new Element('main');main.append(...Object.values(nodes));main.querySelector=()=>new Element();nodes.main=main;
-  const document={querySelector:q=>nodes[q],createElement:t=>new Element(t),createDocumentFragment:()=>new Element('fragment')};
+  const documentEvents={};
+  const document={addEventListener:(k,fn)=>documentEvents[k]=fn,dispatchEvent:e=>documentEvents[e.type]?.(e),querySelector:q=>nodes[q],createElement:t=>new Element(t),createDocumentFragment:()=>new Element('fragment')};
   const location={href:'https://reader.example/reader/search',replace(url){this.replaced=url;}};
   const results=[];
   const reading=new Element('main');reading.append(new Element('article'));
@@ -35,7 +36,7 @@ function fixture() {
     if(data instanceof Error)throw data;
     return data?.status?{status:data.status,ok:false}:{ok:true,json:async()=>data};
   };
-  vm.runInNewContext(script,{document,location,fetch,URL,URLSearchParams,AbortSignal,DOMParser:Parser,atob,scrollY:240,scrollTo:(...p)=>scroll.push(p),history:{replaceState(a,b,url){location.href='https://reader.example'+url;}},addEventListener:(k,fn)=>events[k]=fn});
+  vm.runInNewContext(script,{document,location,fetch,Event,URL,URLSearchParams,AbortSignal,DOMParser:Parser,atob,scrollY:240,scrollTo:(...p)=>scroll.push(p),history:{replaceState(a,b,url){location.href='https://reader.example'+url;}},addEventListener:(k,fn)=>events[k]=fn});
   return {nodes,form,main,posts,results,location,scroll,events,submit:()=>form.events.submit({preventDefault(){}}),click:link=>main.events.click({target:link,preventDefault(){}})};
 }
 const group=(results=[],next=null)=>({state:'ok',results,next,coverage:'Coverage partial; withheld material is not absent.'});

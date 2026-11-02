@@ -76,3 +76,13 @@ hosted login/renewal and Mac-off operation, Safari/Chromium and phone/tablet
 journeys, keyboard/VoiceOver, zoom/reflow, measured hosted performance, plus
 combined reading/original/report enhancements after sibling integration. Tickets
 remain open for acceptance. Keep private books and raw evidence outside Git.
+
+Verification after merging integration `3d81084094f78b6f11862a304e3ce858b033d3b9`
+(including #102 originals and #105 owner reports): 103 safe Python tests passed
+across reader search/content/session/originals/reports, library authorization,
+hosted service, MCP, dashboard and manifest cache. Fifteen Node DOM tests passed
+across search, content continuation, originals and reports. Focused Ruff checks
+and formatting and `git diff --check` pass. These are synthetic checks, without
+OCR or live browser/hosted/device evidence. Search discards transient state on
+the shared `reader-expired` event and broadcasts it on departure, so mounted
+reading enhancements can also clear their drafts.
