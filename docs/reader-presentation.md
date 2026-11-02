@@ -52,6 +52,18 @@ focus, continuation retry, expiry, withdrawal and table regions. These are **not
 observed browser, touch-device, layout, contrast or VoiceOver evidence**. No
 ingestion, OCR, inference, live identity changes or deployment is performed.
 
+After merging integration commit `cb86444853f6ae83637f53014aeaa2b367137fe1`,
+the safe Python selection passed **115 tests**, with **six Linux-only serving
+rendering tests skipped** on macOS. Selection: `test_reader_presentation`,
+`test_reader_content`, `test_reader_original`, `test_reader_http`,
+`test_library_auth`, `test_hosted`, `test_mcp`, `test_dashboard`,
+`test_manifest_cache`, `test_rendering`, `test_reader_search`,
+`test_reader_updates` and `test_owner_reports`. The six reader/search/update/report
+Node files passed **21 simulated DOM tests**. Focused Ruff lint/format and
+`git diff --check` passed. Merge resolution retained sibling search/report/update
+implementations and changed only the update script's reading-status selector to
+avoid the separate appearance announcement region.
+
 Still required for acceptance: record actual Safari and Chromium versions on
 desktop plus iPhone/iPad Safari or equivalent device environments. Observe the
 complete reading/reference-return/original/kitchen journey at 390px phone portrait,
