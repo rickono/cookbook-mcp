@@ -10,6 +10,7 @@ import secrets
 import time
 from dataclasses import dataclass, field
 from html import escape
+from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
 import httpx
@@ -18,6 +19,7 @@ from cryptography.fernet import Fernet
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
 
+from .reader_content import decode_location, deliver, reading_link
 from .storage import Conflict, canonical
 
 COOKIE = "__Host-reader"
@@ -293,9 +295,11 @@ class Reader:
             + "</main></body></html>"
         )
 
-    def expired(self):
+    def expired(self, destination=None):
         r = self.page(
-            '<p role="status">Sign in to read your private library.</p><a href="/reader/login">Sign in</a>'
+            '<p role="status">Sign in to read your private library.</p><a href="/reader/login?'
+            + escape(urlencode({"return": destination or "catalog"}))
+            + '">Sign in</a>'
         )
         r.status_code = 401
         self.cookie(r, COOKIE, "", 0)
@@ -305,23 +309,35 @@ class Reader:
         path = request.url.path
         if path == "/reader/style.css":
             return Response(
-                "body{font:18px/1.6 system-ui;margin:0;color:#20251f;background:#faf8f2}main{max-width:65ch;padding:1rem;margin:auto}a,button{display:inline-block;min-height:44px;box-sizing:border-box;padding:.5rem}button{font:inherit}li{margin-block:1rem;overflow-wrap:anywhere}:focus-visible{outline:3px solid #375d9c;outline-offset:3px}",
+                "body{font:18px/1.6 system-ui;margin:0;color:#20251f;background:#faf8f2}main{max-width:65ch;padding:1rem;margin:auto}a,button{display:inline-block;min-height:44px;box-sizing:border-box;padding:.5rem}button{font:inherit}.source-text{white-space:pre-wrap;overflow-wrap:anywhere}pre{white-space:pre-wrap;overflow-wrap:anywhere}summary{min-height:44px;cursor:pointer}li{margin-block:1rem;overflow-wrap:anywhere}:focus-visible{outline:3px solid #375d9c;outline-offset:3px}",
                 media_type="text/css",
+            )
+        if path == "/reader/content.js":
+            return Response(
+                Path(__file__).with_name("reader_content.js").read_text(),
+                media_type="text/javascript",
             )
         if path == "/reader/session.js":
             return Response(
-                """async function check(){try{let r=await fetch('/reader/session',{cache:'no-store'});if(r.status===401){document.querySelector('main').replaceChildren();location.replace('/reader');}}catch{}}setInterval(check,60000);addEventListener('pageshow',check);addEventListener('focus',check);document.addEventListener('visibilitychange',()=>{if(!document.hidden)check()});""",
+                """async function check(){try{let r=await fetch('/reader/session',{cache:'no-store'});if(r.status===401){document.querySelector('main').replaceChildren();const at=new URL(location.href).searchParams.get('at');location.replace(at?'/reader/login?'+new URLSearchParams({return:at}):'/reader');}}catch{}}setInterval(check,60000);addEventListener('pageshow',check);addEventListener('focus',check);document.addEventListener('visibilitychange',()=>{if(!document.hidden)check()});""",
                 media_type="text/javascript",
             )
         if path == "/reader/login":
             # Only named, opaque destinations; never accept a URL supplied by a client.
-            if request.query_params.get("return", "catalog") != "catalog":
-                return JSONResponse({"error": "invalid_destination"}, status_code=400)
+            destination = request.query_params.get("return", "catalog")
+            if destination != "catalog":
+                try:
+                    decode_location(destination)
+                except (ValueError, TypeError, UnicodeError):
+                    return JSONResponse(
+                        {"error": "invalid_destination"}, status_code=400
+                    )
             state, browser, pkce, nonce = opaque(), opaque(), opaque(), opaque()
             await self.write(
                 "reader/transactions/" + digest(state),
                 {
                     "browser": digest(browser),
+                    "destination": destination,
                     "pkce": pkce,
                     "nonce": nonce,
                     "expires": self.clock() + 600,
@@ -397,14 +413,32 @@ class Reader:
                 "csrf": opaque(),
             }
             await self.write(owner_key, owner, version)
-            r = RedirectResponse("/reader/catalog", status_code=303)
+            destination = txn.get("destination", "catalog")
+            r = RedirectResponse(
+                "/reader/catalog"
+                if destination == "catalog"
+                else "/reader/read?" + urlencode({"at": destination}),
+                status_code=303,
+            )
             self.cookie(r, COOKIE, sid, LIFETIME)
             self.cookie(r, TRANSACTION, "", 0)
             return r
         auth = await self.authenticate(request)
         if not auth:
-            return self.expired()
+            destination = (
+                request.query_params.get("at")
+                if path in ("/reader/read", "/reader/content")
+                else None
+            )
+            if destination:
+                try:
+                    decode_location(destination)
+                except (ValueError, TypeError, UnicodeError):
+                    destination = None
+            return self.expired(destination)
         subject, session = auth
+        if path in ("/reader/read", "/reader/content"):
+            return await deliver(self, request, library)
         if path == "/reader/session":
             return JSONResponse({"authenticated": True, "csrf": session["csrf"]})
         if path == "/reader/logout":
@@ -471,7 +505,9 @@ class Reader:
                     + escape(", ".join(c["authors"]))
                     + " · "
                     + escape(c["format"])
-                    + " · Published</li>"
+                    + ' · Published <a href="'
+                    + escape(reading_link(c))
+                    + '">Open book</a></li>'
                 )
             body = (
                 '<nav aria-label="Account"><form method="post" action="/reader/logout"><input type="hidden" name="csrf" value="'
@@ -497,6 +533,22 @@ class Reader:
         return Response(status_code=404)
 
     def failure(self, request, code, message):
+        if request.url.path == "/reader/read":
+            at = request.query_params.get("at", "")
+            try:
+                decode_location(at)
+            except (ValueError, TypeError, UnicodeError):
+                at = ""
+            target = "/reader/read?" + urlencode({"at": at})
+            response = self.page(
+                '<p role="status">Reading interrupted. Retry this location or sign in again.</p><a href="'
+                + escape(target)
+                + '">Retry this location</a><a href="/reader/login?'
+                + escape(urlencode({"return": at or "catalog"}))
+                + '">Sign in again</a>'
+            )
+            response.status_code = 503
+            return response
         if request.url.path in ("/reader", "/reader/catalog"):
             response = self.page(
                 '<p role="status">'
@@ -545,10 +597,13 @@ class Reader:
             "/reader",
             "/reader/catalog",
             "/reader/session",
+            "/reader/read",
+            "/reader/content",
             "/reader/login",
             "/reader/callback",
             "/reader/style.css",
             "/reader/session.js",
+            "/reader/content.js",
         ):
             app.routes.insert(0, Route(path, endpoint))
         app.routes.insert(0, Route("/reader/logout", endpoint, methods=["POST"]))

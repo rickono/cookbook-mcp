@@ -163,7 +163,7 @@ class PublicationUpdater:
                     status = "publication_activated"
                 else:
                     status = "publication_current"
-        except Exception:
+        except Exception:  # noqa: BLE001 - redacted service boundary
             # Activation stages separately, so failures leave the old pointer intact.
             status = "publication_update_failed"
         if status != self.last_status:
@@ -189,18 +189,30 @@ class PublicationUpdater:
 
 
 def create_hosted_app(
-    runtime, verifier, *, poll_seconds=60, reports_store=None, reader=None
+    runtime,
+    verifier,
+    *,
+    poll_seconds=60,
+    reports_store=None,
+    reader=None,
+    search_engine=None,
 ):
+    if search_engine:
+        runtime.prepare = search_engine.prepare
     reports = ReportSink(reports_store) if reports_store is not None else None
-    app = create_app(Library(runtime), verifier, reports, reader=reader)
+    app = create_app(
+        Library(runtime, search_engine=search_engine), verifier, reports, reader=reader
+    )
     original_lifespan = app.router.lifespan_context
     updater = PublicationUpdater(runtime, poll_seconds)
 
     @asynccontextmanager
     async def lifespan(app):
+        if search_engine:
+            await asyncio.to_thread(search_engine.start)
         try:
             await asyncio.to_thread(runtime.resume_cached)
-        except Exception:
+        except Exception:  # noqa: BLE001 - redacted service boundary
             event("cached_publication_invalid")
         async with original_lifespan(app):
             updater.start()
@@ -208,6 +220,8 @@ def create_hosted_app(
                 yield
             finally:
                 await asyncio.to_thread(updater.close)
+                if search_engine:
+                    await asyncio.to_thread(search_engine.close)
 
     app.router.lifespan_context = lifespan
     return app
@@ -233,12 +247,20 @@ def serve():
     trusted_proxies = os.environ.get("COOKBOOK_TRUSTED_PROXY_IPS", "")
     if "*" in trusted_proxies:
         raise ValueError("trusted proxy IPs must be explicit")
+
+    from .book_search import BookSearch
+
+    search_engine = BookSearch(
+        os.environ.get("COOKBOOK_TYPESENSE_BINARY", "/usr/local/bin/typesense-server"),
+        runtime.root / "typesense",
+    )
     uvicorn.run(
         create_hosted_app(
             runtime,
             verifier,
             reports_store=reports_store_from_environment(),
             reader=reader_from_environment(verifier),
+            search_engine=search_engine,
         ),
         host="0.0.0.0",
         port=int(os.environ.get("PORT", "8000")),

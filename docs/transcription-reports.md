@@ -233,20 +233,41 @@ shows:
 
 Resolving an item stays a manual owner step.
 
-## Not done yet
+## Current acceptance and remaining work
 
-- **No scanned book is hosted yet.** The build imports a scanned PDF from a frozen
-  `scanned-candidate.v1` candidate (`cookbook build --scanned-registry registry.json`);
-  the gate accepts its text only through the transcription summary. A PDF without a
-  registered candidate is refused unless it is named in `--force-ocr-books`, which
-  keeps native page OCR and its assessments; a book cannot have both. The three production-transcribed books
-  (#49) are built and published to a local store only; hosted activation waits for the
-  owner. `get_page` renders with poppler's `pdftoppm`. The hosted image installs it;
-  on the Mac it is not on `PATH`, so for local checks put Calibre's bundled copy
-  (`/Applications/calibre.app/Contents/utils.app/Contents/MacOS`) on `PATH`.
+- **The scanned publication is hosted.** The active selection contains 59 native
+  EPUB editions and 12 scanned PDFs. Exact authenticated readiness, catalog,
+  search, reading and all 12 PDFs' page/region renders passed. A genuine hosted
+  report reached the separate reports bucket and the guarded Mac refresh path
+  read it. One real report then received three successful blind readings, none
+  matching either claim. It is recorded in the owner queue with no correction.
+  Two guarded refresh runs skipped that completed decision and published nothing.
+  A separately authorized quantity report then received three supporting blind
+  readings. The actual changed-ledger refresh rebuilt the exact selection and
+  candidates, retained the native model, and applied one correction. Full checksum
+  readback, authenticated activation, corrected page/section/search and reviewer
+  provenance, rollback history, and a repeated unchanged refresh passed. The
+  original owner-queue item remains. See the
+  [supported correction publication record](hosted-runtime.md#october-28-supported-correction-refresh).
+  A higher-resolution zoom stall found during acceptance remains a separate
+  [investigation](https://github.com/rickono/cookbook-mcp/issues/67); smaller hosted
+  requests passed after recovery and do not establish a fix for that incident.
+- **Build admission remains fail-closed.** The build imports a scanned PDF from a
+  frozen `scanned-candidate.v1` candidate, and the gate accepts its text only
+  through the transcription summary. A PDF without a registered candidate is
+  refused unless explicitly named in `--force-ocr-books`; no native OCR or PDF
+  ingestion bypass is authorized by the report workflow.
 - **The owner queue has no resolution tooling.** Items in `owner-queue.md` wait for
   the owner; nothing records an owner decision back into the ledger yet. The refresh
   runs only by hand.
-- **Hosting is not configured.** See
-  [hosted-runtime.md](hosted-runtime.md#transcription-reports--not-deployed). The
-  bucket, its keys, the Fly secrets and the deploy each need the owner's approval.
+- **Hosting is configured.** The approved reports bucket, separate credentials,
+  Fly settings and deployment are recorded in [hosted-runtime.md](hosted-runtime.md).
+  Publisher credentials remain on the Mac. Future external changes still require
+  the approvals applicable to their scope.
+
+For a mixed publication that also contains a native EPUB whole-book model, refresh
+carries that verified model forward after rebuilding the scanned content. Native
+reading targets, interpretation states and the model snapshot are retained. The
+new publication reuses the existing keyword collection only after its recorded
+model identity and complete keyword-document digest match. See
+[mixed native and scanned publications](whole-book-typesense.md#mixed-native-and-scanned-publications).

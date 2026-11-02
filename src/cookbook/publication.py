@@ -86,6 +86,24 @@ def load_manifest(store, pointer):
     return m
 
 
+def _model_validation_signature():
+    import inspect
+    import sqlite3
+
+    import pydantic
+
+    from .book_model import bounds
+
+    # Bind receipts to every validator/type definition and the source-position
+    # helper, plus library versions that determine their behavior.
+    material = b"whole-book-validation-receipt-v1\0"
+    for name in ("book_build.py", "book_types.py"):
+        material += Path(__file__).with_name(name).read_bytes()
+    material += inspect.getsource(bounds).encode()
+    material += (pydantic.__version__ + sqlite3.sqlite_version).encode()
+    return hashlib.sha256(material).hexdigest()
+
+
 def validate_version(pointer, destination):
     """Verify cached runtime state without depending on the object store."""
     if not re.fullmatch("[a-f0-9]{32}", pointer["publication_id"]):
@@ -115,6 +133,55 @@ def validate_version(pointer, destination):
             != m.publication_id
         ):
             raise IntegrityError("index publication mismatch")
+    from .book_model import MODEL_PATH, REPORT_PATH
+
+    model_files = {e.path for e in m.files if e.path in (MODEL_PATH, REPORT_PATH)}
+    if model_files:
+        if model_files != {MODEL_PATH, REPORT_PATH}:
+            raise IntegrityError("incomplete whole-book artifacts")
+        from .book_build import validate_model
+
+        report = json.loads((destination / REPORT_PATH).read_bytes())
+        if report["publication_id"] != m.publication_id:
+            raise IntegrityError("whole-book report publication mismatch")
+        receipt_path = destination / ".model-validation.json"
+        identity = {
+            "receipt_version": 1,
+            "manifest_sha256": pointer["manifest_sha256"],
+            "validator_sha256": _model_validation_signature(),
+            "validation": report["validation"],
+        }
+        try:
+            receipt = json.loads(receipt_path.read_bytes())
+        except (OSError, ValueError):
+            receipt = None
+        if receipt != identity:
+            # An exact receipt produced by this validator can be pre-staged
+            # without replacing the previous release's restart receipt.
+            versioned = destination / (
+                ".model-validation-" + identity["validator_sha256"] + ".json"
+            )
+            try:
+                receipt = json.loads(versioned.read_bytes())
+            except (OSError, ValueError):
+                receipt = None
+        # All runtime bytes were hashed above, on every call. Only the expensive
+        # structural pass is reused, after an exact-byte/exact-validator match.
+        if receipt != identity:
+            validated = validate_model(
+                destination / MODEL_PATH,
+                m.publication_id,
+                destination / "runtime/index.sqlite",
+            )
+            if report["validation"] != validated:
+                raise IntegrityError("whole-book validation report differs")
+            try:
+                atomic_write(receipt_path, canonical(identity))
+            except OSError:
+                # A cache-write failure must not quarantine verified source data.
+                from .telemetry import event
+
+                event("model_validation_receipt_unavailable")
     return m
 
 
@@ -321,6 +388,7 @@ class Runtime:
         if _manifest_capacity < 1:
             raise ValueError("manifest capacity must be positive")
         self.store, self.root = store, root
+        self.prepare = None
         self._manifest_capacity = _manifest_capacity
         self._manifests = OrderedDict()
         # Only metadata lookup/load/eviction uses this lock. It never acquires
@@ -372,6 +440,8 @@ class Runtime:
                 m = validate_version(pointer, destination)
             finally:
                 self._invalidate_manifest(pointer["publication_id"])
+            if self.prepare:
+                self.prepare(m, destination)
             atomic_write(self.root / "active.json", canonical(pointer))
             return m.publication_id
 
@@ -386,7 +456,7 @@ class Runtime:
                 raise IntegrityError("invalid cached publication")
             destination = self.root / "versions" / pointer["publication_id"]
             self._invalidate_manifest(pointer["publication_id"])
-            return validate_version(pointer, destination).publication_id
+            manifest = validate_version(pointer, destination)
         except Exception:
             active = self.root / "active.json"
             if active.exists():
@@ -403,6 +473,10 @@ class Runtime:
             if destination is not None:
                 self._invalidate_manifest(destination.name)
             raise
+        # A derived-index outage must not quarantine valid immutable source artifacts.
+        if self.prepare:
+            self.prepare(manifest, destination)
+        return manifest.publication_id
 
     def recover(self):
         raw, _ = self.store.read_version("control/active.json")
