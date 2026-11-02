@@ -25,8 +25,8 @@ function fixture() {
   const document={addEventListener:(k,fn)=>documentEvents[k]=fn,dispatchEvent:e=>documentEvents[e.type]?.(e),querySelector:q=>nodes[q],createElement:t=>new Element(t),createDocumentFragment:()=>new Element('fragment')};
   const location={href:'https://reader.example/reader/search',replace(url){this.replaced=url;}};
   const results=[];
-  const reading=new Element('main');reading.append(new Element('article'));
-  class Parser {parseFromString(body){return body==='reading'?{querySelector:()=>reading,querySelectorAll:q=>q==='link[rel="stylesheet"][href]'?[Object.assign(new Element('link'),{href:'/reader/presentation.css'})]:[]}:{querySelectorAll:()=>[]};}}
+  const reading=new Element('main');reading.append(new Element('article'), ...['/reader/personal.js','/reader/reports.js','https://external.example/injected.js'].map(src=>Object.assign(new Element('script'),{src,inert:true})));
+  class Parser {parseFromString(body){return body==='reading'?{querySelector:()=>reading,querySelectorAll:q=>q==='link[rel="stylesheet"][href]'?[Object.assign(new Element('link'),{href:'/reader/presentation.css'})]:q==='script[src]'?reading.childNodes.filter(n=>n.tag==='script'):[]}:{querySelectorAll:()=>[]};}}
   const fetch=async(url,options={})=>{
     requests.push([url,options]);
     if(url==='/reader/session')return {ok:true,json:async()=>({csrf:'synthetic'})};
@@ -103,4 +103,12 @@ test('mounted reading carries its presentation stylesheet into the live document
  f.results.push({publication_id:'pinned',groups:{content:group([hit('a')]),section:group()}});f.submit();await flush();
  f.click(f.nodes['#content-results'].childNodes[0].childNodes[0]);await flush();
  assert.ok(f.main.childNodes.some(n=>n.href==='/reader/presentation.css'));
+});
+
+test('body enhancements initialize after parsed reading nodes move into the live page',async()=>{
+ const f=fixture();await flush();f.form.elements.query.value='salt';
+ f.results.push({publication_id:'pinned',groups:{content:group([hit('a')]),section:group()}});f.submit();await flush();
+ f.click(f.nodes['#content-results'].childNodes[0].childNodes[0]);await flush();
+ const initialized=f.main.childNodes.filter(n=>n.tag==='script'&&!n.inert).map(n=>n.src);
+ assert.deepEqual(initialized,['/reader/personal.js','/reader/reports.js']);
 });

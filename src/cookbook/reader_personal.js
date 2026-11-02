@@ -42,16 +42,18 @@
       for (const row of data.bookmarks) {
         const li = document.createElement('li');
         const label = document.createElement('label'); label.textContent = 'Bookmark name';
-        const input = document.createElement('input'); input.maxLength = 120; input.autocomplete = 'off'; input.value = row.name; label.append(input); li.append(label);
+        const input = document.createElement('input'); input.maxLength = 120; input.autocomplete = 'off'; input.value = row.name; label.append(input);
         if (row.at) {
           const link = document.createElement('a'); link.href = '/reader/read?' + new URLSearchParams({at:row.at}); link.textContent = row.name || 'Open bookmark'; li.append(link);
         } else {
           const notice = document.createElement('p'); notice.textContent = 'Location unavailable. Reference retained.'; li.append(notice);
         }
-        for (const [action, title] of [['rename','Rename'],['remove','Remove']]) {
-          const button = document.createElement('button'); button.textContent = title;
-          button.addEventListener('click', () => write({action, bookmark_id:row.bookmark_id, ...(action === 'rename' ? {name:input.value} : {})})); li.append(button);
-        }
+        const remove = document.createElement('button'); remove.className = 'button-quiet button-danger'; remove.textContent = 'Remove';
+        remove.addEventListener('click', () => write({action:'remove', bookmark_id:row.bookmark_id})); li.append(remove);
+        const edit = document.createElement('details'), summary = document.createElement('summary'); summary.textContent = 'Rename bookmark';
+        const rename = document.createElement('button'); rename.textContent = 'Rename';
+        rename.addEventListener('click', () => write({action:'rename', bookmark_id:row.bookmark_id, name:input.value}));
+        edit.append(summary, label, rename); li.append(edit);
         list.append(li);
       }
     } catch {if (active()) status.textContent = 'Bookmarks unavailable. Refresh explicitly to retry.';}

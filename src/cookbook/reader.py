@@ -321,16 +321,23 @@ class Reader:
                 if presentation
                 else ""
             )
-            + '<body><a class="skip-link" href="#reader-main">Skip to reading</a><main id="reader-main" tabindex="-1"><h1>Cookbook library</h1>'
+            + '<body><a class="skip-link" href="#reader-main">Skip to reading</a>'
+            '<header class="site-header"><div class="site-header-inner">'
+            '<a class="brand" href="/reader/catalog"><span class="brand-mark" aria-hidden="true"></span>Cookbook library</a>'
+            '<nav class="site-nav" aria-label="Library navigation"><a href="/reader/catalog">Library</a>'
+            '<a href="/reader/search">Search library</a><a href="/reader/bookmarks">Bookmarks</a></nav>'
+            '</div></header><main id="reader-main" tabindex="-1">'
             + body
             + "</main></body></html>"
         )
 
     def expired(self, destination=None):
         r = self.page(
-            '<p role="status">Sign in to read your private library.</p><a href="/reader/login?'
+            '<section class="layout layout-narrow signin"><p class="kicker">Your books, close at hand</p>'
+            "<h1>A little time with your cookbooks.</h1>"
+            '<p class="lede" role="status">Sign in to read your private library.</p><a class="button button-primary" href="/reader/login?'
             + escape(urlencode({"return": destination or "catalog"}))
-            + '">Sign in</a>'
+            + '">Sign in</a><p class="fineprint">Browse the books you know, find something to cook, and pick up where you left off.</p></section>'
         )
         r.status_code = 401
         self.cookie(r, COOKIE, "", 0)
@@ -579,22 +586,29 @@ class Reader:
             for item in result["results"]:
                 c = item["citation"]
                 rows.append(
-                    "<li><strong>"
-                    + escape(c["title"])
-                    + "</strong><br>"
-                    + escape(", ".join(c["authors"]))
-                    + " · "
-                    + escape(c["format"])
-                    + ' · Published <a href="'
+                    '<li class="book"><a href="'
                     + escape(reading_link(c).replace("/reader/read?", "/reader/book?"))
-                    + '">Open book</a></li>'
+                    + '" class="book-link"><span class="book-spine" aria-hidden="true">'
+                    + escape(c["title"][0:1])
+                    + '</span><span class="book-body"><strong class="book-title">'
+                    + escape(c["title"])
+                    + '</strong><span class="book-byline">'
+                    + escape(", ".join(c["authors"]))
+                    + '</span><span class="book-format">'
+                    + escape(c["format"])
+                    + '</span><span class="book-open">Open book <span aria-hidden="true">→</span></span></span></a></li>'
                 )
             body = (
-                '<nav aria-label="Account"><form method="post" action="/reader/logout"><input type="hidden" name="csrf" value="'
-                + escape(session["csrf"])
-                + '"><button name="scope" value="device">Sign out this device</button><button name="scope" value="all">Sign out all reader devices</button></form></nav><p>Logout ends reader access. It does not sign out Google or MCP, revoke copied valid tokens immediately, or erase content already delivered.</p><a href="/reader/search">Search library</a><a href="/reader/bookmarks">Bookmarks</a><h2>Published books</h2><ul>'
+                '<header class="page-head catalog-head"><div><p class="kicker">Your collection</p><h1>Your cookbook library.</h1>'
+                '<p class="lede">The books you return to. The recipes still to discover.</p></div>'
+                '<a class="search-entry" href="/reader/search">Search library</a></header>'
+                '<h2 class="section-label">Published books</h2><ul class="book-list">'
                 + "".join(rows)
-                + "</ul>"
+                + '</ul><details class="account"><summary>Your account</summary>'
+                '<form method="post" action="/reader/logout"><input type="hidden" name="csrf" value="'
+                + escape(session["csrf"])
+                + '"><button name="scope" value="device">Sign out this device</button><button name="scope" value="all">Sign out all reader devices</button></form>'
+                '<p class="fineprint">Logout ends reader access. It does not sign out Google or MCP, revoke copied valid tokens immediately, or erase content already delivered.</p></details>'
             )
             if result.get("next_offset") is not None:
                 body += (

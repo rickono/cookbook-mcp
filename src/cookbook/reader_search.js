@@ -133,6 +133,10 @@
       if (!r.ok && ![400,404,410].includes(r.status)) throw Error();
       const doc = new DOMParser().parseFromString(await r.text(), 'text/html');
       if (dead) return;
+      // Moving the parsed body empties it. Capture its assets before adoption,
+      // including form/continuation enhancements declared inside that body.
+      const styles = [...doc.querySelectorAll('link[rel="stylesheet"][href]')];
+      const enhancements = [...doc.querySelectorAll('script[src]')];
       if (!saved) {
         origin = link; y = scrollY;
         saved = document.createDocumentFragment();
@@ -140,14 +144,14 @@
       }
       document.dispatchEvent(new Event('reader-unmounted'));
       main.replaceChildren(...doc.querySelector('main').childNodes);
-      for (const declared of doc.querySelectorAll('link[rel="stylesheet"][href]')) {
+      for (const declared of styles) {
         const href = declared.getAttribute('href');
         if (!/^\/reader\/[a-z_-]+\.css$/.test(href)) continue;
         const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = href;
         main.append(style);
       }
       history.replaceState(null, '', href);
-      const back = text('button', 'Return to search results');
+      const back = text('button', 'Return to search results'); back.className = 'back-button button-quiet';
       back.addEventListener('click', () => {
         document.dispatchEvent(new Event('reader-unmounted'));
         main.replaceChildren(saved); saved = null;
@@ -158,7 +162,7 @@
       main.prepend(back);
       // DOMParser scripts are inert. Reinitialize only first-party reader enhancements
       // declared by the trusted reading response; the session monitor is already active.
-      for (const declared of doc.querySelectorAll('script[src]')) {
+      for (const declared of enhancements) {
         const src = declared.getAttribute('src');
         if (!/^\/reader\/[a-z_-]+\.js$/.test(src) || src === '/reader/session.js') continue;
         const script = document.createElement('script'); script.src = src; script.async = false;

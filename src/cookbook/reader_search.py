@@ -27,30 +27,32 @@ def page(reader, book_id=""):
         f'<option value="{k}">{k.replace("_", " ")}</option>' for k in KINDS
     )
     return reader.page(
-        '<nav aria-label="Library"><a href="/reader/catalog">Books</a></nav>'
-        "<h2>Search library</h2><p>Content matches use native typo-tolerant keywords. "
-        "Section matches require all query words. Ranking is independent; phrase, Boolean "
-        "and uniform matching are not promised.</p>"
-        f'<form id="search-form" data-book="{escape(book_id, quote=True)}" method="post" action="/reader/search/results" autocomplete="off">'
-        '<label for="query">Keywords</label><input id="query" name="query" maxlength="200" required>'
-        '<label for="book">Scope</label><select id="book" name="book_id"><option value="">Whole library</option></select>'
-        '<button type="button" id="more-scopes" hidden>Load more book scopes</button>'
-        '<label for="kind">Content type</label><select id="kind" name="kind"><option value="">All authored material</option>'
+        '<div class="layout layout-page"><header class="page-head"><p class="kicker">Find your next meal</p>'
+        '<h1>Search library</h1><p class="lede">An ingredient, a dish, a little inspiration.</p></header>'
+        f'<form class="search-form" id="search-form" data-book="{escape(book_id, quote=True)}" method="post" action="/reader/search/results" autocomplete="off">'
+        '<div class="search-bar"><div class="field"><label for="query">Keywords</label>'
+        '<input id="query" name="query" placeholder="Try lemon, lentils, or a favorite dish" maxlength="200" required></div>'
+        '<button type="submit">Search</button></div><div class="search-filters">'
+        '<div class="field"><label for="book">Look in</label><select id="book" name="book_id"><option value="">Whole library</option></select>'
+        '<button class="button-quiet" type="button" id="more-scopes" hidden>Load more book scopes</button></div>'
+        '<div class="field"><label for="kind">Content type</label><select id="kind" name="kind"><option value="">All authored material</option>'
         + options
-        + '</select><p id="classification">A content type searches only interpreted Content matches. '
+        + '</select></div></div><details class="search-help"><summary>About search and filters</summary><div>'
+        '<p class="fineprint">Content matches use native typo-tolerant keywords. Section matches require all query words. '
+        "Ranking is independent; phrase, Boolean and uniform matching are not promised.</p>"
+        '<p class="fineprint" id="classification">A content type searches only interpreted Content matches. '
         "Classification is partial; unclassified authored material may be missed.</p>"
         '<fieldset disabled aria-describedby="unsupported"><legend>Unavailable filters</legend>'
         "<label>Author<input></label><label>Tag<input></label><label>Format<input></label></fieldset>"
-        '<p id="unsupported">Author, tag and format filters are disabled because Content search '
-        "does not support them consistently with Section search. Format is shown on each match.</p>"
-        '<button type="submit">Search</button></form>'
+        '<p class="fineprint" id="unsupported">Author, tag and format filters are disabled because Content search '
+        "does not support them consistently with Section search. Format is shown on each match.</p></div></details></form>"
         "<noscript>Search requires script to retain your query privately in this live tab.</noscript>"
         '<p id="search-status" role="status" aria-live="polite"></p>'
         '<button id="fresh-search" hidden>Start fresh search on current publication</button>'
-        '<section aria-labelledby="content-title"><h2 id="content-title">Content matches</h2>'
-        '<p id="content-status"></p><ol id="content-results"></ol><button id="content-more" hidden>Load more Content matches</button></section>'
-        '<section aria-labelledby="section-title"><h2 id="section-title">Section matches</h2>'
-        '<p id="section-status"></p><ol id="section-results"></ol><button id="section-more" hidden>Load more Section matches</button></section>'
+        '<section class="result-group" aria-labelledby="content-title"><h2 id="content-title">Content matches</h2>'
+        '<p class="group-status" id="content-status"></p><ol class="results" id="content-results"></ol><button id="content-more" hidden>Load more Content matches</button></section>'
+        '<section class="result-group" aria-labelledby="section-title"><h2 id="section-title">Section matches</h2>'
+        '<p class="group-status" id="section-status"></p><ol class="results" id="section-results"></ol><button id="section-more" hidden>Load more Section matches</button></section></div>'
         '<script src="/reader/search.js" defer></script>',
         protected=True,
     )

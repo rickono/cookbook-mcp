@@ -151,7 +151,9 @@ async def deliver(reader, request, library, owner=None, csrf=""):
         return JSONResponse(data)
     c = data["citation"]
     body = (
-        '<nav aria-label="Library"><a href="/reader/catalog">Books</a>'
+        '<div class="reader-view '
+        + ("contents-view" if "text" not in data else "")
+        + '"><nav class="reading-crumbs" aria-label="Library"><a href="/reader/catalog">Books</a>'
         '<a href="/reader/search?'
         + escape(urlencode({"at": raw}))
         + '">Search this book</a>'
@@ -161,17 +163,19 @@ async def deliver(reader, request, library, owner=None, csrf=""):
             '">', '#text">', 1
         )
     body += (
-        "</nav><header><h2>"
+        '</nav><header class="reading-head"><p class="kicker">'
+        + escape(c["format"] + " · " + c["title"])
+        + "</p><h1>"
         + escape(c.get("section_title", c["title"]))
-        + "</h2><p>"
+        + '</h1><p class="reading-byline">'
         + escape(c["title"] + " · " + ", ".join(c["authors"]))
         + "</p></header>"
     )
     body += (
-        '<p data-reading-status role="status">'
+        '<div class="reading-layout"><section class="reading-body"><p class="reading-status" data-reading-status role="status">'
         + {
             "partial_text": "Partial text — more text remains.",
-            "complete_text": "End of section text. Earlier chunks remain available through Previous text. This does not establish a complete recipe or supporting work.",
+            "complete_text": "End of section text. Loaded text does not establish a complete recipe or supporting work.",
             "withheld": "Text withheld by current withdrawal or supersession.",
         }.get(data["state"], "Book contents")
         + "</p>"
@@ -180,7 +184,7 @@ async def deliver(reader, request, library, owner=None, csrf=""):
         from .reader_presentation import text_html
 
         body += (
-            "<p>"
+            '<p class="trust-label">'
             + (
                 "Approved content"
                 if c["eligibility"]["eligible"]
@@ -205,8 +209,9 @@ async def deliver(reader, request, library, owner=None, csrf=""):
             )
     for note in data.get("structure_notes", []):
         body += "<p>" + escape(note) + "</p>"
+    body += '</section><aside class="reading-tools" aria-label="Reading tools">'
     body += (
-        "<details><summary>Source and trust details</summary><pre>"
+        '<details class="source-details"><summary>Source and trust details</summary><pre>'
         + escape(
             json.dumps(
                 {k: data[k] for k in ("citation", "check_regions") if k in data},
@@ -216,7 +221,11 @@ async def deliver(reader, request, library, owner=None, csrf=""):
         )
         + "</pre><p>Corrections and crop confirmation do not establish approval. Printed page labels remain unverified unless source metadata establishes them.</p></details>"
     )
-    body += '<details><summary>Contents</summary><nav aria-label="Contents">'
+    body += (
+        '<details class="contents-panel"'
+        + (" open" if "text" not in data else "")
+        + '><summary>Contents</summary><nav aria-label="Contents">'
+    )
     for item in data["contents"]:
         body += (
             anchor(item["at"], item["title"], back=raw)
@@ -226,8 +235,10 @@ async def deliver(reader, request, library, owner=None, csrf=""):
     if data["next_contents"]:
         body += anchor(data["next_contents"], "More contents", back=back)
     body += "</nav><p>Only retained source structure is shown; missing chapter structure is not inferred.</p></details>"
+    body += '<nav class="adjacent-sections" aria-label="Section navigation">'
     for item in data.get("adjacent", []):
         body += anchor(item["at"], item["label"], back=raw)
+    body += "</nav>"
     if "text" in data:
         body += '<nav aria-label="Authored references">'
         for item in data["related"] + data.get("references", []):
@@ -245,9 +256,9 @@ async def deliver(reader, request, library, owner=None, csrf=""):
                 body += "</span>"
         if data["next_related"]:
             body += anchor(data["next_related"], "More related targets", back=back)
-        body += "</nav><p>Absent relationships do not establish complete supporting work.</p>"
+        body += '</nav><p class="fineprint">Absent relationships do not establish complete supporting work.</p>'
     body += (
-        '<a href="/reader/original?'
+        '<a class="button original-action" href="/reader/original?'
         + escape(urlencode({"at": raw, **({"back": back} if back else {})}))
         + '">Inspect originals</a>'
     )
@@ -271,6 +282,7 @@ async def deliver(reader, request, library, owner=None, csrf=""):
         'id="publication-update" data-at="' + encode_location(durable) + '"',
     )
     body += '<script src="/reader/updates.js" defer></script>'
+    body += "</aside></div></div>"
     return reader.page(body, protected=True, presentation=True)
 
 

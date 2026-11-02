@@ -107,7 +107,7 @@ def form(reader, data, loc, owner, csrf):
     token = reader.cipher.encrypt(canonical(reference)).decode()
     return (
         "<details><summary>Report a suspected transcription problem</summary>"
-        "<p>Receipt means received, not verified. Reporting does not change text or start review. "
+        '<p class="fineprint">Receipt means received, not verified. Reporting does not change text or start review. '
         "You can report even when the original image is unavailable.</p>"
         '<form id="owner-report" method="post" action="/reader/reports"><input type="hidden" name="reference" value="'
         + escape(token)

@@ -183,19 +183,19 @@ async def book_entry(reader, request, library, owner):
         saved = state["resume"].get(edition_key(loc))
         if saved:
             resolved = await asyncio.to_thread(resolve_current, library, saved)
-            body = "<h2>Continue reading</h2>"
+            body = '<section class="layout layout-narrow signin"><p class="kicker">Welcome back</p><h1>Continue reading</h1><p class="lede">Your saved place is kept with this edition.</p><div class="actions">'
             if resolved["at"]:
                 body += (
-                    '<a href="/reader/read?'
+                    '<a class="button button-primary" href="/reader/read?'
                     + escape(urlencode({"at": resolved["at"]}))
                     + '">Resume this edition</a>'
                 )
             else:
                 body += "<p>Remembered location unavailable. Your reference is retained.</p>"
             body += (
-                '<a href="/reader/read?'
+                '<a class="button" href="/reader/read?'
                 + escape(urlencode({"at": encode_location(loc)}))
-                + '">Open book contents</a>'
+                + '">Open book contents</a></div></section>'
             )
             return reader.page(body, protected=True)
     return RedirectResponse(
@@ -213,14 +213,16 @@ def controls(location, available=True):
             if available and (location.get("section_id") or location.get("target_id"))
             else "false"
         )
-        + '"><a href="/reader/bookmarks">Bookmarks</a>'
-        '<form id="bookmark-save" method="post" action="/reader/personal" autocomplete="off"><label>Bookmark name (optional)<input name="name" maxlength="120"></label><button>Save bookmark</button></form>'
-        '<button id="remember-location" type="button">Remember this location</button><p id="personal-status" role="status"></p></section><script src="/reader/personal.js" defer></script>'
+        + '"><details class="bookmark-panel"><summary>Save a bookmark</summary>'
+        '<form id="bookmark-save" method="post" action="/reader/personal" autocomplete="off"><label>Bookmark name (optional)<input name="name" maxlength="120" placeholder="A name to remember"></label><button>Save bookmark</button></form></details>'
+        '<button class="button-quiet" id="remember-location" type="button">Remember this location</button><p id="personal-status" role="status"></p></section><script src="/reader/personal.js" defer></script>'
     )
 
 
 def bookmarks_page(reader):
     return reader.page(
-        '<h2>Bookmarks</h2><a href="/reader/catalog">Books</a><section id="reader-personal"><button id="personal-refresh">Refresh bookmarks</button><ul id="bookmark-list"></ul><p id="personal-status" role="status"></p></section><script src="/reader/personal.js" defer></script>',
+        '<div class="layout layout-page"><header class="page-head"><p class="kicker">Worth coming back to</p><h1>Bookmarks</h1><p class="lede">Good things, kept close.</p></header>'
+        '<section id="reader-personal"><div class="bookmarks-toolbar"><button class="button-quiet" id="personal-refresh">Refresh bookmarks</button></div>'
+        '<ul id="bookmark-list"></ul><p id="personal-status" role="status"></p></section></div><script src="/reader/personal.js" defer></script>',
         protected=True,
     )

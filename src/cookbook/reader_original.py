@@ -167,17 +167,21 @@ async def deliver(reader, request, library):
             back=back,
         )
     body = (
-        '<link rel="stylesheet" href="/reader/original.css"><nav><a href="/reader/read?'
+        '<link rel="stylesheet" href="/reader/original.css"><div class="original-view"><nav class="reading-crumbs"><a href="/reader/read?'
         + escape(urlencode({"at": at, **({"back": back} if back else {})}))
         + '#text">Return to same text position</a></nav>'
     )
-    body += "<h2>Original source</h2><p>" + escape(data["citation"]["title"]) + "</p>"
     body += (
-        "<p>Physical page ordinals follow source order. Printed page labels remain unverified.</p>"
-        if data["citation"]["format"] != "EPUB"
-        else "<p>EPUB images follow retained document associations; these are not verified recipe matches. No facsimile pages or original CSS are promised.</p>"
+        '<header class="page-head"><p class="kicker">From the book</p><h1>Original source</h1><p class="lede">'
+        + escape(data["citation"]["title"])
+        + "</p></header>"
     )
-    body += '<nav aria-label="Originals">'
+    body += (
+        '<p class="fineprint">Physical page ordinals follow source order. Printed page labels remain unverified.</p>'
+        if data["citation"]["format"] != "EPUB"
+        else '<p class="fineprint">EPUB images follow retained document associations; these are not verified recipe matches. No facsimile pages or original CSS are promised.</p>'
+    )
+    body += '<nav class="original-options" aria-label="Originals">'
     for item in items:
         selection = {k: v for k, v in item.items() if k != "label"}
         body += (
@@ -207,7 +211,7 @@ async def deliver(reader, request, library):
             else "End of this text delivery; this does not establish a complete recipe."
         )
         body += (
-            "<p>"
+            '<p class="fineprint">'
             + text_state
             + " Corrections and crop confirmation do not establish approval.</p>"
         )
@@ -271,7 +275,7 @@ async def deliver(reader, request, library):
         escape(json.dumps(data["citation"], ensure_ascii=False, indent=2))
         + "</pre></details>"
     )
-    return reader.page(body, protected=True, presentation=True)
+    return reader.page(body + "</div>", protected=True, presentation=True)
 
 
 def failure(reader, at, message, status, *, retry=None, back=None):

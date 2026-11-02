@@ -32,3 +32,19 @@ changes no production authentication code or host certificate trust. Never deplo
 this adapter or use it to serve private books. It demonstrates the interaction and
 layout; it does not prove hosted TLS, real identity-provider behavior, native search,
 cloud-storage durability, Mac-off operation, device accessibility or performance.
+
+## UI polish
+
+The reader uses a warm paper palette, serif reading typography, a shared library
+header, a book shelf, and consistent search and bookmark layouts. Reading tools
+sit beside the text on wider screens and follow it on narrow screens. Source and
+account details are expandable; uncertainty and save/failure acknowledgements
+remain explicit. Kitchen mode was removed at the owner's request.
+
+Local Chrome checks exercised the catalog, search, a search-mounted recipe,
+bookmark saving and search return, saved places, and decoded sample originals.
+Reading reflow was checked at 390px and 320px; the 320px page had no horizontal
+page overflow. These synthetic local checks do not establish hosted/device or
+VoiceOver acceptance. A regression fixes body-declared reader enhancements being
+lost when search adopts parsed reading nodes, so mounted bookmark/report forms
+initialize rather than falling through to a normal form submission.

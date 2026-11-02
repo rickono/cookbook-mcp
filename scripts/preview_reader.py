@@ -220,7 +220,7 @@ def sample_library(root):
 class SampleReader(Reader):
     def page(self, body, **options):
         return super().page(
-            '<aside aria-label="Preview information"><p><strong>Local preview</strong>'
+            '<aside class="preview-banner" aria-label="Preview information"><p><strong>Local preview</strong>'
             " · Sample books · Simulated sign-in</p></aside>" + body,
             **options,
         )
