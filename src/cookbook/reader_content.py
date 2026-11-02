@@ -28,6 +28,7 @@ KEYS = {
     "target_id",
     "model_snapshot_id",
     "cursor",
+    "source_key",
 }
 
 
@@ -58,6 +59,8 @@ def decode_location(raw):
             r"[A-Za-z0-9:_-]{1,256}", item
         ):
             raise ValueError("invalid identifier")
+    if "source_key" in value and not re.fullmatch(r"[a-f0-9]{64}", value["source_key"]):
+        raise ValueError("invalid source key")
     if not re.fullmatch(r"[a-f0-9]{32}", value["publication_id"]):
         raise ValueError("invalid publication")
     if "section_id" in value and any(
@@ -95,7 +98,7 @@ def anchor(at, label, *, back=None):
     )
 
 
-async def deliver(reader, request, library):
+async def deliver(reader, request, library, owner=None, csrf=""):
     raw = request.query_params.get("at", "")
     try:
         loc = decode_location(raw)
@@ -104,6 +107,10 @@ async def deliver(reader, request, library):
             decode_location(back)
     except (ValueError, TypeError, UnicodeError):
         return JSONResponse({"error": "invalid_destination"}, status_code=400)
+    from .reader_updates import notice_markup, resolve_current, source_location
+
+    if request.url.path == "/reader/updates":
+        return JSONResponse(await asyncio.to_thread(resolve_current, library, loc))
     try:
         # Distinguish a retired publication from a transient storage/runtime failure.
         await asyncio.to_thread(library.publication, loc["publication_id"])
@@ -112,6 +119,10 @@ async def deliver(reader, request, library):
             reader,
             "Publication unavailable or retired. This exact reading link cannot be opened.",
             410,
+            notice_markup(
+                await asyncio.to_thread(resolve_current, library, loc),
+                loc["publication_id"],
+            ),
         )
     try:
         data = await asyncio.to_thread(read, library, loc)
@@ -120,11 +131,31 @@ async def deliver(reader, request, library):
             reader,
             "Source location unavailable. No replacement location was selected.",
             404,
+            notice_markup(
+                await asyncio.to_thread(resolve_current, library, loc),
+                loc["publication_id"],
+            ),
         )
+    data["source_location"] = await asyncio.to_thread(source_location, library, loc)
+    if data["source_location"].get("source_key"):
+        for key in ("next_text", "next_related", "next_contents"):
+            if data.get(key):
+                data[key] = move(
+                    decode_location(data[key]),
+                    source_key=data["source_location"]["source_key"],
+                )
+    data["update"] = await asyncio.to_thread(
+        resolve_current, library, data["source_location"]
+    )
     if request.url.path == "/reader/content":
         return JSONResponse(data)
     c = data["citation"]
-    body = '<nav aria-label="Library"><a href="/reader/catalog">Books</a>'
+    body = (
+        '<nav aria-label="Library"><a href="/reader/catalog">Books</a>'
+        '<a href="/reader/search?'
+        + escape(urlencode({"at": raw}))
+        + '">Search this book</a>'
+    )
     if back:
         body += anchor(back, "Return to originating location").replace(
             '">', '#text">', 1
@@ -213,15 +244,33 @@ async def deliver(reader, request, library):
         + escape(urlencode({"at": raw, **({"back": back} if back else {})}))
         + '">Inspect originals</a>'
     )
+    from .owner_reports import form
+
+    body += form(reader, data, loc, owner, csrf)
     body += '<script src="/reader/content.js" defer></script>'
+    durable = {
+        **loc,
+        **{
+            k: v
+            for k, v in data["source_location"].items()
+            if k in ("source_key", "model_snapshot_id")
+        },
+    }
+    body += anchor(encode_location(durable), "Link to this location")
+    body += notice_markup(data["update"], loc["publication_id"]).replace(
+        'id="publication-update"',
+        'id="publication-update" data-at="' + encode_location(durable) + '"',
+    )
+    body += '<script src="/reader/updates.js" defer></script>'
     return reader.page(body, protected=True, presentation=True)
 
 
-def page_error(reader, message, status):
+def page_error(reader, message, status, recovery=""):
     result = reader.page(
         '<p role="status">'
         + escape(message)
-        + '</p><a href="/reader/catalog">Books</a>',
+        + '</p><a href="/reader/catalog">Books</a>'
+        + recovery,
         protected=True,
     )
     result.status_code = status

@@ -116,3 +116,62 @@ Focused Ruff lint and formatting pass for authored/edited modules and new tests;
 `git diff --check` passes. Repository-wide Ruff also reports 77 inherited findings
 in untouched and imported baseline files (including prototype naming, loop
 closures and older test imports); these were not mass-reformatted in this slice.
+
+## Publication updates and saved-location contract (#103 / #104)
+
+`GET /reader/updates?at=…` uses the same session, origin, timeout and private
+response boundary as reading. It returns `state=available|unavailable`,
+`current_publication_id`, opaque `at` (null when unavailable), and `pinned_state`.
+It returns no book text and never selects a replacement edition. The script checks
+on focus/pageshow and each minute; only an explicit **Open current text** link
+navigates. Existing text/continuations stay publication-bound. Withdrawal learned
+by a check clears loaded text and continuation; original authorization is untouched.
+The destination publication is displayed and the explicit link targets the focusable
+text article. A newer publication arriving after the notice yields another pinned
+view with another notice, not a race-dependent substitution.
+
+For #104, `reader_updates.source_location(library, decoded_location)` validates a
+reference server-side and returns an identifier-only durable location. Store that
+value, not the text/citation projection. `resolve_current(library, location)` returns
+the same resolution object as HTTP. It uses one observed current publication and
+rechecks available text through Library. Transient exceptions propagate to the
+existing redacted retryable 503 boundary; unavailable references must be retained
+by the personal-state caller. Neither function writes personal state.
+
+A section requires the same book/source identity, section identifier and a matching
+SHA-256 `source_key` of a unique retained source locator. EPUB locators need a
+document and anchor; page locators need a physical page. Bare page lists and
+unknown locators are insufficient. Duplicate locators, changed IDs/locators, or
+missing evidence return unavailable. This intentionally permits false negatives
+rather than inferred mappings. Native targets require the same model snapshot and
+exact target (including reading-occurrence IDs); a changed snapshot is unavailable.
+Cursors, chunk offsets and pagination never migrate: updates restart the identified
+section/target. No title, wording, page-overlap or cross-edition matching occurs.
+
+Reading JSON adds `source_location` and `update`. The page's **Link to this location**
+and the live address bar retain source evidence; text continuations retain it too.
+Copied older envelopes without evidence still attempt their exact publication;
+while retained the server can verify their source. Once retired, missing evidence
+is unavailable. A durable source key can recover after retirement only if the
+current unique locator still agrees. Keys are references, never authorization or
+storage paths. These fields survive the existing validated opaque sign-in return.
+
+Synthetic HTTP tests switch and retire publications, withdraw scanned text, refuse
+changed locators/editions/snapshots and retain distinct native occurrences. Native
+fixtures are hand-written SQLite records validated by the production publication
+boundary; no parsing, ingestion, inference, OCR or rendering is run. Node DOM tests
+exercise passive notices, focus-preserving repeated checks, withdrawal and expiry.
+Actual browser/device/accessibility, hosted login/renewal and Mac-off evidence
+remain acceptance work under #98; no such observations are claimed here.
+
+After merging integration/spec-98 through `3d81084` (originals and owner reports),
+the safe Python selection in `test_reader_updates`, `test_reader_content`,
+`test_reader_http`, `test_library_auth`, `test_hosted`, `test_mcp`, `test_dashboard`,
+`test_owner_reports` and `test_reader_original` passed **89 tests**. Node selections
+`reader_updates`, `reader_content`, `owner_reports` and `reader_original` passed
+**13 tests**. Focused Ruff lint/format and `git diff --check` pass. Passive update
+checks preserve session inactivity expiry and dispatch the shared expiry event to
+clear report drafts. `current_publication_id` is null when no valid current
+publication exists; an exact retired link remains 410 in that case. Storage outages
+still use the existing redacted 503 response. No ingestion/OCR/model/rendering work,
+deployment, live identity change or issue-tracker mutation was performed.
