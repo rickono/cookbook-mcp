@@ -272,7 +272,7 @@ class Reader:
                 await self.write(key, owner, version)
                 await self.revoke([session])
                 return None
-            if request.url.path != "/reader/session":
+            if request.url.path not in ("/reader/session", "/reader/updates"):
                 session["seen"] = now
             for attempt in range(3):
                 try:
@@ -340,9 +340,15 @@ class Reader:
                 Path(__file__).with_name("owner_reports.js").read_text(),
                 media_type="text/javascript",
             )
-        if path == "/reader/content.js":
+        if path in ("/reader/content.js", "/reader/updates.js"):
             return Response(
-                Path(__file__).with_name("reader_content.js").read_text(),
+                Path(__file__)
+                .with_name(
+                    "reader_updates.js"
+                    if path.endswith("updates.js")
+                    else "reader_content.js"
+                )
+                .read_text(),
                 media_type="text/javascript",
             )
         if path == "/reader/session.js":
@@ -459,6 +465,7 @@ class Reader:
                 in (
                     "/reader/read",
                     "/reader/content",
+                    "/reader/updates",
                     "/reader/original",
                     "/reader/image",
                 )
@@ -493,7 +500,7 @@ class Reader:
             from .reader_original import deliver as original
 
             return await original(self, request, library)
-        if path in ("/reader/read", "/reader/content"):
+        if path in ("/reader/read", "/reader/content", "/reader/updates"):
             return await deliver(self, request, library, subject, session["csrf"])
         if path == "/reader/reports":
             from .owner_reports import intake
@@ -676,6 +683,8 @@ class Reader:
             "/reader/session",
             "/reader/read",
             "/reader/content",
+            "/reader/updates",
+            "/reader/updates.js",
             "/reader/login",
             "/reader/callback",
             "/reader/style.css",
