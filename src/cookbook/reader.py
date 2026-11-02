@@ -466,13 +466,15 @@ class Reader:
                     }
                 )
             )
-            return self.page(
+            response = self.page(
                 '<p role="status">Reader signed out on this device. Refresh-token revocation was attempted. '
                 "If the provider is unavailable, reader logout still stands; provider SSO may remain active.</p>"
                 '<a href="' + escape(provider) + '">Continue to Auth0 SSO sign-out</a>'
                 "<p>This does not sign out Google or MCP, immediately revoke a copied valid access token, "
                 'or erase content already delivered.</p><a href="/reader/login">Sign in again</a>'
             )
+            response.headers["Clear-Site-Data"] = '"cache", "storage"'
+            return response
         if path == "/reader/signin-failed":
             return self.expired()
         auth = await self.authenticate(request)
@@ -548,10 +550,27 @@ class Reader:
                 payload.extend(chunk)
                 if len(payload) > 4096:
                     return Response(status_code=413)
-            data = dict(parse_qsl(payload.decode()))
-            if not secrets.compare_digest(
-                data.get("csrf", ""), session["csrf"]
-            ) or data.get("scope") not in ("device", "all"):
+            scripted = (
+                request.headers.get("content-type", "").split(";", 1)[0]
+                == "application/json"
+            )
+            try:
+                data = (
+                    json.loads(payload)
+                    if scripted
+                    else dict(parse_qsl(payload.decode()))
+                )
+            except (ValueError, UnicodeError):
+                return JSONResponse({"error": "invalid_logout"}, status_code=400)
+            if not isinstance(data, dict):
+                return JSONResponse({"error": "invalid_logout"}, status_code=400)
+            csrf = data.get("csrf", "")
+            if (
+                not isinstance(csrf, str)
+                or not csrf.isascii()
+                or not secrets.compare_digest(csrf, session["csrf"])
+                or data.get("scope") not in ("device", "all")
+            ):
                 return JSONResponse({"error": "csrf_or_scope_denied"}, status_code=403)
             key = self.owner_key(subject)
             owner, version = await self.read(key)
@@ -567,10 +586,13 @@ class Reader:
             r = self.page(
                 '<p role="status">Reader signed out. Google, MCP and copied access tokens may remain signed in.</p><a href="/reader/login">Sign in again</a>'
             )
-            if data["scope"] == "device":
+            if scripted:
+                r = JSONResponse({"status": "signed_out", "scope": data["scope"]})
+            elif data["scope"] == "device":
                 r = RedirectResponse("/reader/signed-out", status_code=303)
             self.cookie(r, COOKIE, "", 0)
-            r.headers["Clear-Site-Data"] = '"cache", "storage"'
+            if not scripted:
+                r.headers["Clear-Site-Data"] = '"cache", "storage"'
             return r
         if path in ("/reader", "/reader/catalog"):
             q = request.query_params

@@ -268,8 +268,20 @@ Failures retain an explicit retry; expiry clears the private view without replay
 Origin checks, CSRF validation and no-referrer headers remain unchanged. Both
 scopes, failures, duplicate submission and expiry have browser-script regressions.
 
-The safe release selection passed 170 Python tests with six Linux-only skips on
-macOS, and 50 Node checks. Full hosted browser journeys, refresh renewal, supported
+A source-free Chromium probe isolated a second sign-out issue: a fetch response
+carrying `Clear-Site-Data` exceeded the browser acknowledgement timeout even when
+the server had invalidated the session. Scripted logout now returns an explicit
+JSON status/scope after invalidation and cookie clearing. The script validates that
+acknowledgement, clears protected DOM, pauses session polling during the operation
+and navigates to the fixed public confirmation page. That page sends the existing
+cache/storage clearing header; browser cleanup no longer hides acknowledgement.
+Native form clients retain their previous response. HTTP regressions cover both
+JSON scopes and confirmation headers; browser-script checks reject mismatched
+acknowledgements. The source-free browser probe visibly reached confirmation with
+cleanup on navigation. No storage/authentication protection was removed.
+
+The safe release selection passed 172 Python tests with six Linux-only skips on
+macOS, and 51 Node checks. Full hosted browser journeys, refresh renewal, supported
 original display, device/accessibility checks and shaped-network budgets still
 require observed evidence. The source-image limitation reported by the independent
 repair is unchanged; no rendering ceiling, OCR or inference was invoked here.

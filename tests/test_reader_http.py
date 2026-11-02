@@ -664,3 +664,22 @@ def test_failed_callback_cleans_protocol_url_before_signin(
         assert clean.status_code == 401 and "Sign in" in clean.text
         assert not clean.url.query
         assert state not in clean.text and "private-" not in clean.text
+
+
+@pytest.mark.parametrize("scope", ["device", "all"])
+def test_scripted_logout_acknowledges_before_browser_data_cleanup(reader_env, scope):
+    app, _, _ = reader_env
+    with TestClient(app(), base_url="https://reader.example") as client:
+        login(client)
+        csrf = client.get("/reader/session").json()["csrf"]
+        response = client.post(
+            "/reader/logout",
+            json={"scope": scope, "csrf": csrf},
+            headers={"Origin": "https://reader.example"},
+        )
+        assert response.status_code == 200
+        assert response.json() == {"status": "signed_out", "scope": scope}
+        assert "clear-site-data" not in response.headers
+        assert client.get("/reader/catalog").status_code == 401
+        confirmation = client.get("/reader/signed-out")
+        assert confirmation.headers["clear-site-data"] == '"cache", "storage"'
