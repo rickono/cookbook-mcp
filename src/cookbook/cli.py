@@ -7,11 +7,72 @@ import sys
 from pathlib import Path
 
 from .ocr_limits import OcrIsolationError
-from .publication import Manifest, Runtime, publish, restore
+from .publication import Runtime, publish_build, restore
 from .storage import IntegrityError, LocalStore, atomic_write, canonical, file_lock
 
 
+def hosted_activator(readiness_url, *, token_file=None, browser_login=False):
+    """activate(pointer) for the hosted runtime: await its authenticated readiness ack.
+
+    The Mac's publisher signs in (or reads an owner-only token file); the credential is
+    used only to ask the configured resource server whether it serves the new pointer.
+    """
+    from urllib.parse import urlsplit
+
+    from .hosted import https_url, wait_for_activation
+
+    https_url(readiness_url)
+    # Restrict acknowledgement to the configured resource server, including origin.
+    audience = https_url(os.environ["COOKBOOK_AUDIENCE"])
+    target, resource = urlsplit(readiness_url), urlsplit(audience)
+    if (target.scheme, target.netloc, target.path) != (
+        resource.scheme,
+        resource.netloc,
+        "/readyz",
+    ):
+        raise ValueError("readiness target must match the resource server")
+    if token_file and token_file.stat().st_mode & 0o077:
+        raise ValueError("token file must be owner-only")
+    login_config = None
+    if browser_login:
+        from .publisher_login import LoginConfig
+
+        login_config = LoginConfig.from_environment()
+
+    def activate(pointer):
+        if login_config:
+            from .publisher_login import LoginError
+            from .publisher_login import browser_login as login
+
+            # Sign in after upload/readback, before starting the acknowledgement timer.
+            try:
+                token = login(login_config)
+            except LoginError as error:
+                print(json.dumps({"error": str(error)}), file=sys.stderr)
+                return None
+            provider = token.bearer
+        else:
+            provider = lambda: token_file.read_text().strip()
+        return wait_for_activation(pointer, readiness_url, provider)
+
+    return activate
+
+
+def recording(state_directory, activate):
+    """Record the uploaded pointer before awaiting activation, so wait-active can resume."""
+
+    def record_and_wait(pointer):
+        atomic_write(state_directory / "pending-activation.json", canonical(pointer))
+        return activate(pointer)
+
+    return record_and_wait
+
+
 def _main():
+    if len(sys.argv) > 1 and sys.argv[1] == "dashboard":
+        from .dashboard.cli import main as dashboard_main
+
+        return dashboard_main(sys.argv[2:])
     os.umask(0o077)
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest="command", required=True)
@@ -66,10 +127,26 @@ def _main():
         default=[],
         help="Ignore embedded text and OCR every page for selected PDF/DjVu Calibre IDs",
     )
+    b.add_argument(
+        "--scanned-registry",
+        type=Path,
+        help="scanned-registry.v1 JSON mapping PDF sha256 to a scanned-candidate.v1 directory",
+    )
+    b.add_argument(
+        "--ledger",
+        type=Path,
+        help="correction ledger (ledger.jsonl from scripts/triage_reports.py) to apply",
+    )
     pub = sub.add_parser("publish-local")
     pub.add_argument("--build", type=Path, required=True)
     pub.add_argument("--store", type=Path, required=True)
     pub.add_argument("--runtime", type=Path, required=True)
+    for name in ("publication-status-local", "recover-local", "rollback-local"):
+        lifecycle = sub.add_parser(name)
+        lifecycle.add_argument("--store", type=Path, required=True)
+        lifecycle.add_argument("--runtime", type=Path, required=True)
+        if name == "rollback-local":
+            lifecycle.add_argument("--pointer", type=Path, required=True)
     rec = sub.add_parser("restore-local")
     rec.add_argument("--store", type=Path, required=True)
     rec.add_argument("--destination", type=Path, required=True)
@@ -81,6 +158,11 @@ def _main():
     s.add_argument("--issuer", required=True)
     s.add_argument("--subject", required=True)
     s.add_argument("--port", type=int, default=8765)
+    s.add_argument(
+        "--reports",
+        type=Path,
+        help="Directory for agent transcription reports (a store separate from --store)",
+    )
     s.add_argument(
         "--typesense-binary",
         type=Path,
@@ -102,7 +184,64 @@ def _main():
     final.add_argument("--build", type=Path, required=True)
     final.add_argument("--ocr-cache", type=Path, required=True)
     final.add_argument("--output", type=Path, required=True)
+    final.add_argument("--transcription-review", type=Path)
+    transcription = sub.add_parser(
+        "review-transcription",
+        help="Record or inspect saved-evidence content decisions; no recognition",
+    )
+    transcription.add_argument("--review-store", type=Path, required=True)
+    operation = transcription.add_mutually_exclusive_group(required=True)
+    operation.add_argument("--candidate-file", type=Path)
+    operation.add_argument("--decision-file", type=Path)
+    operation.add_argument("--selection-id")
+    operation.add_argument(
+        "--withdrawal-id", help="Retry enforcing a saved error decision"
+    )
+    transcription.add_argument(
+        "--withdrawal-store",
+        type=Path,
+        help="Shared local publication object store for immediate withdrawal",
+    )
     a = p.parse_args()
+    if a.command == "review-transcription":
+        from .transcription_review import ReviewStore
+
+        store = ReviewStore(a.review_store)
+        if a.candidate_file:
+            candidate = json.loads(a.candidate_file.read_bytes())
+            result = {"candidate_id": store.save_candidate(**candidate)}
+        elif a.decision_file:
+            decision = json.loads(a.decision_file.read_bytes())
+            if (
+                decision.get("action") in {"confirm_error", "revoke"}
+                and not a.withdrawal_store
+            ):
+                p.error(
+                    "withdrawal requires --withdrawal-store; use the serving object store"
+                )
+            if decision.get("action") in {"confirm_error", "revoke"}:
+                decision["withdrawal_store"] = LocalStore(a.withdrawal_store)
+            result = store.decide(**decision)
+        elif a.withdrawal_id:
+            if not a.withdrawal_store:
+                p.error("--withdrawal-id requires --withdrawal-store")
+            result = next(
+                (e for e in store.export()["decisions"] if e["id"] == a.withdrawal_id),
+                None,
+            )
+            if result is None or result.get("action") not in {
+                "confirm_error",
+                "revoke",
+            }:
+                raise ValueError("unknown withdrawal decision")
+        else:
+            result = store.inspect(a.selection_id)
+        if a.withdrawal_id:
+            from .withdrawal import record_withdrawal
+
+            record_withdrawal(LocalStore(a.withdrawal_store), result)
+        print(json.dumps(result))
+        return
     if a.command == "interpret":
         from .book_interpret import interpretation_build
 
@@ -141,41 +280,11 @@ def _main():
         supervise()
         return
     if a.command in ("publish-s3", "wait-active"):
-        from .hosted import https_url, store_from_environment, wait_for_activation
+        from .hosted import store_from_environment
 
-        https_url(a.readiness_url)
-        # Restrict acknowledgement to the configured resource server, including origin.
-        audience = https_url(os.environ["COOKBOOK_AUDIENCE"])
-        from urllib.parse import urlsplit
-
-        target, resource = urlsplit(a.readiness_url), urlsplit(audience)
-        if (target.scheme, target.netloc, target.path) != (
-            resource.scheme,
-            resource.netloc,
-            "/readyz",
-        ):
-            raise ValueError("readiness target must match the resource server")
-        if a.token_file and a.token_file.stat().st_mode & 0o077:
-            raise ValueError("token file must be owner-only")
-        login_config = None
-        if a.browser_login:
-            from .publisher_login import LoginConfig, LoginError, browser_login
-
-            login_config = LoginConfig.from_environment()
-
-        def activate(pointer):
-            if login_config:
-                # Sign in after upload/readback, before starting the acknowledgement timer.
-                try:
-                    token = browser_login(login_config)
-                except LoginError as error:
-                    print(json.dumps({"error": str(error)}), file=sys.stderr)
-                    return None
-                provider = token.bearer
-            else:
-                provider = lambda: a.token_file.read_text().strip()
-            return wait_for_activation(pointer, a.readiness_url, provider)
-
+        activate = hosted_activator(
+            a.readiness_url, token_file=a.token_file, browser_login=a.browser_login
+        )
         if a.command == "wait-active":
             pointer = json.loads(a.pointer.read_bytes())
             mid = activate(pointer)
@@ -190,34 +299,9 @@ def _main():
         store = store_from_environment()
         a.state_directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         with file_lock(a.state_directory / ".publisher.lock"):
-            m = Manifest.model_validate_json((a.build / "manifest.json").read_bytes())
-            inputs = {
-                k: Path(v)
-                for k, v in json.loads((a.build / "inputs.json").read_bytes()).items()
-            }
-            _, version = store.read_version("control/active.json")
-
-            def record_and_wait(pointer):
-                atomic_write(
-                    a.state_directory / "pending-activation.json", canonical(pointer)
-                )
-                return activate(pointer)
-
-            result = publish(
-                store, m, inputs, expected_version=version, activate=record_and_wait
+            result = publish_build(
+                store, a.build, activate=recording(a.state_directory, activate)
             )
-            if result["status"] == "active":
-                raw, history_version = store.read_version("control/successful.json")
-                history = json.loads(raw) if raw else []
-                pointer = {k: result[k] for k in ("publication_id", "manifest_sha256")}
-                history = [pointer] + [
-                    v for v in history if v["publication_id"] != m.publication_id
-                ]
-                store.put_bytes(
-                    "control/successful.json",
-                    canonical(history),
-                    expected=history_version,
-                )
             print(json.dumps(result))
             if result["status"] != "active":
                 raise SystemExit(4)
@@ -244,7 +328,9 @@ def _main():
     if a.command == "finalize-local":
         from .quality import finalize
 
-        m = finalize(a.build, a.ocr_cache, a.output)
+        m = finalize(
+            a.build, a.ocr_cache, a.output, transcription_review=a.transcription_review
+        )
         print(
             json.dumps(
                 {"publication_id": m.publication_id, "status": "ready_to_publish"}
@@ -253,6 +339,8 @@ def _main():
         return
     if a.command == "build":
         from .build import build_snapshot
+        from .ledger import read as read_ledger
+        from .scanned import read_build_report, read_registry
 
         m, _, stats = build_snapshot(
             a.snapshot,
@@ -261,7 +349,10 @@ def _main():
             a.ocr_cache,
             progress=lambda d: print(json.dumps(d), flush=True),
             force_ocr_ids=a.force_ocr_books,
+            scanned=read_registry(a.scanned_registry) if a.scanned_registry else None,
+            ledger=read_ledger(a.ledger) if a.ledger else None,
         )
+        scanned_report = read_build_report(a.output) or {}
         from .ocr import write_review_page
         from .quality import read_report
 
@@ -277,6 +368,8 @@ def _main():
                 {
                     "publication_id": m.publication_id,
                     "stats": stats,
+                    "corrections": scanned_report.get("corrections"),
+                    "owner_queue": len(scanned_report.get("owner_queue", [])),
                     "pending_ocr_pages": len(pending),
                     "status": "review_required" if pending else "ready_to_publish",
                 }
@@ -288,29 +381,21 @@ def _main():
         store = LocalStore(a.store)
         runtime = Runtime(store, a.runtime)
         with file_lock(a.store / ".publisher.lock"):
-            m = Manifest.model_validate_json((a.build / "manifest.json").read_bytes())
-            inputs = {
-                k: Path(v)
-                for k, v in json.loads((a.build / "inputs.json").read_bytes()).items()
-            }
-            raw, version = store.read_version("control/active.json")
             # A retry of the same verified pointer can confirm activation without rebuilding.
-            result = publish(
-                store, m, inputs, expected_version=version, activate=runtime.activate
-            )
-            if result["status"] == "active":
-                history_path = a.store / "control/successful.json"
-                history = (
-                    json.loads(history_path.read_bytes())
-                    if history_path.exists()
-                    else []
-                )
-                pointer = {k: result[k] for k in ("publication_id", "manifest_sha256")}
-                history = [pointer] + [
-                    v for v in history if v["publication_id"] != m.publication_id
-                ]
-                atomic_write(history_path, canonical(history))
+            result = publish_build(store, a.build, activate=runtime.activate)
             print(json.dumps(result))
+    elif a.command in ("publication-status-local", "recover-local", "rollback-local"):
+        store = LocalStore(a.store)
+        runtime = Runtime(store, a.runtime)
+        with file_lock(a.store / ".publisher.lock"):
+            if a.command == "recover-local":
+                runtime.recover()
+            elif a.command == "rollback-local":
+                _, version = store.read_version("control/active.json")
+                runtime.rollback(
+                    json.loads(a.pointer.read_bytes()), expected_version=version
+                )
+            print(json.dumps(runtime.status()))
     elif a.command == "restore-local":
         store = LocalStore(a.store)
         raw, _ = store.read_version("control/active.json")
@@ -326,6 +411,12 @@ def _main():
 
         store = LocalStore(a.store)
         runtime = Runtime(store, a.runtime)
+        from .reports import ReportSink
+
+        if a.reports and a.reports.resolve() == a.store.resolve():
+            raise ValueError("reports store must be separate from the library store")
+        reports = ReportSink(LocalStore(a.reports)) if a.reports else None
+
         engine = None
         try:
             if a.typesense_binary:
@@ -342,7 +433,7 @@ def _main():
                 public_key=a.public_key.read_text(),
             )
             uvicorn.run(
-                create_app(Library(runtime, search_engine=engine), verifier),
+                create_app(Library(runtime, search_engine=engine), verifier, reports),
                 host="127.0.0.1",
                 port=a.port,
                 access_log=False,
@@ -360,7 +451,7 @@ def main():
     logging.getLogger("pypdf").setLevel(logging.CRITICAL)
     try:
         _main()
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 - every failure maps to a coded error
         from .ocr import ReviewRequired
         from .publisher_login import LoginError
 

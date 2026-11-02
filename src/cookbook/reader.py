@@ -1,0 +1,738 @@
+"""Hosted browser session boundary. Library access remains shared and read-only."""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import hashlib
+import json
+import secrets
+import time
+from dataclasses import dataclass, field
+from html import escape
+from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlsplit
+
+import httpx
+import jwt
+from cryptography.fernet import Fernet
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from starlette.routing import Route
+
+from .reader_content import decode_location, deliver, reading_link
+from .storage import Conflict, canonical
+
+COOKIE = "__Host-reader"
+TRANSACTION = "__Host-reader-login"
+IDLE = 7 * 86400
+LIFETIME = 30 * 86400
+
+# Public generic first-party assets; protected routes are registered separately.
+ASSETS = {
+    "/reader/presentation.css": ("reader_presentation.css", "text/css"),
+    "/reader/presentation.js": ("reader_presentation.js", "text/javascript"),
+    "/reader/style.css": ("reader_style.css", "text/css"),
+    "/reader/personal.js": ("reader_personal.js", "text/javascript"),
+    "/reader/search.js": ("reader_search.js", "text/javascript"),
+    "/reader/original.js": ("reader_original.js", "text/javascript"),
+    "/reader/original.css": ("reader_original.css", "text/css"),
+    "/reader/reports.js": ("owner_reports.js", "text/javascript"),
+    "/reader/content.js": ("reader_content.js", "text/javascript"),
+    "/reader/updates.js": ("reader_updates.js", "text/javascript"),
+    "/reader/session.js": ("reader_session.js", "text/javascript"),
+}
+
+
+def opaque():
+    return secrets.token_urlsafe(32)
+
+
+def digest(value):
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
+@dataclass(frozen=True)
+class ReaderConfig:
+    origin: str
+    client_id: str
+    client_secret: str = field(repr=False)
+    oidc: bool = False
+
+    def __post_init__(self):
+        p = urlsplit(self.origin)
+        if (
+            p.scheme != "https"
+            or not p.hostname
+            or p.username
+            or p.password
+            or p.path
+            or p.query
+            or p.fragment
+        ):
+            raise ValueError("reader requires an exact HTTPS origin")
+        if not self.client_id or not self.client_secret:
+            raise ValueError("confidential reader client required")
+
+    @property
+    def callback(self):
+        return self.origin + "/reader/callback"
+
+
+class IdentityProvider:
+    """Auth0 confidential web client; no discovery-controlled redirect endpoints."""
+
+    def __init__(self, config, verifier):
+        self.config, self.verifier = config, verifier
+
+    async def post(self, path, data):
+        async with httpx.AsyncClient(
+            timeout=5, follow_redirects=False, trust_env=False
+        ) as client:
+            r = await client.post(
+                self.verifier.issuer + path,
+                data={
+                    "client_id": self.config.client_id,
+                    "client_secret": self.config.client_secret,
+                    **data,
+                },
+            )
+            r.raise_for_status()
+            return r.json() if path == "oauth/token" else None
+
+    async def exchange(self, code, verifier, nonce):
+        tokens = await self.post(
+            "oauth/token",
+            {
+                "grant_type": "authorization_code",
+                "code": code,
+                "code_verifier": verifier,
+                "redirect_uri": self.config.callback,
+            },
+        )
+        if self.config.oidc:
+            raw = tokens.get("id_token", "")
+            key = (
+                self.verifier.public_key
+                or (
+                    await asyncio.to_thread(
+                        self.verifier.jwks.get_signing_key_from_jwt, raw
+                    )
+                ).key
+            )
+            claims = jwt.decode(
+                raw,
+                key,
+                algorithms=["RS256"],
+                issuer=self.verifier.issuer,
+                audience=self.config.client_id,
+                options={"require": ["exp", "iat", "iss", "aud", "sub", "nonce"]},
+            )
+            access = await self.verifier.verify_token(tokens.get("access_token", ""))
+            if (
+                claims["nonce"] != nonce
+                or not access
+                or claims["sub"] != access.subject
+            ):
+                raise ValueError("identity mismatch")
+            if claims.get("azp", self.config.client_id) != self.config.client_id:
+                raise ValueError("identity client mismatch")
+            if (
+                isinstance(claims["aud"], list)
+                and len(claims["aud"]) > 1
+                and claims.get("azp") != self.config.client_id
+            ):
+                raise ValueError("identity client mismatch")
+        return tokens
+
+    async def renew(self, token):
+        return await self.post(
+            "oauth/token", {"grant_type": "refresh_token", "refresh_token": token}
+        )
+
+    async def revoke(self, token):
+        await self.post("oauth/revoke", {"token": token})
+
+
+class Reader:
+    def __init__(
+        self,
+        config,
+        verifier,
+        store,
+        encryption_key,
+        *,
+        identity=None,
+        clock=time.time,
+        owner_reports=None,
+        personal_state=None,
+    ):
+        if urlsplit(verifier.issuer).scheme != "https" or not verifier.issuer.endswith(
+            "/"
+        ):
+            raise ValueError("exact HTTPS issuer ending in slash required")
+        self.config, self.verifier, self.store = config, verifier, store
+        self.cipher = Fernet(encryption_key)
+        self.identity = identity or IdentityProvider(config, verifier)
+        self.clock = clock
+        self.owner_reports = owner_reports
+        self.personal_state = personal_state
+
+    async def read(self, key):
+        raw, version = await asyncio.to_thread(self.store.read_version, key)
+        return (json.loads(self.cipher.decrypt(raw)) if raw else None), version
+
+    async def write(self, key, value, version=None):
+        return await asyncio.to_thread(
+            self.store.put_bytes,
+            key,
+            self.cipher.encrypt(canonical(value)),
+            expected=version,
+        )
+
+    def owner_key(self, subject):
+        return "reader/owners/" + digest(subject)
+
+    def cookie(self, response, name, value, age):
+        response.set_cookie(
+            name,
+            value,
+            max_age=age,
+            secure=True,
+            httponly=True,
+            samesite="lax",
+            path="/",
+        )
+
+    async def revoke(self, sessions):
+        async def attempt(session):
+            if session.get("refresh"):
+                try:
+                    async with asyncio.timeout(5):
+                        await self.identity.revoke(session["refresh"])
+                except Exception:  # noqa: BLE001
+                    return False  # Reader invalidation is independent of provider availability.
+
+        await asyncio.gather(*(attempt(session) for session in sessions))
+
+    async def authenticate(self, request):
+        """Authorize one request; returned session is server-only and must never be serialized."""
+        sid = request.cookies.get(COOKIE, "")
+        if len(sid) != 43:
+            return None
+        # Allowlist is normally one owner; tokens still undergo verification every request.
+        for subject in self.verifier.subjects:
+            key = self.owner_key(subject)
+            owner, version = await self.read(key)
+            sessions = owner.get("sessions", {}) if owner else {}
+            session = sessions.get(digest(sid))
+            if not session:
+                continue
+            now = self.clock()
+            if now - session["seen"] >= IDLE or now - session["created"] >= LIFETIME:
+                del sessions[digest(sid)]
+                await self.write(key, owner, version)
+                await self.revoke([session])
+                return None
+            if session.get("renewing"):
+                # Concurrent tabs retry; a crashed exchange expires instead of replaying a rotating token.
+                if now - session["renewing"] < 10:
+                    raise Conflict("renewal pending")
+                del sessions[digest(sid)]
+                await self.write(key, owner, version)
+                await self.revoke([session])
+                return None
+            expected_session = canonical(session)
+            renewed = False
+            token = await self.verifier.verify_token(session["access"])
+            if token is None:
+                # Only expiry can renew. Invalid claims/signatures must never be repaired by login state.
+                expired = await self.verifier.verify_token(
+                    session["access"], allow_expired=True
+                )
+                if (
+                    not expired
+                    or expired.subject != subject
+                    or "library:read" not in expired.scopes
+                    or not session.get("refresh")
+                ):
+                    del sessions[digest(sid)]
+                    await self.write(key, owner, version)
+                    await self.revoke([session])
+                    return None
+                session["renewing"] = now
+                version = await self.write(key, owner, version)
+                expected_session = canonical(session)
+                try:
+                    tokens = await self.identity.renew(session["refresh"])
+                    token = await self.verifier.verify_token(
+                        tokens.get("access_token", "")
+                    )
+                    if (
+                        not token
+                        or token.subject != subject
+                        or "library:read" not in token.scopes
+                    ):
+                        raise ValueError("authorization lost")
+                    session["access"] = tokens["access_token"]
+                    session["refresh"] = (
+                        tokens.get("refresh_token") or session["refresh"]
+                    )
+                    session.pop("renewing")
+                    renewed = True
+                except Exception:  # noqa: BLE001
+                    del sessions[digest(sid)]
+                    await self.write(key, owner, version)
+                    await self.revoke([session])
+                    return None
+            if token.subject != subject or "library:read" not in token.scopes:
+                del sessions[digest(sid)]
+                await self.write(key, owner, version)
+                await self.revoke([session])
+                return None
+            if request.url.path not in ("/reader/session", "/reader/updates"):
+                session["seen"] = now
+            for attempt in range(3):
+                try:
+                    await self.write(key, owner, version)
+                    return subject, session
+                except Conflict:
+                    # Preserve other devices' updates without resurrecting a logged-out session.
+                    owner, version = await self.read(key)
+                    current = (
+                        owner.get("sessions", {}).get(digest(sid)) if owner else None
+                    )
+                    if current is None:
+                        if renewed:
+                            await self.revoke([session])
+                        return None
+                    if canonical(current) != expected_session or attempt == 2:
+                        if renewed:
+                            await self.revoke([session])
+                        raise
+                    owner["sessions"][digest(sid)] = session
+        return None
+
+    def page(self, body, *, protected=False, presentation=False):
+        return HTMLResponse(
+            '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Cookbook library</title><link rel="stylesheet" href="/reader/style.css">'
+            + ('<script src="/reader/session.js" defer></script>' if protected else "")
+            + (
+                '<link rel="stylesheet" href="/reader/presentation.css"><script src="/reader/presentation.js" defer></script>'
+                if presentation
+                else ""
+            )
+            + '<body><a class="skip-link" href="#reader-main">Skip to reading</a>'
+            '<header class="site-header"><div class="site-header-inner">'
+            '<a class="brand" href="/reader/catalog"><span class="brand-mark" aria-hidden="true"></span>Cookbook library</a>'
+            '<nav class="site-nav" aria-label="Library navigation"><a href="/reader/catalog">Library</a>'
+            '<a href="/reader/search">Search library</a><a href="/reader/bookmarks">Bookmarks</a></nav>'
+            '</div></header><main id="reader-main" tabindex="-1">'
+            + body
+            + "</main></body></html>"
+        )
+
+    def expired(self, destination=None):
+        r = self.page(
+            '<section class="layout layout-narrow signin"><p class="kicker">Your books, close at hand</p>'
+            "<h1>A little time with your cookbooks.</h1>"
+            '<p class="lede" role="status">Sign in to read your private library.</p><a class="button button-primary" href="/reader/login?'
+            + escape(urlencode({"return": destination or "catalog"}))
+            + '">Sign in</a><p class="fineprint">Browse the books you know, find something to cook, and pick up where you left off.</p></section>'
+        )
+        r.status_code = 401
+        self.cookie(r, COOKIE, "", 0)
+        return r
+
+    async def dispatch(self, request, library):
+        path = request.url.path
+        if path in ASSETS:
+            filename, media_type = ASSETS[path]
+            return Response(
+                Path(__file__).with_name(filename).read_text(), media_type=media_type
+            )
+        if path == "/reader/login":
+            # Only named, opaque destinations; never accept a URL supplied by a client.
+            destination = request.query_params.get("return", "catalog")
+            if destination != "catalog":
+                try:
+                    decode_location(destination)
+                except (ValueError, TypeError, UnicodeError):
+                    return JSONResponse(
+                        {"error": "invalid_destination"}, status_code=400
+                    )
+            state, browser, pkce, nonce = opaque(), opaque(), opaque(), opaque()
+            await self.write(
+                "reader/transactions/" + digest(state),
+                {
+                    "browser": digest(browser),
+                    "destination": destination,
+                    "pkce": pkce,
+                    "nonce": nonce,
+                    "expires": self.clock() + 600,
+                },
+            )
+            query = {
+                "response_type": "code",
+                "client_id": self.config.client_id,
+                "redirect_uri": self.config.callback,
+                "audience": self.verifier.audience,
+                "scope": "library:read offline_access"
+                + (" openid" if self.config.oidc else ""),
+                "state": state,
+                "code_challenge": base64.urlsafe_b64encode(
+                    hashlib.sha256(pkce.encode()).digest()
+                )
+                .rstrip(b"=")
+                .decode(),
+                "code_challenge_method": "S256",
+            }
+            if self.config.oidc:
+                query["nonce"] = nonce
+            r = RedirectResponse(
+                self.verifier.issuer + "authorize?" + urlencode(query), status_code=303
+            )
+            self.cookie(r, TRANSACTION, browser, 600)
+            return r
+        if path == "/reader/callback":
+            q = request.query_params
+            if (
+                any(len(q.getlist(k)) != 1 for k in ("state", "code", "iss"))
+                or len(q["state"]) != 43
+                or not q["code"]
+                or "error" in q
+            ):
+                return self.expired()
+            key = "reader/transactions/" + digest(q["state"])
+            txn, version = await self.read(key)
+            if (
+                not txn
+                or txn.get("expires", 0) <= self.clock()
+                or txn.get("browser") != digest(request.cookies.get(TRANSACTION, ""))
+                or q["iss"] != self.verifier.issuer
+            ):
+                return self.expired()
+            await self.write(
+                key, {}, version
+            )  # Consume before exchange; replay fails across workers.
+            try:
+                tokens = await self.identity.exchange(
+                    q["code"], txn["pkce"], txn["nonce"]
+                )
+                token = await self.verifier.verify_token(tokens.get("access_token", ""))
+                if not token or "library:read" not in token.scopes:
+                    raise ValueError("unauthorized")
+            except Exception:  # noqa: BLE001
+                return self.expired()
+            owner_key = self.owner_key(token.subject)
+            owner, version = await self.read(owner_key)
+            owner = owner or {"sessions": {}}
+            now = self.clock()
+            owner["sessions"] = {
+                k: s
+                for k, s in owner["sessions"].items()
+                if now - s["seen"] < IDLE and now - s["created"] < LIFETIME
+            }
+            if len(owner["sessions"]) >= 100:
+                return JSONResponse({"error": "session_limit"}, status_code=409)
+            sid = opaque()
+            owner["sessions"][digest(sid)] = {
+                "access": tokens["access_token"],
+                "refresh": tokens.get("refresh_token"),
+                "created": now,
+                "seen": now,
+                "csrf": opaque(),
+            }
+            await self.write(owner_key, owner, version)
+            destination = txn.get("destination", "catalog")
+            if destination != "catalog":
+                decode_location(destination)
+            r = RedirectResponse(
+                "/reader/catalog"
+                if destination == "catalog"
+                else "/reader/read?" + urlencode({"at": destination}),
+                status_code=303,
+            )
+            self.cookie(r, COOKIE, sid, LIFETIME)
+            self.cookie(r, TRANSACTION, "", 0)
+            return r
+        if path == "/reader/signed-out":
+            provider = (
+                self.verifier.issuer
+                + "v2/logout?"
+                + urlencode(
+                    {
+                        "client_id": self.config.client_id,
+                        "returnTo": self.config.origin + "/reader",
+                    }
+                )
+            )
+            return self.page(
+                '<p role="status">Reader signed out on this device. Refresh-token revocation was attempted. '
+                "If the provider is unavailable, reader logout still stands; provider SSO may remain active.</p>"
+                '<a href="' + escape(provider) + '">Continue to Auth0 SSO sign-out</a>'
+                "<p>This does not sign out Google or MCP, immediately revoke a copied valid access token, "
+                'or erase content already delivered.</p><a href="/reader/login">Sign in again</a>'
+            )
+        if path == "/reader/signin-failed":
+            return self.expired()
+        auth = await self.authenticate(request)
+        if not auth:
+            destination = (
+                request.query_params.get("at")
+                if path
+                in (
+                    "/reader/read",
+                    "/reader/content",
+                    "/reader/updates",
+                    "/reader/original",
+                    "/reader/image",
+                )
+                else None
+            )
+            if destination:
+                try:
+                    decode_location(destination)
+                except (ValueError, TypeError, UnicodeError):
+                    destination = None
+            return self.expired(destination)
+        subject, session = auth
+        if path == "/reader/personal":
+            from .reader_personal import endpoint
+
+            return await endpoint(self, request, library, subject, session)
+        if path == "/reader/bookmarks":
+            from .reader_personal import bookmarks_page
+
+            return bookmarks_page(self)
+        if path == "/reader/book":
+            from .reader_personal import book_entry
+
+            return await book_entry(self, request, library, subject)
+        if path == "/reader/search":
+            from .reader_search import page
+
+            if set(request.query_params) - {"at"}:
+                return JSONResponse({"error": "use_private_post_body"}, status_code=400)
+            try:
+                location = (
+                    decode_location(request.query_params["at"])
+                    if "at" in request.query_params
+                    else {}
+                )
+            except (ValueError, TypeError, UnicodeError):
+                return JSONResponse({"error": "invalid_destination"}, status_code=400)
+            return page(self, location.get("book_id", ""))
+        if path == "/reader/search/results":
+            from .reader_search import results
+
+            return await results(request, library, self, session)
+        if path in ("/reader/original", "/reader/image"):
+            from .reader_original import deliver as original
+
+            return await original(self, request, library)
+        if path in ("/reader/read", "/reader/content", "/reader/updates"):
+            return await deliver(self, request, library, subject, session["csrf"])
+        if path == "/reader/reports":
+            from .owner_reports import intake
+
+            return await intake(self, request, subject, session)
+        if path == "/reader/session":
+            return JSONResponse({"authenticated": True, "csrf": session["csrf"]})
+        if path == "/reader/logout":
+            if request.headers.get("origin") != self.config.origin:
+                return JSONResponse({"error": "origin_denied"}, status_code=403)
+            if int(request.headers.get("content-length", "0")) > 4096:
+                return Response(status_code=413)
+            payload = bytearray()
+            async for chunk in request.stream():
+                payload.extend(chunk)
+                if len(payload) > 4096:
+                    return Response(status_code=413)
+            data = dict(parse_qsl(payload.decode()))
+            if not secrets.compare_digest(
+                data.get("csrf", ""), session["csrf"]
+            ) or data.get("scope") not in ("device", "all"):
+                return JSONResponse({"error": "csrf_or_scope_denied"}, status_code=403)
+            key = self.owner_key(subject)
+            owner, version = await self.read(key)
+            if data["scope"] == "all":
+                removed = list(owner["sessions"].values())
+                owner["sessions"] = {}
+            else:
+                removed = [
+                    owner["sessions"].pop(digest(request.cookies[COOKIE]), session)
+                ]
+            await self.write(key, owner, version)
+            await self.revoke(removed)
+            r = self.page(
+                '<p role="status">Reader signed out. Google, MCP and copied access tokens may remain signed in.</p><a href="/reader/login">Sign in again</a>'
+            )
+            if data["scope"] == "device":
+                r = RedirectResponse("/reader/signed-out", status_code=303)
+            self.cookie(r, COOKIE, "", 0)
+            r.headers["Clear-Site-Data"] = '"cache", "storage"'
+            return r
+        if path in ("/reader", "/reader/catalog"):
+            q = request.query_params
+            result = await asyncio.to_thread(
+                library.search,
+                "",
+                mode="catalog",
+                publication_id=q.get("publication"),
+                offset=int(q.get("offset", "0")),
+                limit=20,
+            )
+            rows = []
+            for item in result["results"]:
+                c = item["citation"]
+                rows.append(
+                    '<li class="book"><a href="'
+                    + escape(reading_link(c).replace("/reader/read?", "/reader/book?"))
+                    + '" class="book-link"><span class="book-spine" aria-hidden="true">'
+                    + escape(c["title"][0:1])
+                    + '</span><span class="book-body"><strong class="book-title">'
+                    + escape(c["title"])
+                    + '</strong><span class="book-byline">'
+                    + escape(", ".join(c["authors"]))
+                    + '</span><span class="book-format">'
+                    + escape(c["format"])
+                    + '</span><span class="book-open">Open book <span aria-hidden="true">→</span></span></span></a></li>'
+                )
+            body = (
+                '<header class="page-head catalog-head"><div><p class="kicker">Your collection</p><h1>Your cookbook library.</h1>'
+                '<p class="lede">The books you return to. The recipes still to discover.</p></div>'
+                '<a class="search-entry" href="/reader/search">Search library</a></header>'
+                '<h2 class="section-label">Published books</h2><ul class="book-list">'
+                + "".join(rows)
+                + '</ul><details class="account"><summary>Your account</summary>'
+                '<form method="post" action="/reader/logout"><input type="hidden" name="csrf" value="'
+                + escape(session["csrf"])
+                + '"><button name="scope" value="device">Sign out this device</button><button name="scope" value="all">Sign out all reader devices</button></form>'
+                '<p class="fineprint">Logout ends reader access. It does not sign out Google or MCP, revoke copied valid tokens immediately, or erase content already delivered.</p></details>'
+            )
+            if result.get("next_offset") is not None:
+                body += (
+                    '<a href="/reader/catalog?'
+                    + escape(
+                        urlencode(
+                            {
+                                "publication": result["publication_id"],
+                                "offset": result["next_offset"],
+                            }
+                        )
+                    )
+                    + '">More books</a>'
+                )
+            return self.page(body, protected=True)
+        return Response(status_code=404)
+
+    def failure(self, request, code, message):
+        if request.url.path in ("/reader/original", "/reader/image"):
+            from .reader_original import failure, link
+
+            at = request.query_params.get("at", "")
+            try:
+                decode_location(at)
+            except (ValueError, TypeError, UnicodeError):
+                return JSONResponse({"error": "invalid_destination"}, status_code=400)
+            return failure(
+                self,
+                at,
+                "Original interrupted or unavailable. Retry explicitly or return to text.",
+                503,
+                retry=link(at),
+            )
+        if request.url.path == "/reader/read":
+            at = request.query_params.get("at", "")
+            try:
+                decode_location(at)
+            except (ValueError, TypeError, UnicodeError):
+                at = ""
+            target = "/reader/read?" + urlencode({"at": at})
+            response = self.page(
+                '<p role="status">Reading interrupted. Retry this location or sign in again.</p><a href="'
+                + escape(target)
+                + '">Retry this location</a><a href="/reader/login?'
+                + escape(urlencode({"return": at or "catalog"}))
+                + '">Sign in again</a>'
+            )
+            response.status_code = 503
+            return response
+        if request.url.path in ("/reader", "/reader/catalog"):
+            response = self.page(
+                '<p role="status">'
+                + escape(message)
+                + '</p><a href="/reader/catalog">Retry catalog</a><a href="/reader/login">Sign in again</a>'
+            )
+            response.status_code = 503
+            return response
+        return JSONResponse({"error": code, "message": message}, status_code=503)
+
+    def install(self, app, library):
+        async def endpoint(request):
+            try:
+                async with asyncio.timeout(
+                    30 if request.url.path == "/reader/image" else 10
+                ):
+                    if (
+                        f"{request.url.scheme}://{request.url.netloc}"
+                        != self.config.origin
+                    ):
+                        response = Response(status_code=400)
+                    else:
+                        response = await self.dispatch(request, library)
+            except Conflict:
+                response = self.failure(
+                    request, "session_changed", "Retry this request."
+                )
+            except Exception:  # noqa: BLE001
+                response = self.failure(
+                    request,
+                    "reader_unavailable",
+                    "Reader unavailable. Retry or sign in again.",
+                )
+            if request.url.path == "/reader/callback" and response.status_code != 303:
+                # Every failure, including storage/timeout/origin rejection, leaves
+                # the transient protocol URL before rendering any reader UI.
+                response = RedirectResponse("/reader/signin-failed", status_code=303)
+                self.cookie(response, TRANSACTION, "", 0)
+            response.headers.update(
+                {
+                    "Cache-Control": "private, no-store",
+                    "Pragma": "no-cache",
+                    "Referrer-Policy": "no-referrer",
+                    "X-Content-Type-Options": "nosniff",
+                    "X-Frame-Options": "DENY",
+                    "Strict-Transport-Security": "max-age=31536000",
+                    "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+                }
+            )
+            return response
+
+        for path in (
+            *ASSETS,
+            "/reader",
+            "/reader/catalog",
+            "/reader/book",
+            "/reader/bookmarks",
+            "/reader/session",
+            "/reader/read",
+            "/reader/content",
+            "/reader/updates",
+            "/reader/login",
+            "/reader/callback",
+            "/reader/signin-failed",
+            "/reader/signed-out",
+            "/reader/search",
+            "/reader/original",
+            "/reader/image",
+        ):
+            app.routes.insert(0, Route(path, endpoint))
+        app.routes.insert(
+            0, Route("/reader/search/results", endpoint, methods=["POST"])
+        )
+        app.routes.insert(
+            0, Route("/reader/personal", endpoint, methods=["GET", "POST"])
+        )
+        app.routes.insert(0, Route("/reader/reports", endpoint, methods=["POST"]))
+        app.routes.insert(0, Route("/reader/logout", endpoint, methods=["POST"]))

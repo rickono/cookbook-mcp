@@ -194,7 +194,9 @@ def validate_model(path, publication_id, runtime_index=None):
             with connection(runtime_index) as index:
                 admitted = {
                     r["id"]: r["source_id"]
-                    for r in index.execute("select id,source_id from books")
+                    for r in index.execute(
+                        "select b.id,b.source_id from books b join sources s on s.id=b.source_id where s.format='EPUB'"
+                    )
                 }
                 if set(editions) != set(admitted) or any(
                     e["source_id"] != admitted[i] for i, e in editions.items()
@@ -501,3 +503,137 @@ def structure_build(build, output, interpretation=None, progress=print):
         output / "inputs.json", canonical({k: str(v) for k, v in inputs.items()})
     )
     return result, report
+
+
+def retain_native_model(build, output, previous_manifest, previous_inputs):
+    """Carry an immutable native EPUB model into a newly admitted mixed publication.
+
+    Only publication metadata changes in the copied model. Native reading targets,
+    interpretation states and the model snapshot remain intact. Runtime activation
+    still verifies every byte and the complete model before serving it.
+    """
+    from .book_model import BookModel, search_units_digest
+    from .scanned import BUILD_REPORT, SUMMARY_PATH
+
+    build, output = Path(build).resolve(), Path(output).resolve()
+    if output.exists():
+        raise IntegrityError("retained-model output must be new")
+    base = Manifest.model_validate_json((build / "manifest.json").read_bytes())
+    inputs = {
+        k: Path(v) for k, v in json.loads((build / "inputs.json").read_bytes()).items()
+    }
+    for entry in base.files:
+        if entry.path not in inputs or digest_file(inputs[entry.path]) != (
+            entry.sha256,
+            entry.size,
+        ):
+            raise IntegrityError("base build input differs from manifest")
+    required = {MODEL_PATH, REPORT_PATH, "runtime/index.sqlite"}
+    previous = {e.path: e for e in previous_manifest.files}
+    for name in required:
+        entry = previous.get(name)
+        if (
+            entry is None
+            or name not in previous_inputs
+            or digest_file(previous_inputs[name]) != (entry.sha256, entry.size)
+        ):
+            raise IntegrityError("previous native model input differs from manifest")
+    old_model = BookModel(previous_inputs[MODEL_PATH], previous_manifest.publication_id)
+    report = json.loads(previous_inputs[REPORT_PATH].read_bytes())
+    if (
+        report["publication_id"] != previous_manifest.publication_id
+        or report["model_snapshot"] != old_model.info["model_snapshot"]
+    ):
+        raise IntegrityError("previous native model report mismatch")
+    with (
+        connection(inputs["runtime/index.sqlite"]) as index,
+        connection(previous_inputs[MODEL_PATH]) as model,
+    ):
+        admitted = {
+            row["id"]: row["source_id"]
+            for row in index.execute(
+                "select b.id,b.source_id from books b join sources s on s.id=b.source_id where s.format='EPUB'"
+            )
+        }
+        editions = {
+            row["id"]: payload(row)["source_id"]
+            for row in model.execute("select * from editions")
+        }
+        if admitted != editions:
+            raise IntegrityError("whole-book selection differs from publication")
+    output.mkdir(parents=True, mode=0o700)
+    pub = uuid.uuid4().hex
+    index_path, model_path = output / "index.sqlite", output / "whole-books.sqlite"
+    shutil.copyfile(inputs["runtime/index.sqlite"], index_path)
+    shutil.copyfile(previous_inputs[MODEL_PATH], model_path)
+    with sqlite3.connect(index_path) as db:
+        db.execute("update info set publication_id=?", (pub,))
+    with sqlite3.connect(model_path) as db:
+        info = json.loads(db.execute("select payload from model_info").fetchone()[0])
+        info["publication_id"] = pub
+        db.execute("update model_info set payload=?", (json.dumps(info),))
+    report["publication_id"] = pub
+    report["keyword_index"] = report.get("keyword_index") or {
+        "publication_id": previous_manifest.publication_id,
+        "manifest_sha256": hashlib.sha256(
+            canonical(previous_manifest.model_dump())
+        ).hexdigest(),
+        "model_sha256": previous[MODEL_PATH].sha256,
+        "search_units_sha256": search_units_digest(previous_inputs[MODEL_PATH]),
+    }
+    report["native_model_parent"] = {
+        "publication_id": previous_manifest.publication_id,
+        "model_sha256": previous[MODEL_PATH].sha256,
+    }
+    atomic_write(output / "whole-books.json", canonical(report))
+    inputs["runtime/index.sqlite"] = index_path
+    inputs[MODEL_PATH], inputs[REPORT_PATH] = model_path, output / "whole-books.json"
+    for logical, filename in (
+        (QUALITY_PATH, "ocr-review.json"),
+        (SUMMARY_PATH, "transcription-summary.json"),
+    ):
+        if logical in inputs:
+            value = json.loads(inputs[logical].read_bytes())
+            if "publication_id" in value:
+                value["publication_id"] = pub
+            atomic_write(output / filename, canonical(value))
+            inputs[logical] = output / filename
+    from .build import BUILD_INPUTS
+
+    if BUILD_INPUTS in inputs:
+        record = json.loads(inputs[BUILD_INPUTS].read_bytes())
+        record["native_model"] = report["native_model_parent"]
+        atomic_write(output / "build-inputs.json", canonical(record))
+        inputs[BUILD_INPUTS] = output / "build-inputs.json"
+    if (build / BUILD_REPORT).exists():
+        shutil.copyfile(build / BUILD_REPORT, output / BUILD_REPORT)
+    for name in ("quality/recipe-interpretation.json",):
+        if name in previous and name in previous_inputs:
+            entry = previous[name]
+            if digest_file(previous_inputs[name]) != (entry.sha256, entry.size):
+                raise IntegrityError("native interpretation inventory changed")
+            inputs[name] = previous_inputs[name]
+    entries = [
+        Entry(
+            path=name,
+            sha256=digest_file(path)[0],
+            size=path.stat().st_size,
+            role="runtime"
+            if name.startswith("runtime/")
+            else "backup"
+            if name.startswith(("quality/", "backup/"))
+            else "asset",
+        )
+        for name, path in sorted(inputs.items())
+    ]
+    manifest = Manifest(
+        publication_id=pub,
+        created_at=datetime.now(UTC).isoformat(),
+        locator_version=base.locator_version,
+        files=entries,
+    )
+    atomic_write(output / "manifest.json", canonical(manifest.model_dump()))
+    atomic_write(
+        output / "inputs.json", canonical({k: str(v) for k, v in inputs.items()})
+    )
+    return manifest, report

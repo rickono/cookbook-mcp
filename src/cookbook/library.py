@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import io
 import json
+import math
+import os
 import re
 import sqlite3
 import tempfile
@@ -13,8 +15,22 @@ from pathlib import Path
 
 from PIL import Image
 
-from .extract import render_page
-from .storage import IntegrityError, digest_file, verify
+from .rendering import RenderError, render_page
+from .reports import check_region
+from .scanned import LABEL
+from .storage import IntegrityError, digest_file, has_table, verify
+
+ZOOM_EDGE = 2400  # largest render for a region zoom; about 25 MB of RGB on a 1 GB host
+
+
+def crop_region(im, box, edge):
+    """Cut a normalized box out of a rendered page and fit it within edge pixels."""
+    w, h = im.size
+    x0, y0, x1, y1 = box
+    im = im.crop((int(x0 * w), int(y0 * h), math.ceil(x1 * w), math.ceil(y1 * h)))
+    if max(im.size) > edge:
+        im.thumbnail((edge, edge), Image.Resampling.LANCZOS)
+    return im
 
 
 class Library:
@@ -22,6 +38,7 @@ class Library:
         self.runtime = runtime
         self.cache_bytes = cache_bytes
         self.asset_lock = threading.Lock()
+        self.render_lock = threading.Lock()
         self.search_engine = search_engine
 
     def model(self, publication_id):
@@ -232,6 +249,90 @@ class Library:
         with self.db(pub) as db:
             return db.execute("select extraction_version from info").fetchone()[0]
 
+    def withdrawals(self, section):
+        from .withdrawal import current_withdrawals
+
+        locator = json.loads(section["locator"])
+        review = locator.get("content_review", {})
+        return [
+            e
+            for e in current_withdrawals(self.runtime.store)
+            if review.get("decision_id") in e["affected_decisions"]
+            or (
+                (section["kind"] == "page" or not review)
+                and any(
+                    section["source_id"].split(":", 1)[-1] == p["source_sha256"]
+                    and p["physical_page"]
+                    in locator.get("physical_pages", [locator.get("physical_page")])
+                    for p in e["affected_pages"]
+                )
+            )
+        ]
+
+    def suppressed(self, section):
+        return bool(self.withdrawals(section)) or bool(
+            json.loads(section["locator"]).get("superseded_transcription")
+        )
+
+    def eligibility(self, section):
+        withdrawals = self.withdrawals(section)
+        if withdrawals:
+            return {
+                "eligible": False,
+                "reasons": sorted(
+                    {
+                        "approval_revoked"
+                        if e["action"] == "revoke"
+                        else "confirmed_substantive_error"
+                        for e in withdrawals
+                    }
+                ),
+                "withdrawals": withdrawals,
+            }
+        locator = json.loads(section["locator"])
+        if locator.get("superseded_transcription"):
+            return {"eligible": False, "reasons": ["superseded_transcription"]}
+        review = locator.get("content_review")
+        if review:
+            return {"eligible": review["eligible"], "reasons": review["reasons"]}
+        return (
+            {
+                "eligible": False,
+                "reasons": ["legacy_transcription_is_not_complete_content_approval"],
+            }
+            if "ocr" in section["provenance"]
+            else {
+                "eligible": False,
+                "reasons": ["complete_content_approval_not_recorded"],
+            }
+        )
+
+    def additive_row(self, db, table, key, value):
+        """The row of an additive table whose ``key`` is ``value``; None without one.
+
+        Older immutable publications remain readable without the additive tables.
+        """
+        if not has_table(db, table):
+            return None
+        return db.execute(f"select * from {table} where {key}=?", (value,)).fetchone()
+
+    def transcription_counts(self, pub):
+        """Scanned sources, applied corrections and unresolved items in a publication.
+
+        Read from each source's transcription summary, so corrections count once they
+        are recorded there. Byte-identical Calibre records share a source and count once.
+        """
+        counts = {"scanned_books": 0, "applied_corrections": 0, "unresolved_items": 0}
+        with self.db(pub) as db:
+            if not has_table(db, "transcription_sources"):
+                return counts
+            for (raw,) in db.execute("select summary from transcription_sources"):
+                summary = json.loads(raw)
+                counts["scanned_books"] += 1
+                counts["applied_corrections"] += len(summary["corrections"]["applied"])
+                counts["unresolved_items"] += summary["unresolved"]
+        return counts
+
     def citation(self, pub, book, section=None):
         d = {
             "publication_id": pub,
@@ -252,6 +353,17 @@ class Library:
                     "version": self.extraction_version(pub),
                 },
             )
+            with self.db(pub) as db:
+                unit = self.additive_row(
+                    db, "transcription_units", "section_id", section["id"]
+                )
+            if unit is not None:
+                d["extraction"]["label"] = json.loads(unit["label"])
+                # Ledger corrections served in this unit's text: [{id, reviewer}].
+                if corrections := json.loads(unit["corrections"]):
+                    d["extraction"]["corrections"] = corrections
+        if section:
+            d["eligibility"] = self.eligibility(section)
         if section and d["locator"]["kind"] == "page":
             d["page_id"] = section["id"]
         return d
@@ -345,11 +457,14 @@ class Library:
                     sec = db.execute(
                         "select * from sections where id=?", (r["section_id"],)
                     ).fetchone()
+                    if self.suppressed(sec):
+                        continue
                     results.append(
                         {
                             "citation": self.citation(pub, aliases[0], sec),
                             "aliases": [a["id"] for a in aliases],
                             "snippet": r["snippet"][:500],
+                            "eligibility": self.eligibility(sec),
                             "rank": r["rank"],
                         }
                     )
@@ -366,6 +481,26 @@ class Library:
         with self.db(pub) as db:
             b = self.book(db, book_id)
             toc = json.loads(b["toc"])
+            coverage = {
+                "recipe_labels": "conservative source structure only",
+                "image_association": "EPUB document",
+                "ocr": "English; low-text physical pages",
+            }
+            scanned = self.additive_row(
+                db, "transcription_sources", "source_id", b["source_id"]
+            )
+            if scanned is not None:
+                summary = json.loads(scanned["summary"])
+                coverage = {
+                    "recipe_labels": "agent-assembled sections, unapproved",
+                    "image_association": "none",
+                    "transcription": {
+                        "label": LABEL,
+                        "pages_total": summary["pages_total"],
+                        **summary["coverage"],
+                        "unresolved": summary["unresolved"],
+                    },
+                }
             return {
                 "citation": self.citation(pub, b),
                 "calibre_id": b["calibre_id"],
@@ -373,11 +508,7 @@ class Library:
                 "toc": toc[offset : offset + limit],
                 "next_offset": offset + limit if offset + limit < len(toc) else None,
                 "artifact_id": "original",
-                "coverage": {
-                    "recipe_labels": "conservative source structure only",
-                    "image_association": "EPUB document",
-                    "ocr": "English; low-text physical pages",
-                },
+                "coverage": coverage,
             }
 
     def read_section(
@@ -394,16 +525,92 @@ class Library:
             ).fetchone()
             if s is None:
                 raise IntegrityError("unavailable identifier")
-            return {
+            withdrawn = self.suppressed(s)
+            result = {
                 "citation": self.citation(pub, b, s),
-                "text": s["text"][offset : offset + limit],
+                "text": "" if withdrawn else s["text"][offset : offset + limit],
+                "eligibility": self.eligibility(s),
                 "text_offset": offset,
                 "next_offset": offset + limit
-                if offset + limit < len(s["text"])
+                if not withdrawn and offset + limit < len(s["text"])
                 else None,
                 "kind": s["kind"],
                 "image_ids": json.loads(s["images"])[:50],
             }
+            # Scanned units only: where to zoom with get_page(region=box); EPUB is unchanged.
+            unit = self.additive_row(db, "transcription_units", "section_id", s["id"])
+            if unit is not None:
+                result["check_regions"] = json.loads(unit["check_regions"])
+            return result
+
+    def section_navigation(
+        self, publication_id, book_id, source_id, section_id, offset=0, limit=20
+    ):
+        """Bounded authored targets and adjacency established by retained contents.
+
+        Native extraction retains no authored reference graph: never infer it from
+        wording. Scanned locator references already carry resolved section IDs.
+        """
+        if not 0 <= offset <= 100000 or not 1 <= limit <= 50:
+            raise IntegrityError("invalid relationship bounds")
+        pub = self.publication(publication_id)
+        with self.db(pub) as db:
+            b = self.book(db, book_id, source_id)
+            row = db.execute(
+                "select * from sections where id=? and source_id=?",
+                (section_id, source_id),
+            ).fetchone()
+            if row is None:
+                raise IntegrityError("unavailable identifier")
+            refs = json.loads(row["locator"]).get("references", [])
+            related = []
+            for ref in refs[offset : offset + limit]:
+                target = ref.get("target_section_id")
+                exists = (
+                    target
+                    and db.execute(
+                        "select 1 from sections where id=? and source_id=?",
+                        (target, source_id),
+                    ).fetchone()
+                )
+                related.append(
+                    {
+                        "label": ref.get("label", "Authored reference"),
+                        "section_id": target if exists else None,
+                    }
+                )
+            toc = json.loads(b["toc"])
+            ids = list(
+                dict.fromkeys(t["section_id"] for t in toc if t.get("section_id"))
+            )
+            adjacent = []
+            if section_id in ids:
+                i = ids.index(section_id)
+                for n, label in ((i - 1, "Previous section"), (i + 1, "Next section")):
+                    if 0 <= n < len(ids):
+                        adjacent.append({"label": label, "section_id": ids[n]})
+            return {
+                "related": related,
+                "next_offset": offset + limit if offset + limit < len(refs) else None,
+                "adjacent": adjacent,
+            }
+
+    def section_pages(self, publication_id, book_id, source_id, section_id):
+        """Physical pages of a scanned section, from its locator; None for any other."""
+        try:
+            pub = self.publication(publication_id)
+        except IntegrityError:
+            return None
+        with self.db(pub) as db:
+            s = db.execute(
+                "select s.locator from sections s join books b on b.source_id=s.source_id"
+                " where s.id=? and s.source_id=? and b.id=?",
+                (section_id, source_id, book_id),
+            ).fetchone()
+        locator = json.loads(s["locator"]) if s else {}
+        if locator.get("kind") != "scanned-section":
+            return None
+        return locator["physical_pages"]
 
     def cached(self, pub, logical):
         m = self.runtime.manifest(pub)
@@ -440,9 +647,7 @@ class Library:
     def image_metadata(self, db, pub, book, im):
         context = None
         # Older immutable publications remain readable without this additive table.
-        if db.execute(
-            "select 1 from sqlite_master where type='table' and name='image_context'"
-        ).fetchone():
+        if has_table(db, "image_context"):
             row = db.execute(
                 "select title,section_id from image_context where image_id=?",
                 (im["id"],),
@@ -501,35 +706,96 @@ class Library:
                 data = self.cached(pub, im["asset"]).read_bytes()
             return metadata, data
 
-    def get_page(self, publication_id, book_id, source_id, physical_page, edge=1600):
+    def page_row(self, db, source_id, physical_page):
+        s = db.execute(
+            "select * from sections where source_id=? and ordinal=? and kind=?",
+            (source_id, physical_page - 1, "page"),
+        ).fetchone()
+        if s is None:
+            raise IntegrityError("unavailable identifier")
+        return s
+
+    def page_context(
+        self, publication_id, book_id, source_id, physical_page, section_id=None
+    ):
+        """Full page (and optional section) text a transcription report must quote."""
+        pub = self.publication(publication_id)
+        with self.db(pub) as db:
+            b = self.book(db, book_id, source_id)
+            if b["format"] not in ("PDF", "DJVU"):
+                raise IntegrityError("unsupported page format")
+            texts = [self.page_row(db, source_id, physical_page)["text"]]
+            if section_id is not None:
+                s = db.execute(
+                    "select text from sections where id=? and source_id=?",
+                    (section_id, source_id),
+                ).fetchone()
+                if s is None:
+                    raise IntegrityError("unavailable identifier")
+                texts.append(s["text"])
+            return {
+                "publication_id": pub,
+                "source_sha256": b["sha256"],
+                "format": b["format"],
+                "texts": texts,
+            }
+
+    def get_page(
+        self, publication_id, book_id, source_id, physical_page, edge=1600, region=None
+    ):
+        # Refuse concurrent work rather than accumulating blocked tool threads.
+        if not self.render_lock.acquire(blocking=False):
+            raise RenderError("renderer busy")
+        try:
+            return self._get_page(
+                publication_id, book_id, source_id, physical_page, edge, region
+            )
+        finally:
+            self.render_lock.release()
+
+    def _get_page(
+        self, publication_id, book_id, source_id, physical_page, edge=1600, region=None
+    ):
         pub = self.publication(publication_id)
         if not 256 <= edge <= 1600:
             raise IntegrityError("invalid rendering bounds")
+        box = check_region(region)
+        # A zoom renders the whole page larger, then keeps only the box at <= edge.
+        render_edge = (
+            edge
+            if box is None
+            else min(
+                ZOOM_EDGE,
+                max(edge, math.ceil(edge / max(box[2] - box[0], box[3] - box[1]))),
+            )
+        )
         with self.db(pub) as db:
             b = self.book(db, book_id, source_id)
-            s = db.execute(
-                "select * from sections where source_id=? and ordinal=? and kind=?",
-                (source_id, physical_page - 1, "page"),
-            ).fetchone()
-            if s is None:
-                raise IntegrityError("unavailable identifier")
-            with (
-                self.asset_lock,
-                tempfile.TemporaryDirectory(dir=self.runtime.root) as d,
-            ):
-                original = self.cached(pub, b["original_path"])
+            s = self.page_row(db, source_id, physical_page)
+            with tempfile.TemporaryDirectory(dir=self.runtime.root) as d:
+                # Pin the verified original while holding the cache lock. Rendering
+                # then cannot block image reads or race cache eviction.
+                original = Path(d) / "original"
+                with self.asset_lock:
+                    os.link(self.cached(pub, b["original_path"]), original)
                 png = Path(d) / "page.png"
-                render_page(original, b["format"], physical_page, png, edge)
+                render_page(original, b["format"], physical_page, png, render_edge)
                 with Image.open(png) as im:
+                    im = im.convert("RGB")
+                    if box is not None:
+                        im = crop_region(im, box, edge)
                     out = io.BytesIO()
-                    im.convert("RGB").save(out, "JPEG", quality=85)
+                    im.save(out, "JPEG", quality=85)
                     data = out.getvalue()
-            return {
+            meta = {
                 "citation": self.citation(pub, b, s),
-                "text": s["text"][:4000],
-                "text_truncated": len(s["text"]) > 4000,
+                "text": "" if self.suppressed(s) else s["text"][:4000],
+                "text_truncated": not self.suppressed(s) and len(s["text"]) > 4000,
                 "width_limit": edge,
-            }, data
+            }
+            if box is not None:
+                meta.update(region=box, render_edge=render_edge)
+            return meta, data
 
     def get_artifact(self, publication_id, book_id, source_id, artifact_id):
         pub = self.publication(publication_id)

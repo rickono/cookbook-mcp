@@ -62,7 +62,7 @@ def test_empty_boot_polling_auth_and_outage(published, tmp_path, keys, mint):
             headers={**headers, "Accept": "application/json, text/event-stream"},
             json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
         )
-        assert tools.status_code == 200 and len(tools.json()["result"]["tools"]) == 14
+        assert tools.status_code == 200 and len(tools.json()["result"]["tools"]) == 15
         assert (
             client.post(
                 "/mcp",
@@ -90,7 +90,8 @@ def test_empty_boot_polling_auth_and_outage(published, tmp_path, keys, mint):
             OSError("secret contents must not be logged")
         )
         time.sleep(0.05)
-        assert Library(runtime).search("beans")["results"]
+        with pytest.raises(OSError):
+            Library(runtime).search("beans")
         assert client.get("/readyz", headers=headers).status_code == 200
         assert client.get("/healthz").status_code == 200
         store.read_version = saved
@@ -128,7 +129,8 @@ def test_restart_validates_cache_without_network_and_repairs_corruption(publishe
     restarted = Runtime(store, runtime.root)
     assert restarted.resume_cached() == m.publication_id
     assert PublicationUpdater(restarted).tick() == "publication_update_failed"
-    assert Library(restarted).search("beans")["results"]
+    with pytest.raises(OSError, match="offline"):
+        Library(restarted).search("beans")
     (runtime.root / "versions" / m.publication_id / "runtime/index.sqlite").write_bytes(
         b"bad"
     )

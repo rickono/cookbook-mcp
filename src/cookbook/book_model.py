@@ -511,3 +511,16 @@ class BookModel:
                 "supporting_work_state": recipe["supporting_work_state"],
                 "coverage": "Only interpreted uses are included; absence of a use is not proof of no supporting work.",
             }
+
+
+def search_units_digest(path):
+    """Byte identity of the complete keyword documents, independent of publication metadata."""
+    digest = hashlib.sha256()
+    with connection(path) as db:
+        for row in db.execute(
+            "select id,edition_id,target_id,kind,state,title,text from search_units order by id"
+        ):
+            data = canonical(list(row))
+            digest.update(len(data).to_bytes(8, "big"))
+            digest.update(data)
+    return digest.hexdigest()

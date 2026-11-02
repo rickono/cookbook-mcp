@@ -1,0 +1,163 @@
+{
+ "reader": "claude:claude-haiku-5-5",
+ "decided": "2026-10-20: chosen reader for scanned cookbooks (over codex:gpt-6-luna@low)",
+ "config": "pipeline-claude-haiku-5-5-x3-a3",
+ "work": "$COOKBOOK_DATA/batches/paid-reader-pilot-20261019/full-haiku",
+ "evaluations": "$COOKBOOK_DATA/batches/model-comparison-three-books-20261015/evaluation/candidates/pipeline-claude-haiku-5-5-x3-a3",
+ "code_sha": {
+  "pipeline.py": "a5dfebf68d69409f",
+  "readers.py": "b38685a710753b47",
+  "assemble.py": "583a4609322ebf8b"
+ },
+ "grade_note": "baseline grades are Sol-medium grades of assembler v3 (cell -a3), hand-copied from each metrics.json; v4 changes only quantity-review/unresolved metadata (sections.jsonl is byte-identical), so fidelity and retrieval compare directly and structural counts may differ slightly. b79's grader hit 'model at capacity' at its final reply after writing every artifact; accepted. b79 excluded_ambiguous counts 7 ambiguous + 1 inferred.",
+ "pilot": {
+  "6": {
+   "after": 207,
+   "n": 214,
+   "qafter": 124,
+   "qn": 124,
+   "missing": 0
+  },
+  "79": {
+   "after": 213,
+   "n": 229,
+   "qafter": 142,
+   "qn": 142,
+   "missing": 0
+  },
+  "81": {
+   "after": 108,
+   "n": 135,
+   "qafter": 26,
+   "qn": 27,
+   "missing": 0
+  }
+ },
+ "pages_done": 859,
+ "pages_total": 872,
+ "page_costs": {
+  "files": 859,
+  "calls": 5797,
+  "failed_calls": 0,
+  "retried_calls": 4,
+  "list_usd": 2.1572,
+  "usd_per_1000_files": 2.51,
+  "reported_usd": 3.8743,
+  "call_seconds_median": 2.8,
+  "call_seconds_p90": 6.1,
+  "page_seconds_median": 16,
+  "calls_per_file": 6.7
+ },
+ "sectioning_costs": {
+  "files": 872,
+  "calls": 876,
+  "failed_calls": 0,
+  "retried_calls": 0,
+  "list_usd": 0.8251,
+  "usd_per_1000_files": 0.95,
+  "reported_usd": 1.3947,
+  "call_seconds_median": 7.0,
+  "call_seconds_p90": 12.1,
+  "page_seconds_median": null,
+  "calls_per_file": 1.0
+ },
+ "grades": {
+  "6": {
+   "fidelity": {
+    "passed": 220,
+    "denominator": 221,
+    "excluded_ambiguous": 2,
+    "unknown": 0,
+    "disagreements": 1
+   },
+   "retrieval": {
+    "probes": 8,
+    "hit_at_1": 4,
+    "hit_at_5": 8,
+    "mrr": 0.729
+   },
+   "structural": {
+    "errors": 2,
+    "warnings": 4,
+    "unknowns": 5
+   }
+  },
+  "79": {
+   "fidelity": {
+    "passed": 224,
+    "denominator": 242,
+    "excluded_ambiguous": 8,
+    "unknown": 1,
+    "disagreements": 18
+   },
+   "retrieval": {
+    "probes": 9,
+    "hit_at_1": 6,
+    "hit_at_5": 7,
+    "mrr": 0.722
+   },
+   "structural": {
+    "errors": 8,
+    "warnings": 5,
+    "unknowns": 4
+   }
+  },
+  "81": {
+   "fidelity": {
+    "passed": 143,
+    "denominator": 146,
+    "excluded_ambiguous": 15,
+    "unknown": 2,
+    "disagreements": 3
+   },
+   "retrieval": {
+    "probes": 10,
+    "hit_at_1": 8,
+    "hit_at_5": 10,
+    "mrr": 0.875
+   },
+   "structural": {
+    "errors": 2,
+    "warnings": 4,
+    "unknowns": 3
+   }
+  }
+ },
+ "pages_lost_note": "13 pages lost to Anthropic's output content filter; not worked around",
+ "assembled": {
+  "config": "pipeline-claude-haiku-5-5-x3-a4",
+  "note": "assembler v4 output of the baseline's cached pages and labels, checked identical to assemble.v4.py on 2026-10-20",
+  "books": {
+   "6": {
+    "corrections.jsonl": "ceb6bda7d214536fd672e922d7d08a162ff3999b441d9fd206f175d5df49132a",
+    "freeze.json": "d020dd3bf574215a9e6634bfdfa3d1facb407dd2dccfc28da7d7bd856d32a46d",
+    "page-ledger.jsonl": "04f89ec09a505a8cc00ab7af760cbea276b775832aab86e3dfa2892a0fbb9b6e",
+    "progress.json": "51777e17f0d8b5fdd779143340ee7888b34106c2620b53dc82c6f5cb2bf94f65",
+    "quantity-review.jsonl": "793937f3c5ec17134fb1db6e5912073a363ba053f7ee6288bd75d21e26da997f",
+    "report.md": "7ed48e80046128dedf49c4cd3fd64b204499083844872668545a57f14c354e54",
+    "sections.jsonl": "d25eab74f143b465262372f02e4f01696de4db85f907a2247813c0e1f5117e53",
+    "unresolved.jsonl": "961913b23e2b7916eeb541cc66ddecb29c620b8060fc138cce0f207de78fa483"
+   },
+   "79": {
+    "corrections.jsonl": "716a85efbe6e478f6cdb02acebd332d6e85ce99591c002def2e77c1a96e1f192",
+    "freeze.json": "9228a6c283482d0ad75d7a9dea5b93cc7dc8b171b914f871d3c1cbb7ffe6ecd6",
+    "page-ledger.jsonl": "7b4f2f9045d0dfc7f7760435a45e0ae37c58251b7f1461bced8d82cadce6f1eb",
+    "progress.json": "995caf8670912bf2fc9cce18e8f15e0cc79ea8049c896e0e320a5d0573a1e7f4",
+    "quantity-review.jsonl": "a7c0bb0883c3e75643c5f1726e904f3ef6944cbdb85119f7b9c69ecbdb571e80",
+    "report.md": "40d3e2c241c2dfd8e59307afd5aba454884fbbca2c60d77affd23179c05652a4",
+    "sections.jsonl": "e50ca3269cd8d4442362c907de92979479d9f098a1991b2e3c7da72cebaafc13",
+    "unresolved.jsonl": "e1ed60e29975bf815de32f1720a1e830e16087c429a5d9f42d97b0d2df9cae82"
+   },
+   "81": {
+    "corrections.jsonl": "8a149e6fd2cc72c9435220a8250c0ac59b0c8e2403b2d816b7c2b8d5ab33c53c",
+    "freeze.json": "08a4594412ee8a4498c20b01f9f52368b5d7a507637c51be2c103ac885c3dfa9",
+    "page-ledger.jsonl": "139a3ae597c61ce42556e31ef937f55bd6b35294a1333ed310e55da630ce85dd",
+    "progress.json": "58e2979479e34865d54e7855f860d4be00f99166dde23bed3a3a75050567b027",
+    "quantity-review.jsonl": "1704df69ec84992a5cfd15a8103a04289eff92f1215125bf9f880b6d8247486f",
+    "report.md": "5d0176d438a1fb3522609a9bb630274cf9b0393a4b7079b72454493c8391188e",
+    "sections.jsonl": "cd4c515902cb69c0344928cc06e41b1a145b2a26b4d6d13baadf738dc3cd170e",
+    "unresolved.jsonl": "143445d0521674ef3e19bd02525e11f03f419beb55a1f91c45ecf515bd874dfc"
+   }
+  }
+ }
+}

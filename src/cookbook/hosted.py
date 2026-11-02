@@ -15,6 +15,7 @@ import httpx
 
 from .library import Library
 from .publication import Runtime
+from .reports import ReportSink
 from .server import JWTVerifier, create_app
 from .storage import S3Store
 from .telemetry import event
@@ -34,10 +35,26 @@ def https_url(value):
     return value
 
 
-def store_from_environment():
+def s3_store(endpoint_url, bucket, access_key_id, secret_access_key):
     import boto3
     from botocore.config import Config
 
+    client = boto3.client(
+        "s3",
+        endpoint_url=https_url(endpoint_url),
+        aws_access_key_id=access_key_id,
+        aws_secret_access_key=secret_access_key,
+        region_name=os.environ.get("AWS_DEFAULT_REGION", "auto"),
+        config=Config(
+            connect_timeout=5,
+            read_timeout=20,
+            retries={"mode": "standard", "total_max_attempts": 2},
+        ),
+    )
+    return S3Store(client, bucket)
+
+
+def store_from_environment():
     # Explicit credentials prevent accidental fallback to another AWS account/profile.
     names = (
         "S3_ENDPOINT_URL",
@@ -47,19 +64,93 @@ def store_from_environment():
     )
     if any(not os.environ.get(name) for name in names):
         raise ValueError("storage configuration required")
-    client = boto3.client(
-        "s3",
-        endpoint_url=https_url(os.environ["S3_ENDPOINT_URL"]),
-        aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
-        aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
-        region_name=os.environ.get("AWS_DEFAULT_REGION", "auto"),
-        config=Config(
-            connect_timeout=5,
-            read_timeout=20,
-            retries={"mode": "standard", "total_max_attempts": 2},
-        ),
+    return s3_store(*(os.environ[name] for name in names))
+
+
+REPORT_NAMES = (
+    "REPORTS_S3_BUCKET",
+    "REPORTS_AWS_ACCESS_KEY_ID",
+    "REPORTS_AWS_SECRET_ACCESS_KEY",
+)
+
+
+def reports_store_from_environment():
+    """The reports-only bucket and its own key, or None when reporting is not configured.
+
+    It is never the library bucket or key: the library credential stays read-only.
+    """
+    present = [name for name in REPORT_NAMES if os.environ.get(name)]
+    if not present:
+        return None
+    if len(present) != len(REPORT_NAMES):
+        raise ValueError("incomplete reports storage configuration")
+    if os.environ["REPORTS_S3_BUCKET"] == os.environ.get("S3_BUCKET") or os.environ[
+        "REPORTS_AWS_ACCESS_KEY_ID"
+    ] == os.environ.get("AWS_ACCESS_KEY_ID"):
+        raise ValueError("reports storage must be separate from the library")
+    return s3_store(
+        os.environ.get("REPORTS_S3_ENDPOINT_URL") or os.environ["S3_ENDPOINT_URL"],
+        *(os.environ[name] for name in REPORT_NAMES),
     )
-    return S3Store(client, os.environ["S3_BUCKET"])
+
+
+READER_NAMES = (
+    "READER_ORIGIN",
+    "READER_CLIENT_ID",
+    "READER_CLIENT_SECRET",
+    "READER_SESSION_KEY",
+    "READER_S3_BUCKET",
+    "READER_AWS_ACCESS_KEY_ID",
+    "READER_AWS_SECRET_ACCESS_KEY",
+)
+
+
+def reader_from_environment(verifier):
+    """Opt-in hosted reader. Never borrow library or agent-report write authority."""
+    from .reader import Reader, ReaderConfig
+
+    if not any(name.startswith(("READER_", "PERSONAL_")) for name in os.environ):
+        return None
+    if any(not os.environ.get(name) for name in READER_NAMES):
+        raise ValueError("incomplete reader configuration")
+    origin = os.environ["READER_ORIGIN"]
+    audience = urlsplit(verifier.audience)
+    if origin != f"{audience.scheme}://{audience.netloc}":
+        raise ValueError("reader and MCP must share an exact origin")
+    for bucket, credential in (
+        ("S3_BUCKET", "AWS_ACCESS_KEY_ID"),
+        ("REPORTS_S3_BUCKET", "REPORTS_AWS_ACCESS_KEY_ID"),
+    ):
+        if os.environ["READER_S3_BUCKET"] == os.environ.get(bucket) or os.environ[
+            "READER_AWS_ACCESS_KEY_ID"
+        ] == os.environ.get(credential):
+            raise ValueError("reader session storage must be separate")
+    oidc = os.environ.get("READER_OIDC", "0")
+    if oidc not in ("0", "1"):
+        raise ValueError("READER_OIDC must be 0 or 1")
+    config = ReaderConfig(
+        origin,
+        os.environ["READER_CLIENT_ID"],
+        os.environ["READER_CLIENT_SECRET"],
+        oidc == "1",
+    )
+    store = s3_store(
+        os.environ.get("READER_S3_ENDPOINT_URL") or os.environ["S3_ENDPOINT_URL"],
+        os.environ["READER_S3_BUCKET"],
+        os.environ["READER_AWS_ACCESS_KEY_ID"],
+        os.environ["READER_AWS_SECRET_ACCESS_KEY"],
+    )
+    from .owner_report_config import owner_reports_from_environment
+    from .personal_config import personal_from_environment
+
+    return Reader(
+        config,
+        verifier,
+        store,
+        os.environ["READER_SESSION_KEY"].encode(),
+        owner_reports=owner_reports_from_environment(s3_store),
+        personal_state=personal_from_environment(s3_store),
+    )
 
 
 class PublicationUpdater:
@@ -82,7 +173,7 @@ class PublicationUpdater:
                     status = "publication_activated"
                 else:
                     status = "publication_current"
-        except Exception:
+        except Exception:  # noqa: BLE001 - redacted service boundary
             # Activation stages separately, so failures leave the old pointer intact.
             status = "publication_update_failed"
         if status != self.last_status:
@@ -107,10 +198,21 @@ class PublicationUpdater:
             self.thread.join(timeout=1)
 
 
-def create_hosted_app(runtime, verifier, *, poll_seconds=60, search_engine=None):
+def create_hosted_app(
+    runtime,
+    verifier,
+    *,
+    poll_seconds=60,
+    reports_store=None,
+    reader=None,
+    search_engine=None,
+):
     if search_engine:
         runtime.prepare = search_engine.prepare
-    app = create_app(Library(runtime, search_engine=search_engine), verifier)
+    reports = ReportSink(reports_store) if reports_store is not None else None
+    app = create_app(
+        Library(runtime, search_engine=search_engine), verifier, reports, reader=reader
+    )
     original_lifespan = app.router.lifespan_context
     updater = PublicationUpdater(runtime, poll_seconds)
 
@@ -120,7 +222,7 @@ def create_hosted_app(runtime, verifier, *, poll_seconds=60, search_engine=None)
             await asyncio.to_thread(search_engine.start)
         try:
             await asyncio.to_thread(runtime.resume_cached)
-        except Exception:
+        except Exception:  # noqa: BLE001 - redacted service boundary
             event("cached_publication_invalid")
         async with original_lifespan(app):
             updater.start()
@@ -152,6 +254,10 @@ def serve():
         else [],
         jwks_url=https_url(os.environ["COOKBOOK_JWKS_URL"]),
     )
+    trusted_proxies = os.environ.get("COOKBOOK_TRUSTED_PROXY_IPS", "")
+    if "*" in trusted_proxies:
+        raise ValueError("trusted proxy IPs must be explicit")
+
     from .book_search import BookSearch
 
     search_engine = BookSearch(
@@ -159,12 +265,19 @@ def serve():
         runtime.root / "typesense",
     )
     uvicorn.run(
-        create_hosted_app(runtime, verifier, search_engine=search_engine),
+        create_hosted_app(
+            runtime,
+            verifier,
+            reports_store=reports_store_from_environment(),
+            reader=reader_from_environment(verifier),
+            search_engine=search_engine,
+        ),
         host="0.0.0.0",
         port=int(os.environ.get("PORT", "8000")),
         access_log=False,
         log_level="critical",
-        proxy_headers=False,
+        proxy_headers=bool(trusted_proxies),
+        forwarded_allow_ips=trusted_proxies,
         timeout_graceful_shutdown=10,
     )
 

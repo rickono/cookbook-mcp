@@ -1,6 +1,6 @@
 # Private cookbook MCP
 
-A private Python MCP service with SQLite FTS5, source-bound citations, and immutable publications. The full 58-EPUB catalog is now uploaded to private R2 storage and active on the existing Fly service. All remote file checksums, the hosted index, Google publisher sign-in, exact activation acknowledgement, and 293 authenticated hosted MCP calls have passed for the full catalog. Fifty-seven EPUBs have searchable text; the Alain Passard EPUB is image-only and awaits the separate OCR follow-up. PDF/DjVu ingestion remains deferred. The earlier two-book trial passed ChatGPT linking, cited reading, section artifacts, and the inline image viewer; original EPUB downloads through MCP remain unavailable. See [full EPUB publication status](docs/full-epub-publication.md), [hosted runtime](docs/hosted-runtime.md), and [OCR resource isolation](docs/ocr-resource-isolation.md).
+A private Python MCP service with SQLite FTS5, source-bound citations, and immutable publications. The 59-book EPUB catalog, including Chop Chop, is uploaded to private R2 storage and active on the existing Fly service. Full remote checksum readback, exact hosted index/inventory validation, 298 local MCP calls, and authenticated catalog/search/read checks through the connected app pass. Fifty-eight EPUBs have searchable text; the Alain Passard EPUB is image-only and awaits the separate OCR follow-up. PDF/DjVu ingestion remains deferred. The earlier two-book trial passed ChatGPT linking, cited reading, section artifacts, and the inline image viewer; original EPUB downloads through MCP remain unavailable. See [Chop Chop publication status](docs/chop-chop-publication.md), [earlier full EPUB publication](docs/full-epub-publication.md), [hosted runtime](docs/hosted-runtime.md), and [OCR resource isolation](docs/ocr-resource-isolation.md).
 
 ## Local setup
 
@@ -16,6 +16,12 @@ uv run ruff format --check src tests scripts
 ```
 
 `uv.lock` pins dependencies, including MCP 2.2.0 and fontTools for PDF font decoding. The explicit `PYTHONPATH=src` below also avoids an observed editable-install path issue on this Mac. Docker installs the package without editable mode.
+
+For selected Calibre records with multiple formats, the builder indexes EPUB when
+available and backs up every file in the selected record directory. An AZW3 plus
+EPUB record therefore preserves both files and exposes the EPUB content.
+AZW3 alone is not supported for indexing. Without EPUB, a single PDF or DjVu
+format is required; its ingestion remains subject to OCR isolation and review.
 
 ## One-command local fixture publication
 
@@ -57,7 +63,21 @@ PYTHONPATH=src uv run python -m cookbook.cli restore-local \
   --destination /Users/rick/cookbook-mcp-data/poc/restored-copy
 ```
 
-The destination must not exist. A complete restore verifies every manifest entry and reconstructs its logical tree. Runtime recovery restores only the index and lazily verifies content into a bounded cache. `Runtime.activate(pointer)` verifies/stages a chosen known pointer before switching, and is also the local rollback primitive. Administrative restore paths never become MCP resources.
+The destination must not exist. A complete restore verifies every manifest entry and reconstructs its logical tree. Runtime recovery restores only the index and lazily verifies content into a bounded cache. `Runtime.activate(pointer)` verifies/stages a chosen known pointer before switching. `Runtime.rollback(pointer, expected_version=...)` explicitly selects a retained publication, verifies its cached runtime and remote evidence, and conditionally updates the remote pointer before activation. Current withdrawals and approval revocations remain enforced when serving every retained version. Administrative restore paths never become MCP resources.
+
+Use `cookbook publication-status-local --store STORE --runtime RUNTIME` to inspect
+remote and runtime pointers separately. `recover-local` with the same arguments
+verifies and activates the recorded remote version; `rollback-local` additionally
+requires `--pointer FILE` naming the retained publication and manifest digest.
+An activation acknowledgement failure after the remote write reports
+`pending_activation`; immutable staged objects and the previous runtime remain
+available for recovery. An unavailable hosted acknowledgement leaves runtime
+identity unconfirmed; local status reports the observed, verified runtime pointer.
+Neither recovery nor rollback creates an approval or undoes a review decision.
+New administrative `revoke` and `confirm_error` decisions require the shared
+serving object store (`review-transcription --withdrawal-store STORE`). A failed
+enforcement write can be retried using `--withdrawal-id DECISION_ID`. Legacy review
+history stays inspectable without inventing shared enforcement records.
 
 The S3 adapter is exercised over HTTP against loopback Moto using **synthetic data only**. A gated `publish-s3` CLI and authenticated acknowledgement are implemented; Mac browser PKCE login is implemented and live-verified; the EPUB trial upload and authenticated hosted acknowledgement have passed. Actual R2 permissions and conditional writes have passed synthetic provider tests. Multipart files above 5 GB remain unimplemented. The adapter refuses originals above 5 GB until multipart behavior is implemented and verified.
 

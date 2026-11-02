@@ -1,0 +1,722 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "scanned-candidate.v1",
+  "title": "scanned-candidate.v1",
+  "description": "Frozen reader-pipeline output for one scanned PDF: candidate.json (this root) plus pages.jsonl, sections.jsonl, quantity-review.jsonl, unresolved.jsonl and vote-corrections.jsonl, one $defs row type per line. Files end with a newline, JSON keys are unique and numbers are finite. Cross-row rules are enforced by cookbook.scanned.validate.",
+  "$ref": "#/$defs/Candidate",
+  "$defs": {
+    "Candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "book_id",
+        "source",
+        "config_id",
+        "reader",
+        "assembler",
+        "prompts_sha256",
+        "code_sha256",
+        "repo_head",
+        "coverage",
+        "counts",
+        "approval",
+        "files"
+      ],
+      "properties": {
+        "version": {
+          "const": "scanned-candidate.v1"
+        },
+        "book_id": {
+          "type": "integer",
+          "description": "Informational. Binding is by source.sha256 and source.physical_pages."
+        },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "sha256",
+            "format",
+            "physical_pages"
+          ],
+          "properties": {
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "format": {
+              "const": "PDF"
+            },
+            "physical_pages": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "config_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reader": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "spec",
+            "samples",
+            "sample_labels",
+            "fallback"
+          ],
+          "properties": {
+            "spec": {
+              "type": "string",
+              "minLength": 1
+            },
+            "samples": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "sample_labels": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "fallback": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "minLength": 1
+            }
+          },
+          "description": "sample_labels has exactly `samples` entries."
+        },
+        "assembler": {
+          "type": "string",
+          "minLength": 1
+        },
+        "prompts_sha256": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "page",
+            "region",
+            "crop",
+            "sectioning"
+          ],
+          "properties": {
+            "page": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "region": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "crop": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "sectioning": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        },
+        "code_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "repo_head": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "coverage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "pages_total",
+            "transcribed",
+            "blank",
+            "failed"
+          ],
+          "properties": {
+            "pages_total": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "transcribed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "blank": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "failed": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "description": "Must equal the page rows' status counts."
+        },
+        "counts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "sections",
+            "quantity_reviews",
+            "unresolved"
+          ],
+          "properties": {
+            "sections": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "quantity_reviews": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "unresolved": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "description": "Must equal the row counts of the contract files."
+        },
+        "approval": {
+          "const": "unapproved"
+        },
+        "files": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "pages.jsonl",
+            "sections.jsonl",
+            "quantity-review.jsonl",
+            "unresolved.jsonl",
+            "vote-corrections.jsonl"
+          ],
+          "properties": {
+            "pages.jsonl": {
+              "$ref": "#/$defs/FileDigest"
+            },
+            "sections.jsonl": {
+              "$ref": "#/$defs/FileDigest"
+            },
+            "quantity-review.jsonl": {
+              "$ref": "#/$defs/FileDigest"
+            },
+            "unresolved.jsonl": {
+              "$ref": "#/$defs/FileDigest"
+            },
+            "vote-corrections.jsonl": {
+              "$ref": "#/$defs/FileDigest"
+            }
+          },
+          "description": "sha256 and byte length of each file's exact bytes."
+        }
+      },
+      "description": "candidate.json: the freeze record that binds the five JSONL files."
+    },
+    "FileDigest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sha256",
+        "bytes"
+      ],
+      "properties": {
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "Page": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "physical_page",
+        "status",
+        "text",
+        "text_sha256",
+        "image_sha256",
+        "printed_page",
+        "section_ids",
+        "unresolved_ids",
+        "page_reader",
+        "vote_correction_ids",
+        "blank_evidence"
+      ],
+      "properties": {
+        "physical_page": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "status": {
+          "enum": [
+            "transcribed",
+            "blank",
+            "failed"
+          ]
+        },
+        "text": {
+          "type": "string",
+          "description": "Non-blank only when status is transcribed."
+        },
+        "text_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "sha256 of the UTF-8 text."
+        },
+        "image_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "printed_page": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "section_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "unresolved_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "page_reader": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "vote_correction_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "blank_evidence": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/BlankEvidence"
+            }
+          ],
+          "description": "An object when status is blank; null otherwise."
+        }
+      },
+      "description": "pages.jsonl: exactly one row per physical page 1..N, in order. A failed page lists a failed_page unresolved row."
+    },
+    "BlankEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rule",
+        "attempts",
+        "page_read_errors"
+      ],
+      "properties": {
+        "rule": {
+          "const": "page_read_empty_response"
+        },
+        "attempts": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "page_read_errors": {
+          "type": "array",
+          "items": {
+            "const": "empty response"
+          },
+          "minItems": 1
+        }
+      },
+      "description": "Production blank rule: every recorded page-read error was an empty response."
+    },
+    "Section": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "title",
+        "physical_pages",
+        "printed_pages",
+        "parts",
+        "references"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "enum": [
+            "chapter",
+            "recipe",
+            "passage",
+            "technique",
+            "reference_entry",
+            "contents",
+            "index",
+            "frontmatter"
+          ]
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "physical_pages": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "Ascending; each listed page row names this section in section_ids."
+        },
+        "printed_pages": {
+          "type": "array",
+          "items": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
+          },
+          "description": "Same length as physical_pages; unverified."
+        },
+        "parts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Part"
+          },
+          "minItems": 1
+        },
+        "references": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Reference"
+          }
+        },
+        "status": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Untrusted; the import derives the status."
+        }
+      },
+      "description": "sections.jsonl: authored sections in reading order."
+    },
+    "Part": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "source_page",
+        "text",
+        "description",
+        "unresolved_ids"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "title",
+            "headnote",
+            "ingredients",
+            "instructions",
+            "table",
+            "note",
+            "variation",
+            "assembly",
+            "heading",
+            "text",
+            "menu",
+            "timeline",
+            "index_entries",
+            "contents",
+            "caption",
+            "footer",
+            "graphic"
+          ]
+        },
+        "source_page": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "One of the section's physical_pages."
+        },
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Null only for graphic parts. footer and graphic parts are not section text."
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "unresolved_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true,
+          "description": "Unresolved rows on source_page that belong to this section or to none."
+        }
+      }
+    },
+    "Reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_page",
+        "label",
+        "printed_target",
+        "target_section_id",
+        "scope"
+      ],
+      "properties": {
+        "source_page": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "printed_target": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "target_section_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "description": "A section id in this candidate, or null."
+        },
+        "scope": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "QuantityReview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "physical_page",
+        "box",
+        "section_ids",
+        "crop_sha256",
+        "fields_reviewed",
+        "remaining_uncertainty",
+        "readers"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "physical_page": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "box": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "minItems": 4,
+          "maxItems": 4,
+          "description": "[left, top, right, bottom] as fractions of the page; at least 0.03 x 0.03."
+        },
+        "section_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true,
+          "description": "Sections on physical_page."
+        },
+        "crop_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "fields_reviewed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "remaining_uncertainty": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "readers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "description": "quantity-review.jsonl: crop reviews; each box is kept as a check region."
+    },
+    "Unresolved": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "section_id",
+        "physical_page",
+        "field",
+        "code",
+        "reason",
+        "source_fragment",
+        "box",
+        "review_id",
+        "crop_readings"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "section_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "description": "A section on physical_page, or null."
+        },
+        "physical_page": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "field": {
+          "enum": [
+            "amount",
+            "ownership",
+            "other"
+          ]
+        },
+        "code": {
+          "enum": [
+            "amount",
+            "failed_page",
+            "label",
+            "other"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_fragment": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "description": "The page line the marker replaces (matched ignoring whitespace)."
+        },
+        "span": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional: the part of source_fragment the marker replaces; otherwise the whole line is replaced."
+        },
+        "box": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "minItems": 4,
+          "maxItems": 4,
+          "description": "[left, top, right, bottom] as fractions of the page; at least 0.03 x 0.03."
+        },
+        "review_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "description": "A quantity review on the same page, or null."
+        },
+        "crop_readings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Disagreeing crop readings. Never imported into the library."
+        }
+      },
+      "description": "unresolved.jsonl: content the pipeline could not settle; served as [unresolved <id>: <code>]."
+    },
+    "VoteCorrection": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "id",
+        "physical_page"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "physical_page": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "description": "vote-corrections.jsonl: reader-vote corrections kept for audit; other keys are free-form."
+    }
+  }
+}

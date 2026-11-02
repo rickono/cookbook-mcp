@@ -24,6 +24,12 @@ class RecipeCitation(RecipeModel):
     model_snapshot_id: ShortText | None = None
     target_id: ShortText | None = None
 
+    physical_pages: list[Annotated[int, Field(ge=1, le=100000)]] | None = Field(
+        default=None,
+        max_length=50,
+        description="Physical pages of a scanned section. Filled from the cited section's locator; a supplied value is replaced, and dropped for a section that is not scanned.",
+    )
+
     @model_validator(mode="after")
     def require_reading_target(self):
         if not self.section_id and not (self.model_snapshot_id and self.target_id):

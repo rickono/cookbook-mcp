@@ -202,11 +202,11 @@ def test_warm_activation_failure_rollback_and_retained_reads(
     monkeypatch.setattr(
         store, "read", lambda *_: (_ for _ in ()).throw(OSError("offline"))
     )
-    assert lib.search("salt") == old
-    assert (
-        lib.search("salt", publication_id=new.publication_id)["publication_id"]
-        == new.publication_id
-    )
+    # Manifest caching cannot bypass the current withdrawal control state.
+    with pytest.raises(OSError, match="offline"):
+        lib.search("salt")
+    with pytest.raises(OSError, match="offline"):
+        lib.search("salt", publication_id=new.publication_id)
 
 
 @pytest.mark.parametrize("damage", ["index", "manifest", "valid_json"])

@@ -106,6 +106,8 @@ def _model_validation_signature():
 
 def validate_version(pointer, destination):
     """Verify cached runtime state without depending on the object store."""
+    if not re.fullmatch("[a-f0-9]{32}", pointer["publication_id"]):
+        raise IntegrityError("invalid cached publication")
     raw = (destination / "manifest.json").read_bytes()
     if hashlib.sha256(raw).hexdigest() != pointer["manifest_sha256"]:
         raise IntegrityError("cached manifest checksum mismatch")
@@ -153,6 +155,16 @@ def validate_version(pointer, destination):
             receipt = json.loads(receipt_path.read_bytes())
         except (OSError, ValueError):
             receipt = None
+        if receipt != identity:
+            # An exact receipt produced by this validator can be pre-staged
+            # without replacing the previous release's restart receipt.
+            versioned = destination / (
+                ".model-validation-" + identity["validator_sha256"] + ".json"
+            )
+            try:
+                receipt = json.loads(versioned.read_bytes())
+            except (OSError, ValueError):
+                receipt = None
         # All runtime bytes were hashed above, on every call. Only the expensive
         # structural pass is reused, after an exact-byte/exact-validator match.
         if receipt != identity:
@@ -247,12 +259,66 @@ def publish(
     transfer(manifest.files, upload, "upload")
     transfer(list({e.sha256: e for e in manifest.files}.values()), readback, "readback")
     load_manifest(store, pointer)
+    from .withdrawal import current_withdrawals
+
+    current_withdrawals(store)
     store.put_bytes(
         "control/active.json", canonical(pointer), expected=expected_version
     )
-    if activate(pointer) != mid:
-        return {"status": "pending_activation", **pointer}
-    return {"status": "active", **pointer}
+    return confirm_activation(pointer, activate)
+
+
+def confirm_activation(pointer, activate):
+    """The remote write has committed; acknowledgement failure is recoverable."""
+    try:
+        confirmed = activate(pointer) == pointer["publication_id"]
+    except Exception as error:  # noqa: BLE001 - remote commit cannot be undone by an acknowledgement error
+        return {
+            "status": "pending_activation",
+            **pointer,
+            "remote_pointer": pointer,
+            "activation_error": type(error).__name__,
+        }
+    return {
+        "status": "active" if confirmed else "pending_activation",
+        **pointer,
+        "remote_pointer": pointer,
+    }
+
+
+HISTORY = "control/successful.json"
+
+
+def read_build(build: Path):
+    """The manifest and logical inputs a build directory holds (manifest.json, inputs.json)."""
+    m = Manifest.model_validate_json((build / "manifest.json").read_bytes())
+    inputs = {
+        k: Path(v) for k, v in json.loads((build / "inputs.json").read_bytes()).items()
+    }
+    return m, inputs
+
+
+def publish_build(store, build: Path, *, activate, **options):
+    """Publish a build directory against the store's current pointer; caller holds the lock.
+
+    The pointer moves only by compare-and-swap, so a concurrent activation makes this fail
+    with nothing changed. A confirmed activation goes to the front of the successful
+    history (``control/successful.json``), which keeps earlier publications for rollback.
+    """
+    m, inputs = read_build(build)
+    _, version = store.read_version("control/active.json")
+    result = publish(
+        store, m, inputs, expected_version=version, activate=activate, **options
+    )
+    if result["status"] == "active":
+        raw, history_version = store.read_version(HISTORY)
+        history = json.loads(raw) if raw else []
+        pointer = {k: result[k] for k in ("publication_id", "manifest_sha256")}
+        history = [pointer] + [
+            v for v in history if v["publication_id"] != m.publication_id
+        ]
+        store.put_bytes(HISTORY, canonical(history), expected=history_version)
+    return result
 
 
 def restore(store, pointer, destination: Path, *, runtime_only=False):
@@ -340,8 +406,31 @@ class Runtime:
         except FileNotFoundError:
             return None
 
+    def status(self):
+        """Report observed remote intent separately from verified runtime state."""
+        raw, version = self.store.read_version("control/active.json")
+        remote = json.loads(raw) if raw else None
+        if remote is not None:
+            load_manifest(self.store, remote)
+        local = self.active()
+        if local is not None:
+            validate_version(local, self.root / "versions" / local["publication_id"])
+        return {
+            "status": "active"
+            if remote is not None and remote == local
+            else "pending_activation"
+            if remote is not None
+            else "unpublished",
+            "remote_pointer": remote,
+            "remote_version": version,
+            "runtime_pointer": local,
+        }
+
     def activate(self, pointer):
         with file_lock(self.root / ".activation.lock"):
+            from .withdrawal import current_withdrawals
+
+            current_withdrawals(self.store)
             # Validate the remote pointer before using its ID as a filesystem path.
             load_manifest(self.store, pointer)
             destination = self.root / "versions" / pointer["publication_id"]
@@ -394,6 +483,27 @@ class Runtime:
         if raw:
             return self.activate(json.loads(raw))
         raise IntegrityError("no publication")
+
+    def rollback(self, pointer, *, expected_version):
+        """Select a retained version; serving still applies current eligibility.
+
+        This changes publication selection, never source/review decisions. The
+        caller serializes publication/retention work, as for publish().
+        """
+        pointer = {k: pointer[k] for k in ("publication_id", "manifest_sha256")}
+        self.manifest(pointer["publication_id"])
+        validate_version(pointer, self.root / "versions" / pointer["publication_id"])
+        manifest = load_manifest(self.store, pointer)
+        for entry in manifest.files:
+            verify(self.store, entry.key, entry.sha256, entry.size)
+        # Fail closed on unavailable/corrupt current eligibility control state.
+        from .withdrawal import current_withdrawals
+
+        current_withdrawals(self.store)
+        self.store.put_bytes(
+            "control/active.json", canonical(pointer), expected=expected_version
+        )
+        return {**confirm_activation(pointer, self.activate), **self.status()}
 
     def manifest(self, publication_id):
         if not re.fullmatch("[a-f0-9]{32}", publication_id):
