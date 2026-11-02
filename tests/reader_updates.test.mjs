@@ -40,3 +40,9 @@ test('expired update check clears private view and retains identifier-only login
  assert.equal(f.chunks.length,0);
  assert.match(f.location.replaced,/^\/reader\/login\?return=/);
 });
+
+test('update enhancement can execute for successive dynamically mounted reading documents',()=>{
+ const context=vm.createContext({document:{querySelector(){return null;}},addEventListener(){},setInterval(){}});
+ vm.runInContext(script,context);
+ assert.doesNotThrow(()=>vm.runInContext(script,context));
+});

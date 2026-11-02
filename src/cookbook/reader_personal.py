@@ -214,7 +214,7 @@ def controls(location, available=True):
             else "false"
         )
         + '"><a href="/reader/bookmarks">Bookmarks</a>'
-        '<form id="bookmark-save"><label>Bookmark name (optional)<input name="name" maxlength="120"></label><button>Save bookmark</button></form>'
+        '<form id="bookmark-save" method="post" action="/reader/personal" autocomplete="off"><label>Bookmark name (optional)<input name="name" maxlength="120"></label><button>Save bookmark</button></form>'
         '<button id="remember-location" type="button">Remember this location</button><p id="personal-status" role="status"></p></section><script src="/reader/personal.js" defer></script>'
     )
 

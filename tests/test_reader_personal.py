@@ -33,6 +33,10 @@ def test_bookmarks_cross_device_restart_and_idempotency(
     ):
         login(a)
         login(b)
+        assert (
+            'id="bookmark-save" method="post"'
+            in a.get("/reader/read", params={"at": at}).text
+        )
         csrf = a.get("/reader/session").json()["csrf"]
         payload = {
             "csrf": csrf,
@@ -326,3 +330,44 @@ def json_load(data):
     import json
 
     return json.loads(data)
+
+
+def test_native_saved_occurrences_never_guess_changed_snapshot(
+    reader_env, published, tmp_path
+):
+    from test_reader_updates import native_publication
+
+    from cookbook.reader_personal import PersonalState
+
+    factory, _, _ = reader_env
+    old, source = native_publication(published, tmp_path / "native-old")
+    with TestClient(
+        factory(personal_state=PersonalState(LocalStore(tmp_path / "personal"))),
+        base_url="https://reader.example",
+    ) as a:
+        login(a)
+        csrf = a.get("/reader/session").json()["csrf"]
+        for op, occurrence in [("a", "occ-0"), ("b", "occ-1")]:
+            at = destination(
+                old, source, target_id=occurrence, model_snapshot_id="stable"
+            )
+            result = a.post(
+                "/reader/personal",
+                json={
+                    "csrf": csrf,
+                    "action": "save",
+                    "operation_id": op * 32,
+                    "at": at,
+                    "name": occurrence,
+                },
+                headers={"Origin": "https://reader.example"},
+            )
+            assert result.status_code == 200
+        native_publication(published, tmp_path / "native-current")
+        rows = a.get("/reader/personal").json()["bookmarks"]
+        for row in rows:
+            content = a.get("/reader/content", params={"at": row["at"]}).json()
+            assert content["citations"][0]["reading_occurrence_id"] == row["name"]
+        native_publication(published, tmp_path / "native-changed", snapshot="changed")
+        rows = a.get("/reader/personal").json()["bookmarks"]
+        assert len(rows) == 2 and all(row["state"] == "unavailable" for row in rows)

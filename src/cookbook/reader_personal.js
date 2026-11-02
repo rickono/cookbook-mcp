@@ -41,7 +41,7 @@
       for (const row of data.bookmarks) {
         const li = document.createElement('li');
         const label = document.createElement('label'); label.textContent = 'Bookmark name';
-        const input = document.createElement('input'); input.maxLength = 120; input.value = row.name; label.append(input); li.append(label);
+        const input = document.createElement('input'); input.maxLength = 120; input.autocomplete = 'off'; input.value = row.name; label.append(input); li.append(label);
         if (row.at) {
           const link = document.createElement('a'); link.href = '/reader/read?' + new URLSearchParams({at:row.at}); link.textContent = row.name || 'Open bookmark'; li.append(link);
         } else {

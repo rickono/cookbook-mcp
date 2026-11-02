@@ -95,3 +95,13 @@ No ingestion, parsing, OCR, rendering or inference runs in these checks.
 Real hosted restart/replica durability, least-privilege grants and backup recovery,
 login/renewal, Mac-off operation, Safari/Chromium, phone/tablet reflow, keyboard,
 VoiceOver and performance evidence remain acceptance work under #98.
+
+After merging integration/spec-98 through `0ee48f4` (kitchen presentation), the safe
+combined Python selection in `test_reader_personal`, `test_reader_content`,
+`test_reader_http`, `test_reader_search`, `test_reader_updates`, `test_owner_reports`,
+`test_hosted`, `test_mcp`, `test_library_auth`, `test_reader_original`, `test_dashboard`
+and `test_reader_presentation` passed 103 checks. The seven corresponding reader,
+report and presentation Node selections passed 26 checks. Focused Ruff lint/format
+and `git diff --check` pass. Update notices now also initialize per mounted reading
+document, avoiding global redeclaration on repeated search-result navigation and
+ignoring detached-document responses. No hosted or device proof is claimed.

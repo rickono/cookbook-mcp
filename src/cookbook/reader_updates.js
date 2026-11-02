@@ -1,5 +1,8 @@
+(() => {
 // Retain source evidence in copied URLs without moving the pinned view.
 const sourceNotice = document.querySelector('#publication-update');
+if (!sourceNotice || sourceNotice.dataset.initialized) return;
+sourceNotice.dataset.initialized = 'true';
 if (sourceNotice?.dataset.at) {
   const current = new URL(location.href);
   current.searchParams.set('at', sourceNotice.dataset.at);
@@ -7,8 +10,8 @@ if (sourceNotice?.dataset.at) {
 }
 // Notice checks never replace text, continuations or history. Explicit links only.
 async function checkPublication() {
-  const notice = document.querySelector('#publication-update');
-  if (!notice) return;
+  const notice = sourceNotice;
+  if (notice.isConnected === false || document.querySelector('#publication-update') !== notice) return;
   const at = new URL(location.href).searchParams.get('at');
   try {
     const response = await fetch('/reader/updates?' + new URLSearchParams({at}), {
@@ -22,6 +25,7 @@ async function checkPublication() {
     }
     if (!response.ok) throw new Error('unavailable');
     const data = await response.json();
+    if (notice.isConnected === false || document.querySelector('#publication-update') !== notice) return;
     if (data.pinned_state === 'withheld') {
       document.querySelector('#text')?.replaceChildren();
       document.querySelector('[data-next-text]')?.remove();
@@ -71,3 +75,5 @@ async function checkPublication() {
 addEventListener('focus', checkPublication);
 addEventListener('pageshow', checkPublication);
 setInterval(checkPublication, 60000);
+
+})();

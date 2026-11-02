@@ -48,3 +48,13 @@ test('ambiguous persistence retries frozen payload and id before durable acknowl
   assert.equal(attempts[0].name,'Dinner');
   assert.equal(h.nodes['#personal-status'].textContent,'Saved durably.');
 });
+
+test('visible stable navigation writes once; another mounted document initializes independently',async()=>{
+  const h=harness(true); // Mark a new root as the next dynamically mounted reading document.
+  h.root.dataset.initialized=''; h.root.dataset.stable='true';
+  h.context.document.visibilityState='visible';
+  vm.runInContext(script,h.context); await settle();
+  assert.equal(h.calls.filter(c=>c[1]?.method==='POST').length,1);
+  vm.runInContext(script,h.context); await settle();
+  assert.equal(h.calls.filter(c=>c[1]?.method==='POST').length,1);
+});
