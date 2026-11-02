@@ -36,7 +36,7 @@ class JWTVerifier:
         self.public_key = public_key
         self.jwks = jwt.PyJWKClient(jwks_url, timeout=5) if jwks_url else None
 
-    async def verify_token(self, token):
+    async def verify_token(self, token, *, allow_expired=False):
         try:
             if len(token) > 16384:
                 return None
@@ -55,6 +55,7 @@ class JWTVerifier:
                 options={
                     "require": ["exp", "iat", "iss", "aud", "sub"],
                     "verify_nbf": True,
+                    "verify_exp": not allow_expired,
                 },
             )
             if c["sub"] not in self.subjects:
@@ -74,7 +75,7 @@ class JWTVerifier:
             return None
 
 
-def create_app(library, verifier, reports=None):
+def create_app(library, verifier, reports=None, *, reader=None):
     logging.getLogger("mcp").setLevel(logging.CRITICAL)
     server = MCPServer(
         "Private Cookbook Library",
@@ -448,10 +449,12 @@ def create_app(library, verifier, reports=None):
         json_response=True,
         max_request_body_size=65536,
         transport_security=TransportSecuritySettings(
-            allowed_hosts=[urlsplit(verifier.audience).netloc],
+            allowed_hosts=[urlsplit(verifier.audience).netloc]
+            + ([urlsplit(reader.config.origin).netloc] if reader else []),
             allowed_origins=[
                 f"{urlsplit(verifier.audience).scheme}://{urlsplit(verifier.audience).netloc}"
-            ],
+            ]
+            + ([reader.config.origin] if reader else []),
         ),
     )
 
@@ -495,4 +498,6 @@ def create_app(library, verifier, reports=None):
     app.routes.insert(0, Route("/icons/cookbook-v1.png", logo))
     app.routes.insert(0, Route("/favicon.ico", logo))
     app.routes.insert(0, Route("/readyz", ready))
+    if reader is not None:
+        reader.install(app, library)
     return app

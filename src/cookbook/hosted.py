@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager
 import json
 import os
-from pathlib import Path
 import threading
 import time
+from contextlib import asynccontextmanager
+from pathlib import Path
 from urllib.parse import urlsplit
 
 import httpx
@@ -94,6 +94,55 @@ def reports_store_from_environment():
     )
 
 
+READER_NAMES = (
+    "READER_ORIGIN",
+    "READER_CLIENT_ID",
+    "READER_CLIENT_SECRET",
+    "READER_SESSION_KEY",
+    "READER_S3_BUCKET",
+    "READER_AWS_ACCESS_KEY_ID",
+    "READER_AWS_SECRET_ACCESS_KEY",
+)
+
+
+def reader_from_environment(verifier):
+    """Opt-in hosted reader. Never borrow library or agent-report write authority."""
+    from .reader import Reader, ReaderConfig
+
+    if not any(name.startswith("READER_") for name in os.environ):
+        return None
+    if any(not os.environ.get(name) for name in READER_NAMES):
+        raise ValueError("incomplete reader configuration")
+    origin = os.environ["READER_ORIGIN"]
+    audience = urlsplit(verifier.audience)
+    if origin != f"{audience.scheme}://{audience.netloc}":
+        raise ValueError("reader and MCP must share an exact origin")
+    for bucket, credential in (
+        ("S3_BUCKET", "AWS_ACCESS_KEY_ID"),
+        ("REPORTS_S3_BUCKET", "REPORTS_AWS_ACCESS_KEY_ID"),
+    ):
+        if os.environ["READER_S3_BUCKET"] == os.environ.get(bucket) or os.environ[
+            "READER_AWS_ACCESS_KEY_ID"
+        ] == os.environ.get(credential):
+            raise ValueError("reader session storage must be separate")
+    oidc = os.environ.get("READER_OIDC", "0")
+    if oidc not in ("0", "1"):
+        raise ValueError("READER_OIDC must be 0 or 1")
+    config = ReaderConfig(
+        origin,
+        os.environ["READER_CLIENT_ID"],
+        os.environ["READER_CLIENT_SECRET"],
+        oidc == "1",
+    )
+    store = s3_store(
+        os.environ.get("READER_S3_ENDPOINT_URL") or os.environ["S3_ENDPOINT_URL"],
+        os.environ["READER_S3_BUCKET"],
+        os.environ["READER_AWS_ACCESS_KEY_ID"],
+        os.environ["READER_AWS_SECRET_ACCESS_KEY"],
+    )
+    return Reader(config, verifier, store, os.environ["READER_SESSION_KEY"].encode())
+
+
 class PublicationUpdater:
     def __init__(self, runtime, interval=60):
         self.runtime = runtime
@@ -139,9 +188,11 @@ class PublicationUpdater:
             self.thread.join(timeout=1)
 
 
-def create_hosted_app(runtime, verifier, *, poll_seconds=60, reports_store=None):
+def create_hosted_app(
+    runtime, verifier, *, poll_seconds=60, reports_store=None, reader=None
+):
     reports = ReportSink(reports_store) if reports_store is not None else None
-    app = create_app(Library(runtime), verifier, reports)
+    app = create_app(Library(runtime), verifier, reports, reader=reader)
     original_lifespan = app.router.lifespan_context
     updater = PublicationUpdater(runtime, poll_seconds)
 
@@ -164,6 +215,7 @@ def create_hosted_app(runtime, verifier, *, poll_seconds=60, reports_store=None)
 
 def serve():
     import logging
+
     import uvicorn
 
     logging.getLogger("pypdf").setLevel(logging.CRITICAL)
@@ -178,15 +230,22 @@ def serve():
         else [],
         jwks_url=https_url(os.environ["COOKBOOK_JWKS_URL"]),
     )
+    trusted_proxies = os.environ.get("COOKBOOK_TRUSTED_PROXY_IPS", "")
+    if "*" in trusted_proxies:
+        raise ValueError("trusted proxy IPs must be explicit")
     uvicorn.run(
         create_hosted_app(
-            runtime, verifier, reports_store=reports_store_from_environment()
+            runtime,
+            verifier,
+            reports_store=reports_store_from_environment(),
+            reader=reader_from_environment(verifier),
         ),
         host="0.0.0.0",
         port=int(os.environ.get("PORT", "8000")),
         access_log=False,
         log_level="critical",
-        proxy_headers=False,
+        proxy_headers=bool(trusted_proxies),
+        forwarded_allow_ips=trusted_proxies,
         timeout_graceful_shutdown=10,
     )
 
