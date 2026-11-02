@@ -249,17 +249,37 @@ class BookModel:
                 raise IntegrityError("unresolved navigation target")
             target_id = target["node_id"]
         node = db.execute(
-            "select n.id,n.document_id from nodes n join documents d on d.id=n.document_id where n.id=? and d.edition_id=?",
+            "select n.id,n.document_id,n.preorder from nodes n join documents d on d.id=n.document_id where n.id=? and d.edition_id=?",
             (target_id, book_id),
         ).fetchone()
         if node is None:
             raise IntegrityError("unavailable whole-book target")
+        end = {"node_id": node["id"], "side": "after", "offset": None}
+        if nav:
+            # A TOC destination is often an empty <a>, rather than a container.
+            # Read the source interval to the next authored destination in this
+            # document. This is source navigation, not inferred recipe structure.
+            following = db.execute(
+                "select n.id from navigation v join nodes n on n.id=v.target_node "
+                "where v.edition_id=? and n.document_id=? and n.preorder>? "
+                "and json_extract(v.payload,'$.target.state')='resolved_node' "
+                "order by n.preorder limit 1",
+                (book_id, node["document_id"], node["preorder"]),
+            ).fetchone()
+            if following:
+                end = {"node_id": following["id"], "side": "before", "offset": None}
+            else:
+                root = db.execute(
+                    "select root_id from documents where id=? and edition_id=?",
+                    (node["document_id"], book_id),
+                ).fetchone()
+                end = {"node_id": root["root_id"], "side": "after", "offset": None}
         return [
             {
                 "document_id": node["document_id"],
                 "reading_occurrence_id": occurrence_id,
                 "start": {"node_id": node["id"], "side": "before", "offset": None},
-                "end": {"node_id": node["id"], "side": "after", "offset": None},
+                "end": end,
             }
         ], None
 

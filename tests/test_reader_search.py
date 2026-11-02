@@ -179,6 +179,45 @@ def test_withheld_page_can_continue_without_claiming_absence(
         )
 
 
+def test_search_reads_current_withdrawals_once_per_page(
+    published, tmp_path, monkeypatch
+):
+    from conftest import fixture_build
+
+    from cookbook.publication import publish
+    from cookbook.withdrawal import KEY
+
+    manifest, inputs = fixture_build(
+        tmp_path / "many-control-checks", section_count=25, repeats=1
+    )
+    _, _, store, runtime, library, _ = published
+    publish(
+        store,
+        manifest,
+        inputs,
+        expected_version=store.read_version("control/active.json")[1],
+        activate=runtime.activate,
+    )
+    original = store.read_version
+    reads = []
+
+    def read(key):
+        if key == KEY:
+            reads.append(key)
+        return original(key)
+
+    monkeypatch.setattr(store, "read_version", read)
+    assert len(library.search("salt", limit=20)["results"]) == 20
+    assert len(reads) == 1
+    # A subsequent request must not reuse an earlier control snapshot.
+    store.put_bytes(KEY, b"invalid")
+    import pytest
+
+    with pytest.raises(ValueError):
+        library.search("salt", limit=20)
+    assert len(reads) == 2
+
+
 def test_native_results_scope_independent_pages_and_partial_failure(
     reader_env, published, tmp_path
 ):

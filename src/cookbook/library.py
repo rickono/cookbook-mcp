@@ -249,14 +249,16 @@ class Library:
         with self.db(pub) as db:
             return db.execute("select extraction_version from info").fetchone()[0]
 
-    def withdrawals(self, section):
+    def withdrawals(self, section, events=None):
         from .withdrawal import current_withdrawals
 
         locator = json.loads(section["locator"])
         review = locator.get("content_review", {})
         return [
             e
-            for e in current_withdrawals(self.runtime.store)
+            for e in (
+                current_withdrawals(self.runtime.store) if events is None else events
+            )
             if review.get("decision_id") in e["affected_decisions"]
             or (
                 (section["kind"] == "page" or not review)
@@ -269,13 +271,13 @@ class Library:
             )
         ]
 
-    def suppressed(self, section):
-        return bool(self.withdrawals(section)) or bool(
+    def suppressed(self, section, events=None):
+        return bool(self.withdrawals(section, events)) or bool(
             json.loads(section["locator"]).get("superseded_transcription")
         )
 
-    def eligibility(self, section):
-        withdrawals = self.withdrawals(section)
+    def eligibility(self, section, events=None):
+        withdrawals = self.withdrawals(section, events)
         if withdrawals:
             return {
                 "eligible": False,
@@ -333,7 +335,7 @@ class Library:
                 counts["unresolved_items"] += summary["unresolved"]
         return counts
 
-    def citation(self, pub, book, section=None):
+    def citation(self, pub, book, section=None, *, withdrawal_events=None):
         d = {
             "publication_id": pub,
             "book_id": book["id"],
@@ -363,7 +365,7 @@ class Library:
                 if corrections := json.loads(unit["corrections"]):
                     d["extraction"]["corrections"] = corrections
         if section:
-            d["eligibility"] = self.eligibility(section)
+            d["eligibility"] = self.eligibility(section, withdrawal_events)
         if section and d["locator"]["kind"] == "page":
             d["page_id"] = section["id"]
         return d
@@ -445,6 +447,11 @@ class Library:
                     + ") order by rank,search.section_id limit ? offset ?"
                 )
                 rows = db.execute(sql, [fts] + args + [limit + 1, offset]).fetchall()
+                from .withdrawal import current_withdrawals
+
+                # One fresh control snapshot per query, shared by suppression and
+                # citations. Re-reading per hit multiplies remote storage latency.
+                withdrawal_events = current_withdrawals(self.runtime.store)
                 more = len(rows) > limit
                 results = []
                 for r in rows[:limit]:
@@ -457,14 +464,19 @@ class Library:
                     sec = db.execute(
                         "select * from sections where id=?", (r["section_id"],)
                     ).fetchone()
-                    if self.suppressed(sec):
+                    if self.suppressed(sec, withdrawal_events):
                         continue
                     results.append(
                         {
-                            "citation": self.citation(pub, aliases[0], sec),
+                            "citation": self.citation(
+                                pub,
+                                aliases[0],
+                                sec,
+                                withdrawal_events=withdrawal_events,
+                            ),
                             "aliases": [a["id"] for a in aliases],
                             "snippet": r["snippet"][:500],
-                            "eligibility": self.eligibility(sec),
+                            "eligibility": self.eligibility(sec, withdrawal_events),
                             "rank": r["rank"],
                         }
                     )

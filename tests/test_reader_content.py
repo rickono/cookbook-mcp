@@ -570,3 +570,119 @@ def test_native_snapshot_occurrences_and_cursor_binding(
             pub, source, target_id="occ-1", model_snapshot_id="snapshot-wrong"
         )
         assert client.get("/reader/read", params={"at": bad}).status_code == 404
+
+
+def test_native_navigation_reads_source_after_empty_anchor(tmp_path):
+    """Authored navigation marks a source interval, not an empty anchor subtree."""
+    import sqlite3
+
+    from cookbook.book_capture import SCHEMA
+    from cookbook.book_model import BookModel
+
+    path = tmp_path / "navigation.sqlite"
+    with sqlite3.connect(path) as db:
+        db.executescript(
+            SCHEMA
+            + "CREATE TABLE model_info(payload TEXT); CREATE TABLE coverage(edition_id TEXT,payload TEXT);"
+        )
+        db.execute(
+            "insert into model_info values(?)",
+            (
+                json.dumps(
+                    {"publication_id": "pub", "model_snapshot": {"id": "snapshot"}}
+                ),
+            ),
+        )
+        edition = {
+            "id": "book",
+            "source_id": "epub:source",
+            "source_sha256": "source",
+            "title": "Synthetic",
+            "authors": ["Fixture"],
+            "format": "EPUB",
+        }
+        db.execute(
+            "insert into editions values(?,?,?,?)",
+            ("book", 0, "Synthetic", json.dumps(edition)),
+        )
+        db.execute("insert into coverage values(?,?)", ("book", "{}"))
+        db.execute(
+            "insert into documents values(?,?,?,?,?)",
+            ("doc", "book", "chapter.xhtml", "root", '{"parser_diagnostics":[]}'),
+        )
+        for order, node_id, kind, text in [
+            (0, "root", "document", ""),
+            (1, "first", "link", ""),
+            (2, "body-1", "text", "First source section."),
+            (3, "second", "link", ""),
+            (4, "body-2", "text", "Second source section."),
+        ]:
+            payload = {
+                "id": node_id,
+                "kind": "text" if kind == "text" else "element",
+                "content_kind": kind,
+                "source_tag": "a" if kind == "link" else "body",
+                "child_ids": [],
+            }
+            if kind == "text":
+                payload["text"] = text
+            db.execute(
+                "insert into nodes values(?,?,?,?,?,?,?,?,?,?)",
+                (
+                    node_id,
+                    "doc",
+                    None,
+                    order,
+                    4 if node_id == "root" else order,
+                    payload["kind"],
+                    kind,
+                    "/",
+                    text,
+                    json.dumps(payload),
+                ),
+            )
+        for order, target in enumerate(["first", "second"]):
+            payload = {
+                "id": "nav-" + target,
+                "target": {"state": "resolved_node", "node_id": target},
+            }
+            db.execute(
+                "insert into navigation values(?,?,?,?,?,?,?,?)",
+                (
+                    payload["id"],
+                    "book",
+                    None,
+                    "toc",
+                    target,
+                    target,
+                    order,
+                    json.dumps(payload),
+                ),
+            )
+    model = BookModel(path, "pub")
+    first = model.read("book", "nav-first")
+    assert (
+        "".join(item["node"].get("text", "") for item in first["nodes"])
+        == "First source section."
+    )
+    assert first["citations"][0]["end"] == {
+        "node_id": "second",
+        "side": "before",
+        "offset": None,
+    }
+    assert first["next_cursor"] is None
+    bounded = model.read("book", "nav-first", node_budget=1)
+    chunks = []
+    while True:
+        chunks.extend(item["node"].get("text", "") for item in bounded["nodes"])
+        if not bounded["next_cursor"]:
+            break
+        bounded = model.read(
+            "book", "nav-first", cursor=bounded["next_cursor"], node_budget=1
+        )
+    assert "".join(chunks) == "First source section."
+    last = model.read("book", "nav-second")
+    assert (
+        "".join(item["node"].get("text", "") for item in last["nodes"])
+        == "Second source section."
+    )
