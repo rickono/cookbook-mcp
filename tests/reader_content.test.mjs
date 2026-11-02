@@ -10,7 +10,7 @@ function fixture(responses) {
   const reference = {href:'https://reader.example/reader/read?at=target&back=start'};
   const original = {href:'https://reader.example/reader/original?at=start'};
   const location = {href:'https://reader.example/reader/read?at=start',replace(url){this.replaced=url;}};
-  const document = {querySelector(q){return {'[data-next-text]':continuation,'[role="status"]':status,'#text':text,'main':text}[q];},querySelectorAll(){return [reference,original];},createElement(){return {focus(){this.focused=true;}};}};
+  const document = {querySelector(q){return {'[data-next-text]':continuation,'[role="status"]':{},'[data-reading-status]':status,'#text':text,'main':text}[q];},querySelectorAll(){return [reference,original];},createElement(){return {children:[],attrs:{},append(child){this.children.push(child);},setAttribute(k,v){this.attrs[k]=v;},focus(){this.focused=true;}};}};
   vm.runInNewContext(script,{document,location,URL,URLSearchParams,AbortSignal,history:{replaceState(a,b,url){location.href=String(url);}},fetch:async()=>{const response=responses.shift();if(response instanceof Error)throw response;return response;}});
   return {chunks,status,continuation,reference,original,location,click:()=>callbacks.click({preventDefault(){}})};
 }
@@ -44,4 +44,15 @@ test('current withdrawal removes already loaded chunks without advancing',async(
  assert.equal(f.chunks.length,0);
  assert.equal(f.continuation.removed,true);
  assert.match(f.status.textContent,/withheld/);
+});
+test('table continuation exposes a labelled focusable region without parsing source markup',async()=>{
+ const f=fixture([ok({state:'partial_text',text:'prose<svg>cell',text_offset:4000,next_text:'later',text_blocks:[{kind:'text',text:'prose'},{kind:'table',text:'<svg>cell'}],structure_notes:['Cell spans 2 rows.']})]);
+ await f.click();
+ assert.equal(f.chunks[0].focused,true);
+ const region=f.chunks[0].children.find(c=>c.attrs.role==='region');
+ assert.ok(region);
+ assert.equal(region.tabIndex,0);
+ assert.match(region.attrs['aria-label'],/Table/);
+ assert.equal(region.children[0].textContent,'<svg>cell');
+ assert.equal(f.chunks[0].children.at(-1).textContent,'Cell spans 2 rows.');
 });

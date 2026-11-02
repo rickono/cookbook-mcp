@@ -286,11 +286,21 @@ class Reader:
                     owner["sessions"][digest(sid)] = session
         return None
 
-    def page(self, body, *, protected=False):
+    def page(self, body, *, protected=False, presentation=False):
         return HTMLResponse(
             '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Cookbook library</title><link rel="stylesheet" href="/reader/style.css">'
             + ('<script src="/reader/session.js" defer></script>' if protected else "")
-            + "<body><main><h1>Cookbook library</h1>"
+            + (
+                '<link rel="stylesheet" href="/reader/presentation.css"><script src="/reader/presentation.js" defer></script>'
+                if presentation
+                else ""
+            )
+            + '<body><a class="skip-link" href="#reader-main">Skip to reading</a><main id="reader-main" tabindex="-1"><h1>Cookbook library</h1>'
+            + (
+                '<nav aria-label="Reading appearance"><button type="button" data-kitchen aria-pressed="false" hidden>Kitchen mode</button><span data-appearance-status role="status"></span></nav>'
+                if presentation
+                else ""
+            )
             + body
             + "</main></body></html>"
         )
@@ -307,6 +317,17 @@ class Reader:
 
     async def dispatch(self, request, library):
         path = request.url.path
+        if path in ("/reader/presentation.css", "/reader/presentation.js"):
+            return Response(
+                Path(__file__)
+                .with_name(
+                    path.rsplit("/", 1)[1].replace(
+                        "presentation.", "reader_presentation."
+                    )
+                )
+                .read_text(),
+                media_type="text/css" if path.endswith(".css") else "text/javascript",
+            )
         if path == "/reader/style.css":
             return Response(
                 "body{font:18px/1.6 system-ui;margin:0;color:#20251f;background:#faf8f2}main{max-width:65ch;padding:1rem;margin:auto}a,button{display:inline-block;min-height:44px;box-sizing:border-box;padding:.5rem}button{font:inherit}.source-text{white-space:pre-wrap;overflow-wrap:anywhere}pre{white-space:pre-wrap;overflow-wrap:anywhere}summary{min-height:44px;cursor:pointer}li{margin-block:1rem;overflow-wrap:anywhere}:focus-visible{outline:3px solid #375d9c;outline-offset:3px}",
@@ -644,6 +665,8 @@ class Reader:
             "/reader/image",
             "/reader/original.js",
             "/reader/original.css",
+            "/reader/presentation.css",
+            "/reader/presentation.js",
         ):
             app.routes.insert(0, Route(path, endpoint))
         app.routes.insert(0, Route("/reader/logout", endpoint, methods=["POST"]))

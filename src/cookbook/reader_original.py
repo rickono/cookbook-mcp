@@ -86,6 +86,7 @@ async def deliver(reader, request, library):
     try:
         if any(len(q.getlist(k)) != 1 for k in q) or set(q) - {
             "at",
+            "back",
             "page",
             "image",
             "region",
@@ -93,6 +94,9 @@ async def deliver(reader, request, library):
         }:
             raise ValueError("invalid selection")
         loc = decode_location(at)
+        back = q.get("back")
+        if back:
+            decode_location(back)
         offset = int(q.get("offset", "0"))
         if not 0 <= offset <= 100000 or ("page" in q and "image" in q):
             raise ValueError("invalid selection")
@@ -105,7 +109,9 @@ async def deliver(reader, request, library):
     try:
         await asyncio.to_thread(library.publication, loc["publication_id"])
     except IntegrityError:
-        return failure(reader, at, "Publication unavailable or retired.", 410)
+        return failure(
+            reader, at, "Publication unavailable or retired.", 410, back=back
+        )
     try:
         data = await asyncio.to_thread(read, library, loc)
         items, more = await asyncio.to_thread(candidates, library, loc, data, offset)
@@ -149,6 +155,7 @@ async def deliver(reader, request, library):
             at,
             "Original unavailable within serving limits or renderer busy. Retry explicitly, use the whole page, or return to text.",
             503,
+            back=back,
             retry=link(at, **{k: v for k, v in q.items() if k != "at"}),
         )
     except IntegrityError:
@@ -157,10 +164,11 @@ async def deliver(reader, request, library):
             at,
             "Original source location unavailable. No replacement was selected.",
             404,
+            back=back,
         )
     body = (
         '<link rel="stylesheet" href="/reader/original.css"><nav><a href="/reader/read?'
-        + escape(urlencode({"at": at}))
+        + escape(urlencode({"at": at, **({"back": back} if back else {})}))
         + '#text">Return to same text position</a></nav>'
     )
     body += "<h2>Original source</h2><p>" + escape(data["citation"]["title"]) + "</p>"
@@ -174,15 +182,23 @@ async def deliver(reader, request, library):
         selection = {k: v for k, v in item.items() if k != "label"}
         body += (
             '<a href="'
-            + escape(link(at, offset=offset, **selection))
+            + escape(
+                link(at, offset=offset, **selection, **({"back": back} if back else {}))
+            )
             + '">'
             + escape(item["label"])
             + "</a>"
         )
     if more is not None:
-        body += '<a href="' + escape(link(at, offset=more)) + '">More originals</a>'
+        body += (
+            '<a href="'
+            + escape(link(at, offset=more, **({"back": back} if back else {})))
+            + '">More originals</a>'
+        )
     body += "</nav>"
     if selected:
+        from .reader_presentation import text_html
+
         text_state = (
             "Text withheld by current withdrawal or supersession."
             if data["state"] == "withheld"
@@ -196,9 +212,9 @@ async def deliver(reader, request, library):
             + " Corrections and crop confirmation do not establish approval.</p>"
         )
         body += (
-            '<button type="button" data-compare aria-pressed="false">Compare text and original</button><div class="original-layout"><article class="comparison-text" aria-label="Text at originating location"><p>'
-            + escape(data.get("text", "Text unavailable."))
-            + '</p></article><section aria-label="Selected original">'
+            '<button type="button" data-compare aria-pressed="false">Compare text and original</button><div class="original-layout"><article class="comparison-text" aria-label="Text at originating location">'
+            + text_html(data)
+            + '</article><section aria-label="Selected original">'
         )
         params = dict(q)
         image_url = "/reader/image?" + urlencode(params)
@@ -214,7 +230,11 @@ async def deliver(reader, request, library):
         if page is not None:
             body += (
                 '<a href="'
-                + escape(link(at, page=page, offset=offset))
+                + escape(
+                    link(
+                        at, page=page, offset=offset, **({"back": back} if back else {})
+                    )
+                )
                 + '">Whole page at supported size</a><ol aria-label="Check regions">'
             )
             for n, r in enumerate(data.get("check_regions", [])):
@@ -225,7 +245,15 @@ async def deliver(reader, request, library):
                     }.get(r.get("state", r.get("status")), "Review state not recorded")
                     body += (
                         '<li><a href="'
-                        + escape(link(at, page=page, region=n, offset=offset))
+                        + escape(
+                            link(
+                                at,
+                                page=page,
+                                region=n,
+                                offset=offset,
+                                **({"back": back} if back else {}),
+                            )
+                        )
                         + '">Check region '
                         + str(n + 1)
                         + " — "
@@ -243,21 +271,21 @@ async def deliver(reader, request, library):
         escape(json.dumps(data["citation"], ensure_ascii=False, indent=2))
         + "</pre></details>"
     )
-    return reader.page(body, protected=True)
+    return reader.page(body, protected=True, presentation=True)
 
 
-def failure(reader, at, message, status, *, retry=None):
+def failure(reader, at, message, status, *, retry=None, back=None):
     body = (
         '<p role="status">'
         + escape(message)
         + '</p><a href="'
-        + escape(link(at))
+        + escape(link(at, **({"back": back} if back else {})))
         + '">Choose original or whole page</a><a href="/reader/read?'
-        + escape(urlencode({"at": at}))
+        + escape(urlencode({"at": at, **({"back": back} if back else {})}))
         + '#text">Return to same text position</a>'
     )
     if retry:
         body += '<a href="' + escape(retry) + '">Retry selected original</a>'
-    response = reader.page(body, protected=True)
+    response = reader.page(body, protected=True, presentation=True)
     response.status_code = status
     return response

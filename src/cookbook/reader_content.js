@@ -4,7 +4,7 @@ if (continuation) continuation.addEventListener('click', async event => {
   event.preventDefault();
   if (continuation.getAttribute('aria-disabled') === 'true') return;
   continuation.setAttribute('aria-disabled', 'true');
-  const status = document.querySelector('[role="status"]');
+  const status = document.querySelector('[data-reading-status]');
   status.textContent = 'Loading next text…';
   const url = new URL(continuation.href);
   try {
@@ -25,10 +25,37 @@ if (continuation) continuation.addEventListener('click', async event => {
       return;
     }
     const chunk = document.createElement('div');
-    chunk.className = 'source-text';
+    chunk.className = 'reading-chunk';
     chunk.id = 'chunk-' + data.text_offset;
     chunk.tabIndex = -1;
-    chunk.textContent = data.text;
+    if (data.text_blocks) {
+      for (const block of data.text_blocks) {
+        const text = document.createElement('div');
+        text.className = 'source-text';
+        text.textContent = block.text;
+        if (block.kind === 'table') {
+          const label = document.createElement('p');
+          label.className = 'table-label';
+          label.textContent = 'Table excerpt — authored cell boundaries; scroll horizontally. A delivery may start or end inside a table.';
+          chunk.append(label);
+          const region = document.createElement('div');
+          region.className = 'table-region';
+          region.tabIndex = 0;
+          region.setAttribute('role', 'region');
+          region.setAttribute('aria-label', 'Table excerpt, scroll horizontally');
+          region.append(text);
+          chunk.append(region);
+        } else chunk.append(text);
+      }
+    } else {
+      chunk.className = 'source-text';
+      chunk.textContent = data.text;
+    }
+    for (const note of data.structure_notes || []) {
+      const paragraph = document.createElement('p');
+      paragraph.textContent = note;
+      chunk.append(paragraph);
+    }
     document.querySelector('#text').append(chunk);
     // Advance only after a successful response: failed reads can be explicitly retried.
     const current = new URL(location.href);

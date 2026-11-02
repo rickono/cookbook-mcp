@@ -126,7 +126,9 @@ async def deliver(reader, request, library):
     c = data["citation"]
     body = '<nav aria-label="Library"><a href="/reader/catalog">Books</a>'
     if back:
-        body += anchor(back, "Return to originating location")
+        body += anchor(back, "Return to originating location").replace(
+            '">', '#text">', 1
+        )
     body += (
         "</nav><header><h2>"
         + escape(c.get("section_title", c["title"]))
@@ -135,7 +137,7 @@ async def deliver(reader, request, library):
         + "</p></header>"
     )
     body += (
-        '<p role="status">'
+        '<p data-reading-status role="status">'
         + {
             "partial_text": "Partial text — more text remains.",
             "complete_text": "End of section text. Earlier chunks remain available through Previous text. This does not establish a complete recipe or supporting work.",
@@ -144,6 +146,8 @@ async def deliver(reader, request, library):
         + "</p>"
     )
     if "text" in data:
+        from .reader_presentation import text_html
+
         body += (
             "<p>"
             + (
@@ -154,9 +158,9 @@ async def deliver(reader, request, library):
             + "</p>"
         )
         body += (
-            '<article id="text" tabindex="-1" aria-label="Source text"><div class="source-text">'
-            + escape(data["text"])
-            + "</div></article>"
+            '<article id="text" tabindex="-1" aria-label="Source text">'
+            + text_html(data)
+            + "</article>"
         )
         if data["next_text"]:
             body += anchor(data["next_text"], "Continue text", back=back).replace(
@@ -206,11 +210,11 @@ async def deliver(reader, request, library):
         body += "</nav><p>Absent relationships do not establish complete supporting work.</p>"
     body += (
         '<a href="/reader/original?'
-        + escape(urlencode({"at": raw}))
+        + escape(urlencode({"at": raw, **({"back": back} if back else {})}))
         + '">Inspect originals</a>'
     )
     body += '<script src="/reader/content.js" defer></script>'
-    return reader.page(body, protected=True)
+    return reader.page(body, protected=True, presentation=True)
 
 
 def page_error(reader, message, status):
