@@ -312,6 +312,15 @@ class Reader:
                 "body{font:18px/1.6 system-ui;margin:0;color:#20251f;background:#faf8f2}main{max-width:65ch;padding:1rem;margin:auto}a,button{display:inline-block;min-height:44px;box-sizing:border-box;padding:.5rem}button{font:inherit}.source-text{white-space:pre-wrap;overflow-wrap:anywhere}pre{white-space:pre-wrap;overflow-wrap:anywhere}summary{min-height:44px;cursor:pointer}li{margin-block:1rem;overflow-wrap:anywhere}:focus-visible{outline:3px solid #375d9c;outline-offset:3px}",
                 media_type="text/css",
             )
+        if path in ("/reader/original.js", "/reader/original.css"):
+            return Response(
+                Path(__file__)
+                .with_name(
+                    path.rsplit("/", 1)[1].replace("original.", "reader_original.")
+                )
+                .read_text(),
+                media_type="text/css" if path.endswith(".css") else "text/javascript",
+            )
         if path == "/reader/content.js":
             return Response(
                 Path(__file__).with_name("reader_content.js").read_text(),
@@ -427,7 +436,13 @@ class Reader:
         if not auth:
             destination = (
                 request.query_params.get("at")
-                if path in ("/reader/read", "/reader/content")
+                if path
+                in (
+                    "/reader/read",
+                    "/reader/content",
+                    "/reader/original",
+                    "/reader/image",
+                )
                 else None
             )
             if destination:
@@ -437,6 +452,10 @@ class Reader:
                     destination = None
             return self.expired(destination)
         subject, session = auth
+        if path in ("/reader/original", "/reader/image"):
+            from .reader_original import deliver as original
+
+            return await original(self, request, library)
         if path in ("/reader/read", "/reader/content"):
             return await deliver(self, request, library)
         if path == "/reader/session":
@@ -533,6 +552,21 @@ class Reader:
         return Response(status_code=404)
 
     def failure(self, request, code, message):
+        if request.url.path in ("/reader/original", "/reader/image"):
+            from .reader_original import failure, link
+
+            at = request.query_params.get("at", "")
+            try:
+                decode_location(at)
+            except (ValueError, TypeError, UnicodeError):
+                return JSONResponse({"error": "invalid_destination"}, status_code=400)
+            return failure(
+                self,
+                at,
+                "Original interrupted or unavailable. Retry explicitly or return to text.",
+                503,
+                retry=link(at),
+            )
         if request.url.path == "/reader/read":
             at = request.query_params.get("at", "")
             try:
@@ -562,7 +596,9 @@ class Reader:
     def install(self, app, library):
         async def endpoint(request):
             try:
-                async with asyncio.timeout(10):
+                async with asyncio.timeout(
+                    30 if request.url.path == "/reader/image" else 10
+                ):
                     if (
                         f"{request.url.scheme}://{request.url.netloc}"
                         != self.config.origin
@@ -588,7 +624,7 @@ class Reader:
                     "X-Content-Type-Options": "nosniff",
                     "X-Frame-Options": "DENY",
                     "Strict-Transport-Security": "max-age=31536000",
-                    "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+                    "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
                 }
             )
             return response
@@ -604,6 +640,10 @@ class Reader:
             "/reader/style.css",
             "/reader/session.js",
             "/reader/content.js",
+            "/reader/original",
+            "/reader/image",
+            "/reader/original.js",
+            "/reader/original.css",
         ):
             app.routes.insert(0, Route(path, endpoint))
         app.routes.insert(0, Route("/reader/logout", endpoint, methods=["POST"]))
