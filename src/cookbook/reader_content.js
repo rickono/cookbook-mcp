@@ -1,3 +1,4 @@
+(() => {
 // Progressive enhancement. Protected content stays only in the live document.
 const continuation = document.querySelector('[data-next-text]');
 if (continuation) continuation.addEventListener('click', async event => {
@@ -55,3 +56,5 @@ if (continuation) continuation.addEventListener('click', async event => {
     continuation.removeAttribute('aria-disabled');
   }
 });
+
+})();
