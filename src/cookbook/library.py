@@ -364,6 +364,58 @@ class Library:
                 result["check_regions"] = json.loads(unit["check_regions"])
             return result
 
+    def section_navigation(
+        self, publication_id, book_id, source_id, section_id, offset=0, limit=20
+    ):
+        """Bounded authored targets and adjacency established by retained contents.
+
+        Native extraction retains no authored reference graph: never infer it from
+        wording. Scanned locator references already carry resolved section IDs.
+        """
+        if not 0 <= offset <= 100000 or not 1 <= limit <= 50:
+            raise IntegrityError("invalid relationship bounds")
+        pub = self.publication(publication_id)
+        with self.db(pub) as db:
+            b = self.book(db, book_id, source_id)
+            row = db.execute(
+                "select * from sections where id=? and source_id=?",
+                (section_id, source_id),
+            ).fetchone()
+            if row is None:
+                raise IntegrityError("unavailable identifier")
+            refs = json.loads(row["locator"]).get("references", [])
+            related = []
+            for ref in refs[offset : offset + limit]:
+                target = ref.get("target_section_id")
+                exists = (
+                    target
+                    and db.execute(
+                        "select 1 from sections where id=? and source_id=?",
+                        (target, source_id),
+                    ).fetchone()
+                )
+                related.append(
+                    {
+                        "label": ref.get("label", "Authored reference"),
+                        "section_id": target if exists else None,
+                    }
+                )
+            toc = json.loads(b["toc"])
+            ids = list(
+                dict.fromkeys(t["section_id"] for t in toc if t.get("section_id"))
+            )
+            adjacent = []
+            if section_id in ids:
+                i = ids.index(section_id)
+                for n, label in ((i - 1, "Previous section"), (i + 1, "Next section")):
+                    if 0 <= n < len(ids):
+                        adjacent.append({"label": label, "section_id": ids[n]})
+            return {
+                "related": related,
+                "next_offset": offset + limit if offset + limit < len(refs) else None,
+                "adjacent": adjacent,
+            }
+
     def section_pages(self, publication_id, book_id, source_id, section_id):
         """Physical pages of a scanned section, from its locator; None for any other."""
         try:
