@@ -124,7 +124,12 @@ async def deliver(reader, request, library, owner=None, csrf=""):
     if request.url.path == "/reader/content":
         return JSONResponse(data)
     c = data["citation"]
-    body = '<nav aria-label="Library"><a href="/reader/catalog">Books</a>'
+    body = (
+        '<nav aria-label="Library"><a href="/reader/catalog">Books</a>'
+        '<a href="/reader/search?'
+        + escape(urlencode({"at": raw}))
+        + '">Search this book</a>'
+    )
     if back:
         body += anchor(back, "Return to originating location")
     body += (
