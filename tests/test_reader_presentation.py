@@ -9,6 +9,23 @@ from test_reader_http import login
 pytest_plugins = ["test_reader_http"]
 
 
+def test_native_reading_hides_initial_layout_space_without_losing_source():
+    from cookbook.reader_presentation import text_html
+
+    source = "\n \n\t\nChapter title\n\nIngredients <beans>\n"
+    data = {"text_blocks": [{"kind": "text", "text": source}]}
+    doc = html.fromstring(text_html(data))
+    assert doc.text_content() == source
+    assert doc.xpath("./span[@hidden]/text()") == ["\n \n\t\n"]
+    assert "".join(doc.xpath("./span[not(@hidden)]/text()")) == source.lstrip()
+    assert data["text_blocks"][0]["text"] == source
+    for other in (
+        {"text": source},
+        {"text_blocks": [{"kind": "table", "text": source}]},
+    ):
+        assert not html.fromstring(text_html(other)).xpath(".//span[@hidden]")
+
+
 def test_reading_and_original_keep_accessible_navigation_without_losing_source(
     reader_env, published
 ):

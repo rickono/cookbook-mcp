@@ -40,10 +40,19 @@ if (continuation) continuation.addEventListener('click', async event => {
     chunk.id = 'chunk-' + data.text_offset;
     chunk.tabIndex = -1;
     if (data.text_blocks) {
-      for (const block of data.text_blocks) {
+      for (const [index, block] of data.text_blocks.entries()) {
         const text = document.createElement('div');
         text.className = 'source-text';
-        text.textContent = block.text;
+        const leading = index === 0 && block.kind === 'text' ? block.text.match(/^[ \t\r\n]+/)?.[0] : '';
+        if (leading) {
+          const spacing = document.createElement('span');
+          spacing.hidden = true;
+          spacing.textContent = leading;
+          const prose = document.createElement('span');
+          prose.textContent = block.text.slice(leading.length);
+          text.append(spacing);
+          text.append(prose);
+        } else text.textContent = block.text;
         if (block.kind === 'table') {
           const label = document.createElement('p');
           label.className = 'table-label';

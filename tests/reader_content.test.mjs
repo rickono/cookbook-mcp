@@ -16,6 +16,18 @@ function fixture(responses) {
   return {chunks,status,continuation,reference,original,location,unmount:()=>{mounted=false;callbacks['reader-unmounted']?.();},expire:()=>callbacks['reader-expired']?.(),click:()=>callbacks.click({preventDefault(){}})};
 }
 const ok = data => ({ok:true,status:200,json:async()=>data});
+test('native continuation hides leading layout whitespace and retains every source character',async()=>{
+ const source='\n \n\t\nChapter text\n\nIngredients';
+ const f=fixture([ok({text:source,text_offset:0,next_text:null,text_blocks:[{kind:'text',text:source},{kind:'table',text:'\n  cell'}]})]);
+ await f.click();
+ const prose=f.chunks[0].children[0];
+ assert.equal(prose.children[0].hidden,true);
+ assert.equal(prose.children[0].textContent,'\n \n\t\n');
+ assert.equal(prose.children[1].textContent,source.trimStart());
+ assert.equal(prose.children.map(c=>c.textContent).join(''),source);
+ const table=f.chunks[0].children.find(c=>c.attrs.role==='region');
+ assert.equal(table.children[0].textContent,'\n  cell');
+});
 test('interrupted continuation preserves text and explicit retry appends exactly once and restores the new origin',async()=>{
  const f=fixture([new Error('offline'),ok({state:'partial_text',text:'<script>source text</script>',text_offset:4000,next_text:'later'})]);
  await f.click();
