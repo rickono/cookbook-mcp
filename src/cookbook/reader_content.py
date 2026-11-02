@@ -204,6 +204,11 @@ async def deliver(reader, request, library):
         if data["next_related"]:
             body += anchor(data["next_related"], "More related targets", back=back)
         body += "</nav><p>Absent relationships do not establish complete supporting work.</p>"
+    body += (
+        '<a href="/reader/original?'
+        + escape(urlencode({"at": raw}))
+        + '">Inspect originals</a>'
+    )
     body += '<script src="/reader/content.js" defer></script>'
     return reader.page(body, protected=True)
 
