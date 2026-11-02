@@ -369,3 +369,37 @@ def test_passive_update_checks_do_not_extend_session_inactivity(reader_env, publ
             clock[0] += 86400
             response = client.get("/reader/updates", params={"at": at})
         assert response.status_code == 401
+
+
+def test_same_publication_resolution_reads_once_and_rechecks_next_request(
+    published, monkeypatch
+):
+    from cookbook import reader_content
+    from cookbook.reader_updates import resolve_current, source_location
+    from cookbook.storage import IntegrityError
+
+    loc = source_location(
+        published[4],
+        {
+            "publication_id": published[0].publication_id,
+            "book_id": "book-0",
+            "source_id": fixture_source(published),
+            "section_id": "section-0",
+        },
+    )
+    original = reader_content.read
+    calls = []
+
+    def read(library, location):
+        calls.append(location)
+        return original(library, location)
+
+    monkeypatch.setattr(reader_content, "read", read)
+    assert resolve_current(published[4], loc)["state"] == "available"
+    assert len(calls) == 1
+
+    def unavailable(library, location):
+        raise IntegrityError("withdrawn or unavailable")
+
+    monkeypatch.setattr(reader_content, "read", unavailable)
+    assert resolve_current(published[4], loc)["state"] == "unavailable"

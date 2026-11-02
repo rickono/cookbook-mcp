@@ -109,15 +109,21 @@ async def endpoint(reader, request, library, owner, session):
         if reader.personal_state is None:
             return JSONResponse({"error": "personal_unavailable"}, status_code=503)
         _, state, _ = await asyncio.to_thread(reader.personal_state.load, owner)
+        resolved_locations = {}
+
+        def resolve(location):
+            key = canonical(location)
+            if key not in resolved_locations:
+                resolved_locations[key] = resolve_current(library, location)
+            return resolved_locations[key]
+
         rows = []
         for identity, row in state["bookmarks"].items():
-            resolved = await asyncio.to_thread(
-                resolve_current, library, row["location"]
-            )
+            resolved = await asyncio.to_thread(resolve, row["location"])
             rows.append({"bookmark_id": identity, "name": row["name"], **resolved})
         resumes = []
         for loc in state["resume"].values():
-            resolved = await asyncio.to_thread(resolve_current, library, loc)
+            resolved = await asyncio.to_thread(resolve, loc)
             resumes.append(
                 {"book_id": loc["book_id"], "source_id": loc["source_id"], **resolved}
             )
