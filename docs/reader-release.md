@@ -260,8 +260,16 @@ always validate again, and a different current publication is still read and
 checked independently. Regressions verify the read counts, next-request
 unavailability and per-request bookmark/resume sharing.
 
+A native catalog sign-out form was rejected by the strict Origin check under the
+no-referrer policy. The first-party session script now intercepts that submission,
+POSTs its bound CSRF token and selected device/all scope through fetch, then clears
+protected DOM and navigates to the fixed signed-out route only after confirmation.
+Failures retain an explicit retry; expiry clears the private view without replay.
+Origin checks, CSRF validation and no-referrer headers remain unchanged. Both
+scopes, failures, duplicate submission and expiry have browser-script regressions.
+
 The safe release selection passed 170 Python tests with six Linux-only skips on
-macOS, and 43 Node checks. Full hosted browser journeys, refresh renewal, supported
+macOS, and 50 Node checks. Full hosted browser journeys, refresh renewal, supported
 original display, device/accessibility checks and shaped-network budgets still
 require observed evidence. The source-image limitation reported by the independent
 repair is unchanged; no rendering ceiling, OCR or inference was invoked here.

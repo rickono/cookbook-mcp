@@ -26,6 +26,7 @@ PYTHON = [
     "rendering",
 ]
 NODE = [
+    "reader_session",
     "reader_content",
     "reader_original",
     "reader_search",
