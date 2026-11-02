@@ -322,11 +322,6 @@ class Reader:
                 else ""
             )
             + '<body><a class="skip-link" href="#reader-main">Skip to reading</a><main id="reader-main" tabindex="-1"><h1>Cookbook library</h1>'
-            + (
-                '<nav aria-label="Reading appearance"><button type="button" data-kitchen aria-pressed="false" hidden>Kitchen mode</button><span data-appearance-status role="status"></span></nav>'
-                if presentation
-                else ""
-            )
             + body
             + "</main></body></html>"
         )

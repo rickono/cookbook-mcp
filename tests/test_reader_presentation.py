@@ -9,7 +9,7 @@ from test_reader_http import login
 pytest_plugins = ["test_reader_http"]
 
 
-def test_reading_and_original_offer_kitchen_without_losing_source(
+def test_reading_and_original_keep_accessible_navigation_without_losing_source(
     reader_env, published
 ):
     app, _, _ = reader_env
@@ -23,7 +23,6 @@ def test_reading_and_original_offer_kitchen_without_losing_source(
             page = client.get(path, params={"at": at})
             assert page.status_code == 200
             doc = html.fromstring(page.text)
-            assert doc.xpath('//button[@data-kitchen][@aria-pressed="false"]')
             assert doc.xpath('//a[@href="#reader-main"]')
             assert doc.xpath('//main[@id="reader-main"][@tabindex="-1"]')
             assert doc.xpath('//script[@src="/reader/presentation.js"]')
@@ -31,7 +30,6 @@ def test_reading_and_original_offer_kitchen_without_losing_source(
             assert at in page.text
         css = client.get("/reader/presentation.css")
         assert css.status_code == 200
-        assert "22px" in css.text and "52px" in css.text
 
 
 def test_original_roundtrip_keeps_authored_reference_return(reader_env, published):

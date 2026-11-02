@@ -12,10 +12,6 @@ summary { padding: .5rem; }
 :focus-visible { outline: 3px solid #234f80; outline-offset: 3px; }
 .skip-link { position: absolute; left: .5rem; top: -10rem; background: #faf8f2; z-index: 2; }
 .skip-link:focus { top: .5rem; }
-body.kitchen { font-size: 22px; line-height: 1.6; }
-.kitchen a, .kitchen button, .kitchen summary, .kitchen input, .kitchen select { min-height: 52px; }
-.kitchen h1 { font-size: 1em; }
-.kitchen main { max-width: 58ch; }
 .table-region { max-width: 100%; overflow-x: auto; border: 1px solid #56624e; padding: .5rem; box-sizing: border-box; }
 .table-region .source-text { white-space: pre; overflow-wrap: normal; }
 .table-label { font-weight: bold; }

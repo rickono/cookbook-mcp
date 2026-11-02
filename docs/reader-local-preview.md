@@ -9,7 +9,7 @@ uv run python scripts/preview_reader.py
 Open [the sample library](http://localhost:8766/reader/login). Sign-in is simulated
 automatically. The actual reader serves three invented books: The Weeknight Table,
 A Small Seasonal Kitchen, and The Soup Notebook. Try searching for `lemon`, opening
-a recipe, kitchen mode, saving a bookmark, and inspecting an original. The soup
+a recipe, saving a bookmark, and inspecting an original. The soup
 sample also offers unresolved content, a check region, and transcription reporting.
 The longer supper passage exercises explicit text continuation.
 
