@@ -68,6 +68,12 @@ denial against the other reader stores and library bucket. No runtime key has
 bucket-administration authority. See [receipt retention](owner-reports.md#r2-deployment-permissions)
 for the provider-enforced immutable report prefix.
 
+The owned Typesense child does not inherit reader, personal, owner-report or
+legacy provider credentials. Its subprocess environment omits those prefixes
+alongside library/report credentials; the engine receives only its own generated
+loopback API key through a private configuration file. A source-free process
+regression verifies the environment without launching an engine or parser.
+
 Keep the encryption key separate from backups. Expired transaction records can be
 purged after ten minutes; consumed transaction tombstones can be removed after
 that same window. Expired owner sessions are pruned on login/access; unused owner

@@ -22,6 +22,7 @@ PYTHON = [
     "manifest_cache",
     "reports",
     "storage_conditions",
+    "search_process",
     "rendering",
 ]
 NODE = [
