@@ -60,7 +60,7 @@ def test_catalog_book_text_continuations_and_login_return(
         )
         assert first["state"] == "complete_text"
         catalog = client.get("/reader/catalog")
-        assert "/reader/read?at=" in catalog.text
+        assert "/reader/book?at=" in catalog.text
 
 
 def publish_scanned(published, tmp_path):

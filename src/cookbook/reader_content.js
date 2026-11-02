@@ -13,6 +13,7 @@ if (continuation) continuation.addEventListener('click', async event => {
       cache: 'no-store', signal: AbortSignal.timeout(10000)
     });
     if (response.status === 401) {
+      document.dispatchEvent?.(new Event('reader-expired'));
       document.querySelector('main').replaceChildren();
       location.replace('/reader/login?' + new URLSearchParams({return: url.searchParams.get('at')}));
       return;

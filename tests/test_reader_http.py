@@ -57,7 +57,7 @@ def reader_env(published, keys, mint, tmp_path):
     store = LocalStore(tmp_path / "sessions")
     key = Fernet.generate_key()
 
-    def app(*, search_engine=None, owner_reports=None):
+    def app(*, search_engine=None, owner_reports=None, personal_state=None):
         reader = Reader(
             config,
             verifier,
@@ -66,6 +66,7 @@ def reader_env(published, keys, mint, tmp_path):
             identity=identity,
             clock=lambda: clock[0],
             owner_reports=owner_reports,
+            personal_state=personal_state,
         )
         return create_hosted_app(
             published[3], verifier, reader=reader, search_engine=search_engine

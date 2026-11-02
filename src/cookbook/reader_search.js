@@ -108,7 +108,7 @@
         if (r.status === 401) {expired(); return;}
         if (!r.ok) throw Error();
         const doc = new DOMParser().parseFromString(await r.text(), 'text/html');
-        for (const a of doc.querySelectorAll('a[href^="/reader/read?at="]')) {
+        for (const a of doc.querySelectorAll('a[href^="/reader/read?at="],a[href^="/reader/book?at="]')) {
           const at = new URL(a.getAttribute('href'), location.href).searchParams.get('at');
           const loc = JSON.parse(atob(at.replace(/-/g,'+').replace(/_/g,'/')));
           const option = text('option', a.closest('li').querySelector('strong').textContent);
