@@ -36,6 +36,10 @@ if (continuation) continuation.addEventListener('click', async event => {
     const previous = current.searchParams.get('at');
     for (const link of document.querySelectorAll('a[href]')) {
       const target = new URL(link.href);
+      if (target.pathname === '/reader/original') {
+        target.searchParams.set('at', url.searchParams.get('at'));
+        link.href = target.href;
+      }
       if (target.searchParams.get('back') === previous) {
         target.searchParams.set('back', url.searchParams.get('at'));
         link.href = target.href;

@@ -95,7 +95,7 @@ def anchor(at, label, *, back=None):
     )
 
 
-async def deliver(reader, request, library):
+async def deliver(reader, request, library, owner=None, csrf=""):
     raw = request.query_params.get("at", "")
     try:
         loc = decode_location(raw)
@@ -209,6 +209,14 @@ async def deliver(reader, request, library):
         if data["next_related"]:
             body += anchor(data["next_related"], "More related targets", back=back)
         body += "</nav><p>Absent relationships do not establish complete supporting work.</p>"
+    body += (
+        '<a href="/reader/original?'
+        + escape(urlencode({"at": raw}))
+        + '">Inspect originals</a>'
+    )
+    from .owner_reports import form
+
+    body += form(reader, data, loc, owner, csrf)
     body += '<script src="/reader/content.js" defer></script>'
     return reader.page(body, protected=True)
 
