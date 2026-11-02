@@ -95,7 +95,7 @@ def anchor(at, label, *, back=None):
     )
 
 
-async def deliver(reader, request, library):
+async def deliver(reader, request, library, owner=None, csrf=""):
     raw = request.query_params.get("at", "")
     try:
         loc = decode_location(raw)
@@ -209,6 +209,9 @@ async def deliver(reader, request, library):
         + escape(urlencode({"at": raw}))
         + '">Inspect originals</a>'
     )
+    from .owner_reports import form
+
+    body += form(reader, data, loc, owner, csrf)
     body += '<script src="/reader/content.js" defer></script>'
     return reader.page(body, protected=True)
 
