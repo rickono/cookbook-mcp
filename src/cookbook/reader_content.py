@@ -25,6 +25,9 @@ KEYS = {
     "offset",
     "related_offset",
     "contents_offset",
+    "target_id",
+    "model_snapshot_id",
+    "cursor",
 }
 
 
@@ -44,22 +47,34 @@ def decode_location(raw):
         raise ValueError("invalid destination")
     for key, item in value.items():
         if key.endswith("offset"):
-            if type(item) is not int or not 0 <= item <= 1000000:
+            if type(item) is not int or not 0 <= item <= 1000000000:
                 raise ValueError("invalid offset")
+        elif key == "cursor":
+            if not isinstance(item, str) or not re.fullmatch(
+                r"[A-Za-z0-9_=-]{1,512}", item
+            ):
+                raise ValueError("invalid cursor")
         elif not isinstance(item, str) or not re.fullmatch(
             r"[A-Za-z0-9:_-]{1,256}", item
         ):
             raise ValueError("invalid identifier")
     if not re.fullmatch(r"[a-f0-9]{32}", value["publication_id"]):
         raise ValueError("invalid publication")
+    if "section_id" in value and any(
+        k in value for k in ("target_id", "cursor", "model_snapshot_id")
+    ):
+        raise ValueError("mixed source paths")
+    if "cursor" in value and not {"target_id", "model_snapshot_id"} <= value.keys():
+        raise ValueError("unbound native continuation")
     return value
 
 
 def reading_link(citation):
     """Shared contract for catalog/search/dashboard; source identifiers only."""
     value = {k: citation[k] for k in ("publication_id", "book_id", "source_id")}
-    if citation.get("section_id"):
-        value["section_id"] = citation["section_id"]
+    for key in ("section_id", "target_id", "model_snapshot_id"):
+        if citation.get(key):
+            value[key] = citation[key]
     return "/reader/read?" + urlencode({"at": encode_location(value)})
 
 
@@ -147,12 +162,14 @@ async def deliver(reader, request, library):
             body += anchor(data["next_text"], "Continue text", back=back).replace(
                 "<a ", "<a data-next-text ", 1
             )
-        if loc.get("offset", 0):
+        if loc.get("offset", 0) and "target_id" not in loc:
             body += anchor(
                 move(loc, offset=max(0, loc["offset"] - 4000)),
                 "Previous text",
                 back=back,
             )
+    for note in data.get("structure_notes", []):
+        body += "<p>" + escape(note) + "</p>"
     body += (
         "<details><summary>Source and trust details</summary><pre>"
         + escape(
@@ -166,7 +183,11 @@ async def deliver(reader, request, library):
     )
     body += '<details><summary>Contents</summary><nav aria-label="Contents">'
     for item in data["contents"]:
-        body += anchor(item["at"], item["title"], back=raw)
+        body += (
+            anchor(item["at"], item["title"], back=raw)
+            if item.get("at")
+            else "<p>" + escape(item["title"]) + " — source target unresolved</p>"
+        )
     if data["next_contents"]:
         body += anchor(data["next_contents"], "More contents", back=back)
     body += "</nav><p>Only retained source structure is shown; missing chapter structure is not inferred.</p></details>"
@@ -174,7 +195,7 @@ async def deliver(reader, request, library):
         body += anchor(item["at"], item["label"], back=raw)
     if "text" in data:
         body += '<nav aria-label="Authored references">'
-        for item in data["related"]:
+        for item in data["related"] + data.get("references", []):
             body += (
                 anchor(item["at"], item["label"], back=raw)
                 if item.get("at")
@@ -203,6 +224,16 @@ def read(library, loc):
     book_data = library.get_book(
         pub, book, offset=loc.get("contents_offset", 0), limit=30
     )
+    from .book_model import MODEL_PATH
+
+    if (
+        "section_id" not in loc
+        and book_data["citation"]["format"] == "EPUB"
+        and any(e.path == MODEL_PATH for e in library.runtime.manifest(pub).files)
+    ):
+        from .reader_native import read_native
+
+        return read_native(library, loc)
     if book_data["citation"]["source_id"] != source:
         raise IntegrityError("source mismatch")
     base = {"publication_id": pub, "book_id": book, "source_id": source}
@@ -222,6 +253,8 @@ def read(library, loc):
             )
     if book_data["next_offset"] is not None:
         data["next_contents"] = move(loc, contents_offset=book_data["next_offset"])
+    if "target_id" in loc:
+        raise IntegrityError("native target unavailable")
     if "section_id" not in loc:
         return data
     section = library.read_section(

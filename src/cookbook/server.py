@@ -4,6 +4,9 @@ import asyncio
 import base64
 import json
 import logging
+import os
+import sqlite3
+import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -76,7 +79,14 @@ class JWTVerifier:
             return None
 
 
-def create_app(library, verifier, reports=None, *, reader=None):
+def create_app(library, verifier, reports=None, *, reader=None, usage=None):
+    if usage is None and os.environ.get("COOKBOOK_USAGE_DB"):
+        from .usage import UsageRecorder
+
+        try:
+            usage = UsageRecorder(os.environ["COOKBOOK_USAGE_DB"])
+        except (OSError, ValueError, sqlite3.Error):
+            usage = None
     logging.getLogger("mcp").setLevel(logging.CRITICAL)
     server = MCPServer(
         "Private Cookbook Library",
@@ -176,11 +186,32 @@ def create_app(library, verifier, reports=None, *, reader=None):
             )
         return types.CallToolResult(content=content, structuredContent=data)
 
-    def call(fn, **kwargs):
+    def call(fn, _operation=None, **kwargs):
+        started = time.monotonic()
+
+        operation = _operation or fn.__name__
+
+        def record(value=None, error=False):
+            if usage is not None and not (
+                operation == "search" and kwargs.get("mode") == "catalog"
+            ):
+                try:
+                    usage.record(
+                        operation,
+                        kwargs,
+                        value,
+                        error=error,
+                        duration_ms=(time.monotonic() - started) * 1000,
+                    )
+                except Exception:  # noqa: BLE001, S110 - optional telemetry cannot fail serving
+                    pass
+
         try:
             value = fn(**kwargs)
+            record(value)
             return result(*value) if isinstance(value, tuple) else result(value)
         except Exception as error:  # noqa: BLE001 - every tool error becomes a coded result
+            record(error=True)
             code = (
                 "render_unavailable"
                 if isinstance(error, RenderError)
@@ -438,6 +469,7 @@ def create_app(library, verifier, reports=None, *, reader=None):
         """Examine one candidate EPUB image before deciding whether to show it. Returns pixels for the assistant and source context, without the inline viewer. Use image IDs from list_images or read_section. Compare the photo with the requested dish and source evidence; a nearby recipe title alone is not proof. Reject unrelated images here. Only after selection call get_image to display the supported photo; if uncertain, explain without displaying guesses."""
         r = call(
             library.get_image,
+            _operation="inspect_image",
             publication_id=publication_id,
             book_id=book_id,
             source_id=source_id,

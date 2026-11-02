@@ -16,7 +16,9 @@ def destination(pub, source, **extra):
     return base64.urlsafe_b64encode(json.dumps(value).encode()).decode().rstrip("=")
 
 
-def test_catalog_book_text_continuations_and_login_return(reader_env, published):
+def test_catalog_book_text_continuations_and_login_return(
+    reader_env, published, tmp_path
+):
     app, _, _ = reader_env
     source = published[4].search("salt")["results"][0]["citation"]["source_id"]
     at = destination(published[0].publication_id, source, section_id="section-0")
@@ -44,10 +46,13 @@ def test_catalog_book_text_continuations_and_login_return(reader_env, published)
         assert "private, no-store" == page.headers["cache-control"]
         first = client.get("/reader/content", params={"at": at}).json()
         chunks = [first["text"]]
+        original_publication = first["citation"]["publication_id"]
+        publish_scanned(published, tmp_path)
         while first["next_text"]:
             first = client.get(
                 "/reader/content", params={"at": first["next_text"]}
             ).json()
+            assert first["citation"]["publication_id"] == original_publication
             chunks.append(first["text"])
         assert "".join(chunks) == (
             "Synthetic bean recipe 0. Use 1/2 teaspoon salt and 200 grams beans. Simmer 20 minutes. "
@@ -256,3 +261,267 @@ def test_all_reading_routes_require_session_and_reject_unsafe_destinations(
             ).status_code
             == 400
         )
+
+
+def test_native_snapshot_occurrences_and_cursor_binding(
+    reader_env, published, tmp_path
+):
+    """Hand-authored synthetic artifact; no capture, ingestion or inference."""
+    import sqlite3
+
+    from conftest import fixture_build
+
+    from cookbook.book_capture import SCHEMA
+    from cookbook.book_model import MODEL_PATH
+    from cookbook.publication import Entry, publish
+    from cookbook.storage import digest_file
+
+    manifest, inputs = fixture_build(tmp_path / "native")
+    pub = manifest.publication_id
+    with sqlite3.connect(inputs["runtime/index.sqlite"]) as index:
+        source = index.execute("select id from sources").fetchone()[0]
+    root = tmp_path / "native"
+    path = root / MODEL_PATH
+    path.parent.mkdir(exist_ok=True)
+    db = sqlite3.connect(path)
+    db.executescript(
+        SCHEMA
+        + "CREATE TABLE model_info(payload TEXT); CREATE TABLE coverage(edition_id TEXT,payload TEXT);"
+    )
+    db.execute(
+        "insert into model_info values(?)",
+        (json.dumps({"publication_id": pub, "model_snapshot": {"id": "snapshot-1"}}),),
+    )
+    db.execute(
+        "insert into editions values(?,?,?,?)",
+        (
+            "book-0",
+            0,
+            "Native beans",
+            json.dumps(
+                {
+                    "id": "book-0",
+                    "source_id": source,
+                    "source_sha256": source.split(":")[1],
+                    "title": "Native beans",
+                    "authors": ["Fixture"],
+                    "format": "EPUB",
+                }
+            ),
+        ),
+    )
+    db.execute(
+        "insert into coverage values(?,?)",
+        ("book-0", json.dumps({"semantic_state": "partial"})),
+    )
+    db.execute(
+        "insert into documents values(?,?,?,?,?)",
+        (
+            "doc",
+            "book-0",
+            "chapter.xhtml",
+            "root",
+            json.dumps({"parser_diagnostics": []}),
+        ),
+    )
+    for n in range(2):
+        db.execute(
+            "insert into occurrences values(?,?,?,?,?)",
+            (
+                "occ-" + str(n),
+                "book-0",
+                "doc",
+                n,
+                json.dumps({"id": "occ-" + str(n), "ordinal": n}),
+            ),
+        )
+    nodes = [
+        (
+            "root",
+            0,
+            1,
+            "element",
+            "document",
+            "",
+            {
+                "id": "root",
+                "kind": "element",
+                "content_kind": "link",
+                "child_ids": ["body"],
+                "source_tag": "body",
+            },
+        ),
+        (
+            "body",
+            1,
+            1,
+            "text",
+            "text",
+            "αβ🍲 beans " * 5000,
+            {"id": "body", "kind": "text", "text": "αβ🍲 beans " * 5000},
+        ),
+    ]
+    for id, ordinal, end, kind, content, text, payload in nodes:
+        db.execute(
+            "insert into nodes values(?,?,?,?,?,?,?,?,?,?)",
+            (
+                id,
+                "doc",
+                None,
+                ordinal,
+                end,
+                kind,
+                content,
+                "/",
+                text,
+                json.dumps(payload),
+            ),
+        )
+    db.execute(
+        "insert into links values(?,?,?,?,?,?,?,?)",
+        (
+            "link",
+            "book-0",
+            "doc",
+            "root",
+            "doc",
+            "body",
+            "resolved_node",
+            json.dumps(
+                {
+                    "target": {
+                        "state": "resolved_node",
+                        "node_id": "body",
+                        "document_id": "doc",
+                    }
+                }
+            ),
+        ),
+    )
+    part = {
+        "document_id": "doc",
+        "reading_occurrence_id": "occ-1",
+        "start": {"node_id": "root", "side": "before", "offset": None},
+        "end": {"node_id": "root", "side": "after", "offset": None},
+    }
+    db.execute(
+        "insert into spans values(?,?,?)",
+        ("span", "book-0", json.dumps({"parts": [part]})),
+    )
+    db.execute(
+        "insert into entities values(?,?,?,?,?)",
+        (
+            "recipe",
+            "book-0",
+            "recipe",
+            "Synthetic recipe",
+            json.dumps(
+                {"id": "recipe", "state": "candidate", "evidence_span_ids": ["span"]}
+            ),
+        ),
+    )
+    for n in range(20):
+        db.execute(
+            "insert into entities values(?,?,?,?,?)",
+            (
+                "part-" + str(n),
+                "book-0",
+                "recipe_part",
+                "Part",
+                json.dumps(
+                    {
+                        "id": "part-" + str(n),
+                        "kind": "recipe_part",
+                        "state": "candidate",
+                        "recipe_id": "recipe",
+                        "ordinal": n,
+                        "evidence_span_ids": ["span"],
+                    }
+                ),
+            ),
+        )
+    db.commit()
+    db.close()
+    sha, size = digest_file(path)
+    manifest.files.append(Entry(path=MODEL_PATH, sha256=sha, size=size, role="runtime"))
+    inputs[MODEL_PATH] = path
+    publish(
+        published[2],
+        manifest,
+        inputs,
+        expected_version=published[2].read_version("control/active.json")[1],
+        activate=published[3].activate,
+    )
+    app, _, _ = reader_env
+    with TestClient(app(), base_url="https://reader.example") as client:
+        login(client)
+        entry = client.get(
+            "/reader/content", params={"at": destination(pub, source)}
+        ).json()
+        assert len(entry["contents"]) == 2
+        first = client.get(
+            "/reader/content", params={"at": entry["contents"][1]["at"]}
+        ).json()
+        assert first["citation"]["model_snapshot_id"] == "snapshot-1"
+        assert first["citations"][0]["reading_occurrence_id"] == "occ-1"
+        chunks = [first["text"]]
+        while first["next_text"]:
+            first = client.get(
+                "/reader/content", params={"at": first["next_text"]}
+            ).json()
+            assert first["citations"][0]["reading_occurrence_id"] == "occ-1"
+            chunks.append(first["text"])
+        assert "".join(chunks) == "αβ🍲 beans " * 5000
+        recipe = destination(
+            pub, source, target_id="recipe", model_snapshot_id="snapshot-1"
+        )
+        related = client.get("/reader/content", params={"at": recipe}).json()
+        assert len(related["related"]) == 16
+        assert len(related["references"]) == 1
+        target = client.get(
+            "/reader/read",
+            params={"at": related["references"][0]["at"], "back": recipe},
+        )
+        assert (
+            target.status_code == 200
+            and "Return to originating location" in target.text
+            and recipe in target.text
+        )
+        next_related = client.get(
+            "/reader/content", params={"at": related["next_related"]}
+        ).json()
+        assert (
+            len(next_related["related"]) == 4 and next_related["next_related"] is None
+        )
+        assert next_related["text"] == related["text"]
+        next_text = client.get(
+            "/reader/content", params={"at": related["next_text"]}
+        ).json()
+        assert next_text["citations"][0]["reading_occurrence_id"] == "occ-1"
+        foreign = json.loads(
+            base64.urlsafe_b64decode(
+                related["next_text"] + "=" * (-len(related["next_text"]) % 4)
+            )
+        )
+        foreign["target_id"] = "occ-0"
+        assert (
+            client.get(
+                "/reader/read",
+                params={
+                    "at": destination(
+                        pub,
+                        source,
+                        **{
+                            k: v
+                            for k, v in foreign.items()
+                            if k not in {"publication_id", "book_id", "source_id"}
+                        },
+                    )
+                },
+            ).status_code
+            == 404
+        )
+        bad = destination(
+            pub, source, target_id="occ-1", model_snapshot_id="snapshot-wrong"
+        )
+        assert client.get("/reader/read", params={"at": bad}).status_code == 404

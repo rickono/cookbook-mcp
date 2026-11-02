@@ -163,7 +163,7 @@ class PublicationUpdater:
                     status = "publication_activated"
                 else:
                     status = "publication_current"
-        except Exception:
+        except Exception:  # noqa: BLE001 - redacted service boundary
             # Activation stages separately, so failures leave the old pointer intact.
             status = "publication_update_failed"
         if status != self.last_status:
@@ -189,12 +189,20 @@ class PublicationUpdater:
 
 
 def create_hosted_app(
-    runtime, verifier, *, poll_seconds=60, reports_store=None, reader=None, search_engine=None
+    runtime,
+    verifier,
+    *,
+    poll_seconds=60,
+    reports_store=None,
+    reader=None,
+    search_engine=None,
 ):
     if search_engine:
         runtime.prepare = search_engine.prepare
     reports = ReportSink(reports_store) if reports_store is not None else None
-    app = create_app(Library(runtime, search_engine=search_engine), verifier, reports, reader=reader)
+    app = create_app(
+        Library(runtime, search_engine=search_engine), verifier, reports, reader=reader
+    )
     original_lifespan = app.router.lifespan_context
     updater = PublicationUpdater(runtime, poll_seconds)
 
@@ -204,7 +212,7 @@ def create_hosted_app(
             await asyncio.to_thread(search_engine.start)
         try:
             await asyncio.to_thread(runtime.resume_cached)
-        except Exception:
+        except Exception:  # noqa: BLE001 - redacted service boundary
             event("cached_publication_invalid")
         async with original_lifespan(app):
             updater.start()

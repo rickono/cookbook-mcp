@@ -69,6 +69,10 @@ def recording(state_directory, activate):
 
 
 def _main():
+    if len(sys.argv) > 1 and sys.argv[1] == "dashboard":
+        from .dashboard.cli import main as dashboard_main
+
+        return dashboard_main(sys.argv[2:])
     os.umask(0o077)
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest="command", required=True)

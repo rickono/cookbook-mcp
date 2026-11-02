@@ -2,8 +2,8 @@
 
 Implementation of [Sign in and browse the private hosted library](https://github.com/rickono/cookbook-mcp/issues/99).
 This is code and synthetic HTTP verification, not a deployment or observed hosted
-login/refresh exchange. Search, book reading, bookmarks and reports are subsequent
-slices of #98. No Mac relay, second library or ingestion pipeline is used.
+login/refresh exchange. Source-bound book reading is described in [reader-content.md](reader-content.md).
+Search, bookmarks and reports are subsequent slices of #98. No Mac relay, second library or ingestion pipeline is used.
 
 ## Configuration gate
 
