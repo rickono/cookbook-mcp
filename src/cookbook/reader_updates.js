@@ -25,6 +25,8 @@ async function checkPublication() {
     if (data.pinned_state === 'withheld') {
       document.querySelector('#text')?.replaceChildren();
       document.querySelector('[data-next-text]')?.remove();
+      const status = document.querySelector('[role="status"]');
+      if (status && status !== notice) status.textContent = 'Text withheld by current withdrawal or supersession.';
     }
     const publication = JSON.parse(atob(at.replace(/-/g, '+').replace(/_/g, '/'))).publication_id;
     // Preserve keyboard focus when the same notice is checked again.
@@ -38,10 +40,10 @@ async function checkPublication() {
     notice.append(text);
     if (data.pinned_state === 'withheld') {
       const withdrawn = document.createElement('p');
-      withdrawn.textContent = 'Text withheld by current withdrawal or supersession. Separately permitted originals remain available.';
+      withdrawn.textContent = 'Text withheld by current withdrawal or supersession. Original access is checked separately.';
       notice.append(withdrawn);
     }
-    if (data.current_publication_id !== publication) {
+    if (data.current_publication_id && data.current_publication_id !== publication) {
       const message = document.createElement('p');
       message.textContent = 'A newer publication is available. This view remains pinned while retained.';
       notice.append(message);

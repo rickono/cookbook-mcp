@@ -163,3 +163,15 @@ boundary; no parsing, ingestion, inference, OCR or rendering is run. Node DOM te
 exercise passive notices, focus-preserving repeated checks, withdrawal and expiry.
 Actual browser/device/accessibility, hosted login/renewal and Mac-off evidence
 remain acceptance work under #98; no such observations are claimed here.
+
+After merging integration/spec-98 through `3d81084` (originals and owner reports),
+the safe Python selection in `test_reader_updates`, `test_reader_content`,
+`test_reader_http`, `test_library_auth`, `test_hosted`, `test_mcp`, `test_dashboard`,
+`test_owner_reports` and `test_reader_original` passed **89 tests**. Node selections
+`reader_updates`, `reader_content`, `owner_reports` and `reader_original` passed
+**13 tests**. Focused Ruff lint/format and `git diff --check` pass. Passive update
+checks preserve session inactivity expiry and dispatch the shared expiry event to
+clear report drafts. `current_publication_id` is null when no valid current
+publication exists; an exact retired link remains 410 in that case. Storage outages
+still use the existing redacted 503 response. No ingestion/OCR/model/rendering work,
+deployment, live identity change or issue-tracker mutation was performed.

@@ -131,6 +131,10 @@ async def deliver(reader, request, library, owner=None, csrf=""):
             reader,
             "Source location unavailable. No replacement location was selected.",
             404,
+            notice_markup(
+                await asyncio.to_thread(resolve_current, library, loc),
+                loc["publication_id"],
+            ),
         )
     data["source_location"] = await asyncio.to_thread(source_location, library, loc)
     if data["source_location"].get("source_key"):

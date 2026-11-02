@@ -79,11 +79,19 @@ def resolve_current(library, location):
     """
     from .reader_content import encode_location, read
 
-    current = library.publication(None)
     try:
         pinned_state = read(library, location)["state"]
     except IntegrityError:
         pinned_state = "unavailable"
+    try:
+        current = library.publication(None)
+    except IntegrityError:
+        return {
+            "state": "unavailable",
+            "current_publication_id": None,
+            "at": None,
+            "pinned_state": pinned_state,
+        }
     result = {
         "state": "unavailable",
         "current_publication_id": current,
@@ -131,7 +139,9 @@ def notice_markup(result, publication):
         '<aside id="publication-update" role="status" aria-label="Publication update">'
     )
     body += "<p>Reading publication " + escape(publication) + ".</p>"
-    if result["current_publication_id"] != publication:
+    if result["current_publication_id"] is None:
+        body += "<p>Current publication unavailable. No replacement was selected.</p>"
+    elif result["current_publication_id"] != publication:
         body += "<p>A newer publication is available. This view remains on its referenced publication while retained.</p>"
         if result["at"]:
             body += anchor(result["at"], "Open current text").replace(
