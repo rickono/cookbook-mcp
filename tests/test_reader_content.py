@@ -16,6 +16,84 @@ def destination(pub, source, **extra):
     return base64.urlsafe_b64encode(json.dumps(value).encode()).decode().rstrip("=")
 
 
+def test_scanned_contents_prioritize_recipes_and_keep_unnamed_pages_reachable(
+    reader_env, published, tmp_path
+):
+    from lxml import html
+
+    toc = [
+        {
+            "title": "Untitled passage",
+            "kind": "passage",
+            "physical_page": 1,
+            "section_id": "section-0",
+        },
+        {
+            "title": "Sauce",
+            "kind": "recipe",
+            "physical_page": 3,
+            "section_id": "section-0-1",
+        },
+    ]
+    publish_scanned(published, tmp_path, toc=toc)
+    library = published[4]
+    pub = library.runtime.active()["publication_id"]
+    book = library.get_book(pub, "book-0")
+    assert book["toc"] == toc  # Ordinary source API and source order are preserved.
+    source = book["citation"]["source_id"]
+    app, _, _ = reader_env
+    with TestClient(app(), base_url="https://reader.example") as client:
+        login(client)
+        at = destination(pub, source)
+        data = client.get("/reader/content", params={"at": at}).json()
+        assert [x["title"] for x in data["contents"]] == ["Sauce", "Page 1"]
+        assert [decode_at(x["at"])["section_id"] for x in data["contents"]] == [
+            "section-0-1",
+            "section-0",
+        ]
+        page = html.fromstring(client.get("/reader/read", params={"at": at}).text)
+        assert page.xpath('//h2[text()="Recipes"]')
+        assert page.xpath('//details/summary[text()="Pages without titles"]')
+        assert "Untitled passage" not in page.text_content()
+        opened = html.fromstring(
+            client.get("/reader/read", params={"at": data["contents"][1]["at"]}).text
+        )
+        assert opened.xpath("//h1/text()") == ["Pages 1, 2"]
+        assert "Synthetic soup" in opened.text_content()
+        assert (
+            library.read_section(pub, "book-0", source, "section-0")["citation"][
+                "section_title"
+            ]
+            == "Untitled passage"
+        )
+
+
+def decode_at(value):
+    return json.loads(base64.urlsafe_b64decode(value + "=" * (-len(value) % 4)))
+
+
+def test_scanned_contents_ordering_is_stable_before_pagination():
+    from cookbook.reader_contents import scanned_contents
+
+    source = [
+        {
+            "title": "Untitled passage",
+            "kind": "passage",
+            "physical_page": n,
+            "section_id": str(n),
+        }
+        for n in range(1, 61)
+    ]
+    source += [
+        {"title": "Soup", "kind": "recipe", "physical_page": 61, "section_id": "recipe"}
+    ]
+    ordered = scanned_contents(source)
+    assert ordered[0]["section_id"] == "recipe"
+    assert ordered[1]["title"] == "Page 1"
+    assert [x["section_id"] for x in ordered[1:]] == [str(n) for n in range(1, 61)]
+    assert source[0]["title"] == "Untitled passage"
+
+
 def test_catalog_book_text_continuations_and_login_return(
     reader_env, published, tmp_path
 ):
@@ -63,7 +141,7 @@ def test_catalog_book_text_continuations_and_login_return(
         assert "/reader/book?at=" in catalog.text
 
 
-def publish_scanned(published, tmp_path):
+def publish_scanned(published, tmp_path, toc=None):
     """Direct synthetic index rows, never a PDF parser or transcription pipeline."""
     import sqlite3
 
@@ -95,11 +173,17 @@ def publish_scanned(published, tmp_path):
         ),
     )
     db.execute("update sources set format='PDF'")
+    for item in toc or []:
+        db.execute(
+            "update sections set title=?,kind=? where id=?",
+            (item["title"], item["kind"], item["section_id"]),
+        )
     db.execute(
         "update sources set toc=?",
         (
             json.dumps(
-                [
+                toc
+                or [
                     {"title": "Soup", "section_id": "section-0"},
                     {"title": "Sauce", "section_id": "section-0-1"},
                 ]
