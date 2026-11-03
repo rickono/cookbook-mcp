@@ -493,13 +493,19 @@ class Library:
             "next_offset": offset + limit if more else None,
         }
 
-    def get_book(self, publication_id, book_id, offset=0, limit=30):
+    def get_book(
+        self, publication_id, book_id, offset=0, limit=30, *, _reader_contents=False
+    ):
         if not 1 <= limit <= 50 or not 0 <= offset <= 100000:
             raise IntegrityError("invalid page bounds")
         pub = self.publication(publication_id)
         with self.db(pub) as db:
             b = self.book(db, book_id)
             toc = json.loads(b["toc"])
+            if _reader_contents and b["format"] in ("PDF", "DJVU"):
+                from .reader_contents import scanned_contents
+
+                toc = scanned_contents(toc)
             coverage = {
                 "recipe_labels": "conservative source structure only",
                 "image_association": "EPUB document",

@@ -228,14 +228,11 @@ async def deliver(reader, request, library, owner=None, csrf=""):
         + (" open" if "text" not in data else "")
         + '><summary>Contents</summary><nav aria-label="Contents">'
     )
-    for item in data["contents"]:
-        body += (
-            anchor(item["at"], item["title"], back=raw)
-            if item.get("at")
-            else "<p>" + escape(item["title"]) + " — source target unresolved</p>"
-        )
-    if data["next_contents"]:
-        body += anchor(data["next_contents"], "More contents", back=back)
+    from .reader_contents import contents_html
+
+    body += contents_html(data, raw, back, anchor)
+    if any(item.get("group") for item in data["contents"]):
+        body += "<p>Page numbers count from the first page of the source file. Sections are grouped by their imported labels.</p>"
     body += "</nav><p>Only retained source structure is shown; missing chapter structure is not inferred.</p></details>"
     body += '<nav class="adjacent-sections" aria-label="Section navigation">'
     for item in data.get("adjacent", []):
@@ -303,7 +300,11 @@ def page_error(reader, message, status, recovery=""):
 def read(library, loc):
     pub, book, source = (loc[k] for k in ("publication_id", "book_id", "source_id"))
     book_data = library.get_book(
-        pub, book, offset=loc.get("contents_offset", 0), limit=30
+        pub,
+        book,
+        offset=loc.get("contents_offset", 0),
+        limit=30,
+        _reader_contents=True,
     )
     from .book_model import MODEL_PATH
 
@@ -330,6 +331,7 @@ def read(library, loc):
                 {
                     "title": item["title"],
                     "at": encode_location({**base, "section_id": item["section_id"]}),
+                    **({"group": item["group"]} if item.get("group") else {}),
                 }
             )
     if book_data["next_offset"] is not None:
@@ -344,6 +346,15 @@ def read(library, loc):
     # Related targets are delivered only through their independent bounded page.
     section["citation"]["locator"].pop("references", None)
     data.update(section)
+    if section["citation"]["format"] in ("PDF", "DJVU"):
+        from .reader_contents import section_label
+
+        citation = data["citation"]
+        citation["section_title"] = section_label(
+            citation.get("section_title"),
+            section["kind"],
+            citation["locator"].get("physical_pages", []),
+        )
     reasons = section["eligibility"]["reasons"]
     withheld = any(
         r in reasons
