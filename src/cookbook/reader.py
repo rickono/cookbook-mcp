@@ -19,13 +19,25 @@ from cryptography.fernet import Fernet
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
 
+from . import reader_diagnostics as diagnostics
 from .reader_content import decode_location, deliver, reading_link
-from .storage import Conflict, canonical
+from .reader_diagnostics import Stage, stage
+from .reader_sessions import (
+    LIFETIME,
+    Access,
+    LogoutScope,
+    ProviderTokens,
+    SessionBook,
+    SessionLimit,
+    SignIn,
+)
+from .storage import canonical
 
 COOKIE = "__Host-reader"
 TRANSACTION = "__Host-reader-login"
-IDLE = 7 * 86400
-LIFETIME = 30 * 86400
+DEADLINE = 10.0
+IMAGE_DEADLINE = 30.0
+PASSIVE_PATHS = frozenset({"/reader/session", "/reader/updates", "/reader/logout"})
 
 # Public generic first-party assets; protected routes are registered separately.
 ASSETS = {
@@ -176,21 +188,25 @@ class Reader:
         self.clock = clock
         self.owner_reports = owner_reports
         self.personal_state = personal_state
+        self.sessions = SessionBook(store, self.cipher, verifier, self.identity, clock)
 
     async def read(self, key):
-        raw, version = await asyncio.to_thread(self.store.read_version, key)
-        return (json.loads(self.cipher.decrypt(raw)) if raw else None), version
+        with stage(Stage.CALLBACK_TRANSACTION) as span:
+            span.attempt()
+            raw, version = await asyncio.to_thread(self.store.read_version, key)
+            return (json.loads(self.cipher.decrypt(raw)) if raw else None), version
 
     async def write(self, key, value, version=None):
-        return await asyncio.to_thread(
-            self.store.put_bytes,
-            key,
-            self.cipher.encrypt(canonical(value)),
-            expected=version,
-        )
-
-    def owner_key(self, subject):
-        return "reader/owners/" + digest(subject)
+        with stage(
+            Stage.CALLBACK_TRANSACTION if version is not None else Stage.LOGIN_START
+        ) as span:
+            span.attempt()
+            return await asyncio.to_thread(
+                self.store.put_bytes,
+                key,
+                self.cipher.encrypt(canonical(value)),
+                expected=version,
+            )
 
     def cookie(self, response, name, value, age):
         response.set_cookie(
@@ -202,115 +218,6 @@ class Reader:
             samesite="lax",
             path="/",
         )
-
-    async def revoke(self, sessions):
-        async def attempt(session):
-            if session.get("refresh"):
-                try:
-                    async with asyncio.timeout(5):
-                        await self.identity.revoke(session["refresh"])
-                except Exception:  # noqa: BLE001
-                    return False  # Reader invalidation is independent of provider availability.
-
-        await asyncio.gather(*(attempt(session) for session in sessions))
-
-    async def authenticate(self, request):
-        """Authorize one request; returned session is server-only and must never be serialized."""
-        sid = request.cookies.get(COOKIE, "")
-        if len(sid) != 43:
-            return None
-        # Allowlist is normally one owner; tokens still undergo verification every request.
-        for subject in self.verifier.subjects:
-            key = self.owner_key(subject)
-            owner, version = await self.read(key)
-            sessions = owner.get("sessions", {}) if owner else {}
-            session = sessions.get(digest(sid))
-            if not session:
-                continue
-            now = self.clock()
-            if now - session["seen"] >= IDLE or now - session["created"] >= LIFETIME:
-                del sessions[digest(sid)]
-                await self.write(key, owner, version)
-                await self.revoke([session])
-                return None
-            if session.get("renewing"):
-                # Concurrent tabs retry; a crashed exchange expires instead of replaying a rotating token.
-                if now - session["renewing"] < 10:
-                    raise Conflict("renewal pending")
-                del sessions[digest(sid)]
-                await self.write(key, owner, version)
-                await self.revoke([session])
-                return None
-            expected_session = canonical(session)
-            renewed = False
-            token = await self.verifier.verify_token(session["access"])
-            if token is None:
-                # Only expiry can renew. Invalid claims/signatures must never be repaired by login state.
-                expired = await self.verifier.verify_token(
-                    session["access"], allow_expired=True
-                )
-                if (
-                    not expired
-                    or expired.subject != subject
-                    or "library:read" not in expired.scopes
-                    or not session.get("refresh")
-                ):
-                    del sessions[digest(sid)]
-                    await self.write(key, owner, version)
-                    await self.revoke([session])
-                    return None
-                session["renewing"] = now
-                version = await self.write(key, owner, version)
-                expected_session = canonical(session)
-                try:
-                    tokens = await self.identity.renew(session["refresh"])
-                    token = await self.verifier.verify_token(
-                        tokens.get("access_token", "")
-                    )
-                    if (
-                        not token
-                        or token.subject != subject
-                        or "library:read" not in token.scopes
-                    ):
-                        raise ValueError("authorization lost")
-                    session["access"] = tokens["access_token"]
-                    session["refresh"] = (
-                        tokens.get("refresh_token") or session["refresh"]
-                    )
-                    session.pop("renewing")
-                    renewed = True
-                except Exception:  # noqa: BLE001
-                    del sessions[digest(sid)]
-                    await self.write(key, owner, version)
-                    await self.revoke([session])
-                    return None
-            if token.subject != subject or "library:read" not in token.scopes:
-                del sessions[digest(sid)]
-                await self.write(key, owner, version)
-                await self.revoke([session])
-                return None
-            if request.url.path not in ("/reader/session", "/reader/updates"):
-                session["seen"] = now
-            for attempt in range(3):
-                try:
-                    await self.write(key, owner, version)
-                    return subject, session
-                except Conflict:
-                    # Preserve other devices' updates without resurrecting a logged-out session.
-                    owner, version = await self.read(key)
-                    current = (
-                        owner.get("sessions", {}).get(digest(sid)) if owner else None
-                    )
-                    if current is None:
-                        if renewed:
-                            await self.revoke([session])
-                        return None
-                    if canonical(current) != expected_session or attempt == 2:
-                        if renewed:
-                            await self.revoke([session])
-                        raise
-                    owner["sessions"][digest(sid)] = session
-        return None
 
     def page(self, body, *, protected=False, presentation=False):
         return HTMLResponse(
@@ -343,7 +250,7 @@ class Reader:
         self.cookie(r, COOKIE, "", 0)
         return r
 
-    async def dispatch(self, request, library):
+    async def dispatch(self, request, library, trace):
         path = request.url.path
         if path in ASSETS:
             filename, media_type = ASSETS[path]
@@ -415,34 +322,23 @@ class Reader:
                 key, {}, version
             )  # Consume before exchange; replay fails across workers.
             try:
-                tokens = await self.identity.exchange(
-                    q["code"], txn["pkce"], txn["nonce"]
-                )
-                token = await self.verifier.verify_token(tokens.get("access_token", ""))
+                with stage(Stage.PROVIDER_EXCHANGE) as span:
+                    span.attempt()
+                    tokens = await self.identity.exchange(
+                        q["code"], txn["pkce"], txn["nonce"]
+                    )
+                with stage(Stage.TOKEN_VERIFY) as span:
+                    span.attempt()
+                    token = await self.verifier.verify_token(
+                        ProviderTokens.parse(tokens).access
+                    )
                 if not token or "library:read" not in token.scopes:
                     raise ValueError("unauthorized")
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 - callback failure must leave the protocol URL
                 return self.expired()
-            owner_key = self.owner_key(token.subject)
-            owner, version = await self.read(owner_key)
-            owner = owner or {"sessions": {}}
-            now = self.clock()
-            owner["sessions"] = {
-                k: s
-                for k, s in owner["sessions"].items()
-                if now - s["seen"] < IDLE and now - s["created"] < LIFETIME
-            }
-            if len(owner["sessions"]) >= 100:
+            created = await self.sessions.begin(token, ProviderTokens.parse(tokens))
+            if isinstance(created, SessionLimit):
                 return JSONResponse({"error": "session_limit"}, status_code=409)
-            sid = opaque()
-            owner["sessions"][digest(sid)] = {
-                "access": tokens["access_token"],
-                "refresh": tokens.get("refresh_token"),
-                "created": now,
-                "seen": now,
-                "csrf": opaque(),
-            }
-            await self.write(owner_key, owner, version)
             destination = txn.get("destination", "catalog")
             if destination != "catalog":
                 decode_location(destination)
@@ -452,7 +348,7 @@ class Reader:
                 else "/reader/read?" + urlencode({"at": destination}),
                 status_code=303,
             )
-            self.cookie(r, COOKIE, sid, LIFETIME)
+            self.cookie(r, COOKIE, created.cookie, LIFETIME)
             self.cookie(r, TRANSACTION, "", 0)
             return r
         if path == "/reader/signed-out":
@@ -477,8 +373,12 @@ class Reader:
             return response
         if path == "/reader/signin-failed":
             return self.expired()
-        auth = await self.authenticate(request)
-        if not auth:
+        auth = await self.sessions.authorize(
+            request.cookies.get(COOKIE),
+            Access.PASSIVE if path in PASSIVE_PATHS else Access.ACTIVE,
+        )
+        if isinstance(auth, SignIn):
+            trace.signed_out(auth.reason)
             destination = (
                 request.query_params.get("at")
                 if path
@@ -497,11 +397,13 @@ class Reader:
                 except (ValueError, TypeError, UnicodeError):
                     destination = None
             return self.expired(destination)
-        subject, session = auth
+        session = auth
+        subject = auth.subject
         if path == "/reader/personal":
             from .reader_personal import endpoint
 
-            return await endpoint(self, request, library, subject, session)
+            with stage(Stage.PERSONAL_STATE):
+                return await endpoint(self, request, library, subject, session)
         if path == "/reader/bookmarks":
             from .reader_personal import bookmarks_page
 
@@ -509,7 +411,8 @@ class Reader:
         if path == "/reader/book":
             from .reader_personal import book_entry
 
-            return await book_entry(self, request, library, subject)
+            with stage(Stage.PERSONAL_STATE):
+                return await book_entry(self, request, library, subject)
         if path == "/reader/search":
             from .reader_search import page
 
@@ -527,19 +430,23 @@ class Reader:
         if path == "/reader/search/results":
             from .reader_search import results
 
-            return await results(request, library, self, session)
+            with stage(Stage.LIBRARY_SEARCH):
+                return await results(request, library, self, session)
         if path in ("/reader/original", "/reader/image"):
             from .reader_original import deliver as original
 
-            return await original(self, request, library)
+            with stage(Stage.ORIGINAL_DELIVER):
+                return await original(self, request, library)
         if path in ("/reader/read", "/reader/content", "/reader/updates"):
-            return await deliver(self, request, library, subject, session["csrf"])
+            with stage(Stage.CONTENT_DELIVER):
+                return await deliver(self, request, library, subject, session.csrf)
         if path == "/reader/reports":
             from .owner_reports import intake
 
-            return await intake(self, request, subject, session)
+            with stage(Stage.REPORT_INTAKE):
+                return await intake(self, request, subject, session)
         if path == "/reader/session":
-            return JSONResponse({"authenticated": True, "csrf": session["csrf"]})
+            return JSONResponse({"authenticated": True, "csrf": session.csrf})
         if path == "/reader/logout":
             if request.headers.get("origin") != self.config.origin:
                 return JSONResponse({"error": "origin_denied"}, status_code=403)
@@ -568,21 +475,11 @@ class Reader:
             if (
                 not isinstance(csrf, str)
                 or not csrf.isascii()
-                or not secrets.compare_digest(csrf, session["csrf"])
+                or not secrets.compare_digest(csrf, session.csrf)
                 or data.get("scope") not in ("device", "all")
             ):
                 return JSONResponse({"error": "csrf_or_scope_denied"}, status_code=403)
-            key = self.owner_key(subject)
-            owner, version = await self.read(key)
-            if data["scope"] == "all":
-                removed = list(owner["sessions"].values())
-                owner["sessions"] = {}
-            else:
-                removed = [
-                    owner["sessions"].pop(digest(request.cookies[COOKIE]), session)
-                ]
-            await self.write(key, owner, version)
-            await self.revoke(removed)
+            await self.sessions.end(session, LogoutScope(data["scope"]))
             r = self.page(
                 '<p role="status">Reader signed out. Google, MCP and copied access tokens may remain signed in.</p><a href="/reader/login">Sign in again</a>'
             )
@@ -596,14 +493,15 @@ class Reader:
             return r
         if path in ("/reader", "/reader/catalog"):
             q = request.query_params
-            result = await asyncio.to_thread(
-                library.search,
-                "",
-                mode="catalog",
-                publication_id=q.get("publication"),
-                offset=int(q.get("offset", "0")),
-                limit=20,
-            )
+            with stage(Stage.LIBRARY_SEARCH):
+                result = await asyncio.to_thread(
+                    library.search,
+                    "",
+                    mode="catalog",
+                    publication_id=q.get("publication"),
+                    offset=int(q.get("offset", "0")),
+                    limit=20,
+                )
             rows = []
             for item in result["results"]:
                 c = item["citation"]
@@ -628,7 +526,7 @@ class Reader:
                 + "".join(rows)
                 + '</ul><details class="account"><summary>Your account</summary>'
                 '<form method="post" action="/reader/logout"><input type="hidden" name="csrf" value="'
-                + escape(session["csrf"])
+                + escape(session.csrf)
                 + '"><button name="scope" value="device">Sign out this device</button><button name="scope" value="all">Sign out all reader devices</button></form>'
                 '<p class="fineprint">Logout ends reader access. It does not sign out Google or MCP, revoke copied valid tokens immediately, or erase content already delivered.</p></details>'
             )
@@ -648,16 +546,19 @@ class Reader:
             return self.page(body, protected=True)
         return Response(status_code=404)
 
-    def failure(self, request, code, message):
+    def failure(self, request, failure):
+        code = failure.category.value
+        message = "Reader unavailable. Retry or sign in again."
         if request.url.path in ("/reader/original", "/reader/image"):
-            from .reader_original import failure, link
+            from .reader_original import failure as original_failure
+            from .reader_original import link
 
             at = request.query_params.get("at", "")
             try:
                 decode_location(at)
             except (ValueError, TypeError, UnicodeError):
                 return JSONResponse({"error": "invalid_destination"}, status_code=400)
-            return failure(
+            return original_failure(
                 self,
                 at,
                 "Original interrupted or unavailable. Retry explicitly or return to text.",
@@ -692,44 +593,28 @@ class Reader:
 
     def install(self, app, library):
         async def endpoint(request):
-            try:
-                async with asyncio.timeout(
-                    30 if request.url.path == "/reader/image" else 10
-                ):
-                    if (
-                        f"{request.url.scheme}://{request.url.netloc}"
-                        != self.config.origin
-                    ):
-                        response = Response(status_code=400)
-                    else:
-                        response = await self.dispatch(request, library)
-            except Conflict:
-                response = self.failure(
-                    request, "session_changed", "Retry this request."
+            with diagnostics.request(
+                request.scope["route"].path
+                if "route" in request.scope
+                else request.url.path,
+                request.method,
+            ) as trace:
+                deadline = asyncio.timeout(
+                    IMAGE_DEADLINE if request.url.path == "/reader/image" else DEADLINE
                 )
-            except Exception:  # noqa: BLE001
-                response = self.failure(
-                    request,
-                    "reader_unavailable",
-                    "Reader unavailable. Retry or sign in again.",
-                )
-            if request.url.path == "/reader/callback" and response.status_code != 303:
-                # Every failure, including storage/timeout/origin rejection, leaves
-                # the transient protocol URL before rendering any reader UI.
-                response = RedirectResponse("/reader/signin-failed", status_code=303)
-                self.cookie(response, TRANSACTION, "", 0)
-            response.headers.update(
-                {
-                    "Cache-Control": "private, no-store",
-                    "Pragma": "no-cache",
-                    "Referrer-Policy": "no-referrer",
-                    "X-Content-Type-Options": "nosniff",
-                    "X-Frame-Options": "DENY",
-                    "Strict-Transport-Security": "max-age=31536000",
-                    "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
-                }
-            )
-            return response
+                try:
+                    async with deadline:
+                        if (
+                            f"{request.url.scheme}://{request.url.netloc}"
+                            != self.config.origin
+                        ):
+                            response = Response(status_code=400)
+                        else:
+                            response = await self.dispatch(request, library, trace)
+                except Exception as error:  # noqa: BLE001 - boundary classification
+                    failure = trace.fail(error, deadline_expired=deadline.expired())
+                    response = self.failure(request, failure)
+                return self.finish(request, response, trace)
 
         for path in (
             *ASSETS,
@@ -758,3 +643,40 @@ class Reader:
         )
         app.routes.insert(0, Route("/reader/reports", endpoint, methods=["POST"]))
         app.routes.insert(0, Route("/reader/logout", endpoint, methods=["POST"]))
+
+    def finish(self, request, response, trace):
+        if request.url.path == "/reader/callback" and response.status_code != 303:
+            # Every failure, including storage/timeout/origin rejection, leaves
+            # the transient protocol URL before rendering any reader UI.
+            response = RedirectResponse("/reader/signin-failed", status_code=303)
+            self.cookie(response, TRANSACTION, "", 0)
+        response.headers.update(
+            {
+                "Cache-Control": "private, no-store",
+                "Pragma": "no-cache",
+                "Referrer-Policy": "no-referrer",
+                "X-Content-Type-Options": "nosniff",
+                "X-Frame-Options": "DENY",
+                "Strict-Transport-Security": "max-age=31536000",
+                "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+            }
+        )
+        if response.status_code == 503:
+            if trace.failure is None:
+                trace.fail(RuntimeError(), deadline_expired=False)
+            failure = trace.failure
+            if response.media_type == "application/json":
+                body = json.loads(response.body)
+                body.update(stage=failure.stage.label, request=failure.request)
+                if body.get("error") != failure.category.value:
+                    body["category"] = failure.category.value
+                response.body = json.dumps(body).encode()
+            elif response.media_type == "text/html":
+                response.body += (
+                    f'<meta name="reader-category" content="{failure.category.value}">'
+                    f'<meta name="reader-stage" content="{failure.stage.label}">'
+                    f'<p role="status">{escape(failure.reference())}</p>'
+                ).encode()
+            response.headers["Content-Length"] = str(len(response.body))
+        trace.finish(response)
+        return response

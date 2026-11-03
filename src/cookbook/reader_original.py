@@ -10,6 +10,7 @@ from PIL import Image
 from starlette.responses import JSONResponse, Response
 
 from .reader_content import decode_location, read
+from .reader_diagnostics import Stage, stage
 from .rendering import RenderError
 from .storage import IntegrityError
 
@@ -107,7 +108,8 @@ async def deliver(reader, request, library):
     except (ValueError, TypeError, UnicodeError):
         return JSONResponse({"error": "invalid_original_destination"}, status_code=400)
     try:
-        await asyncio.to_thread(library.publication, loc["publication_id"])
+        with stage(Stage.LIBRARY_RESOLVE):
+            await asyncio.to_thread(library.publication, loc["publication_id"])
     except IntegrityError:
         return failure(
             reader, at, "Publication unavailable or retired.", 410, back=back

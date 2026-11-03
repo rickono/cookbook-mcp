@@ -15,6 +15,7 @@ from urllib.parse import urlencode
 
 from starlette.responses import JSONResponse
 
+from .reader_diagnostics import Stage, stage
 from .storage import IntegrityError, canonical
 
 KEYS = {
@@ -110,10 +111,12 @@ async def deliver(reader, request, library, owner=None, csrf=""):
     from .reader_updates import notice_markup, resolve_current, source_location
 
     if request.url.path == "/reader/updates":
-        return JSONResponse(await asyncio.to_thread(resolve_current, library, loc))
+        with stage(Stage.LIBRARY_RESOLVE):
+            return JSONResponse(await asyncio.to_thread(resolve_current, library, loc))
     try:
         # Distinguish a retired publication from a transient storage/runtime failure.
-        await asyncio.to_thread(library.publication, loc["publication_id"])
+        with stage(Stage.LIBRARY_RESOLVE):
+            await asyncio.to_thread(library.publication, loc["publication_id"])
     except IntegrityError:
         return page_error(
             reader,
