@@ -10,6 +10,8 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 
+import httpx
+
 from .reader_diagnostics import Category, Stage, Unavailable, stage
 from .storage import Conflict, canonical
 
@@ -52,6 +54,7 @@ class EndReason(Enum):
     LIFETIME_EXPIRED = "lifetime_expired"
     TOKEN_REJECTED = "token_rejected"
     RENEWAL_REFUSED = "renewal_refused"
+    RENEWAL_UNCONFIRMED = "renewal_unconfirmed"
     STALE_LEASE = "stale_lease"
     ENDED_DURING_RENEWAL = "ended_during_renewal"
 
@@ -325,14 +328,19 @@ class SessionBook:
                     or "library:read" not in token.scopes
                 ):
                     raise ValueError("authorization lost")
-        except Exception:  # noqa: BLE001 - preserve redaction and original outcome
+        except Exception as error:  # noqa: BLE001 - preserve redaction and original outcome
+            reason = (
+                EndReason.RENEWAL_UNCONFIRMED
+                if isinstance(error, (TimeoutError, OSError, httpx.TransportError))
+                else EndReason.RENEWAL_REFUSED
+            )
 
             async def drop(owner, proposed, current):
                 entry = owner["sessions"].get(key)
                 if entry is None or entry.get("lease") != nonce:
                     return False, SignIn(EndReason.ENDED_DURING_RENEWAL), ()
                 del owner["sessions"][key]
-                return True, SignIn(EndReason.RENEWAL_REFUSED), (entry.get("refresh"),)
+                return True, SignIn(reason), (entry.get("refresh"),)
 
             result = await self._commit(subject, drop, Stage.RENEWAL_SETTLE)
             if tokens:

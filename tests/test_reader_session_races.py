@@ -235,6 +235,30 @@ def test_cancelled_renewal_leaves_lease_and_never_replays(world, monkeypatch):
     assert not record(reader)[1]["sessions"]
 
 
+def test_provider_timeout_is_unconfirmed_and_never_replayed(world, monkeypatch, capsys):
+    import httpx
+
+    a, _, reader, identity, clock = world
+    expire(clock, monkeypatch)
+    calls = []
+
+    async def renew(token):
+        calls.append(token)
+        raise httpx.ReadTimeout("PRIVATE-PROVIDER-TIMEOUT")
+
+    identity.renew = renew
+    capsys.readouterr()
+    assert a.get("/reader/session").status_code == 401
+    assert a.get("/reader/session").status_code == 401
+    assert len(calls) == 1
+    assert not record(reader)[1]["sessions"]
+    output = capsys.readouterr().out
+    records = [json.loads(line) for line in output.splitlines()]
+    assert any(r["sign_in_reason"] == "renewal_unconfirmed" for r in records)
+    assert "renewal_refused" not in output
+    assert "PRIVATE-PROVIDER-TIMEOUT" not in output
+
+
 @pytest.mark.parametrize(
     "path,category,stage",
     [
