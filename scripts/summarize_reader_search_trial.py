@@ -37,6 +37,8 @@ def summarize(samples):
             ]
             times = [s["ms"] for s in successful]
             requests = [r for s in trials for r in s["requests"]]
+            if any(r.get("status") is None and not r.get("error") for r in requests):
+                raise ValueError("Reconcile unfinished requests before summarizing")
             row[side] = {
                 "attempts": len(trials),
                 "successful": len(successful),
@@ -59,7 +61,10 @@ def summarize(samples):
             all(s.get("resultHash") for s in case_samples)
             and len({s["resultHash"] for s in case_samples}) == 1
         )
-        row["identical_dom"] = len({s["domHash"] for s in case_samples}) == 1
+        row["identical_dom"] = (
+            all(s.get("domHash") for s in case_samples)
+            and len({s["domHash"] for s in case_samples}) == 1
+        )
         rows.append(row)
     return rows
 

@@ -11,6 +11,7 @@ PYTHON = [
     "reader_content",
     "reader_original",
     "reader_search",
+    "reader_search_trial",
     "reader_updates",
     "reader_personal",
     "reader_presentation",
