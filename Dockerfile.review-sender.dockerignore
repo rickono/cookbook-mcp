@@ -1,0 +1,8 @@
+*
+!Dockerfile.review-sender
+!scripts/
+!scripts/protected_sender/
+!scripts/protected_sender/*.py
+!src/
+!src/cookbook/
+!src/cookbook/ocr_limits.py

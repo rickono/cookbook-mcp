@@ -1,0 +1,13 @@
+# Existing local image only; build with --pull=false --network=none after doctor.
+FROM cookbook-mcp:poc AS extract
+USER root
+COPY scripts/protected_sender/build_image.py /extract.py
+RUN /usr/local/bin/python3.12 /extract.py
+
+FROM scratch
+COPY --from=extract /minimal /
+COPY scripts/protected_sender/guard.py scripts/protected_sender/ledger.py scripts/protected_sender/protocol.py scripts/protected_sender/transport.py scripts/protected_sender/worker.py /sender/
+COPY src/cookbook/ocr_limits.py /sender/ocr_limits.py
+ENV PATH=/usr/local/bin PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+USER 10001:10001
+ENTRYPOINT ["/usr/local/bin/python", "/sender/guard.py"]
