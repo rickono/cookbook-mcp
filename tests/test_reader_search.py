@@ -1,5 +1,6 @@
 """Search through authenticated HTTP using synthetic publications, never OCR."""
 
+import pytest
 from starlette.testclient import TestClient
 from test_reader_http import login
 
@@ -446,3 +447,114 @@ def test_native_results_scope_independent_pages_and_partial_failure(
         assert failed["groups"]["content"]["state"] == "failed"
         assert len(failed["groups"]["section"]["results"]) == 20
         assert "private keyword" not in json.dumps(failed)
+
+
+def page_csrf(client):
+    from lxml import html
+
+    response = client.get("/reader/search")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "private, no-store"
+    token = (
+        html.fromstring(response.text).get_element_by_id("search-form").get("data-csrf")
+    )
+    assert token and response.text.count(token) == 1
+    assert "synthetic-refresh" not in response.text
+    return token
+
+
+def direct_search(client, token, **fields):
+    return client.post(
+        "/reader/search/results",
+        json={"query": "salt", "csrf": token, **fields},
+        headers={"Origin": "https://reader.example"},
+    )
+
+
+def test_html_bootstrap_supports_repeated_search_without_session_get(reader_env):
+    app, _, _ = reader_env
+    with TestClient(app(), base_url="https://reader.example") as client:
+        login(client)
+        token = page_csrf(client)
+        first = direct_search(client, token)
+        assert first.status_code == 200
+        pin = first.json()["publication_id"]
+        for group, cursor in [
+            ("content", {"content_page": 2}),
+            ("section", {"section_offset": 20}),
+        ]:
+            more = direct_search(
+                client, token, publication_id=pin, group=group, **cursor
+            )
+            assert more.status_code == 200
+            assert more.json()["publication_id"] == pin
+            assert set(more.json()["groups"]) == {group}
+        assert direct_search(client, token).json() == first.json()
+        assert direct_search(client, "wrong").status_code == 403
+        denied = client.post(
+            "/reader/search/results",
+            json={"query": "salt", "csrf": token},
+            headers={"Origin": "https://foreign.example"},
+        )
+        assert denied.status_code == 403 and denied.json()["error"] == "origin_denied"
+
+
+def test_cookie_replacement_recovers_same_read_and_pin(reader_env):
+    app, _, _ = reader_env
+    with TestClient(app(), base_url="https://reader.example") as client:
+        login(client)
+        old = page_csrf(client)
+        pin = direct_search(client, old).json()["publication_id"]
+        login(client)
+        denied = direct_search(
+            client, old, publication_id=pin, group="section", section_offset=20
+        )
+        assert denied.status_code == 403 and denied.json()["error"] == "csrf_denied"
+        new = client.get("/reader/session").json()["csrf"]
+        assert new != old
+        again = direct_search(
+            client, new, publication_id=pin, group="section", section_offset=20
+        )
+        assert again.status_code == 200 and again.json()["publication_id"] == pin
+
+
+def test_bootstrap_cannot_revive_an_expired_session(reader_env):
+    app, _, clock = reader_env
+    with TestClient(app(), base_url="https://reader.example") as client:
+        login(client)
+        token = page_csrf(client)
+        clock[0] += 7 * 86400 + 1
+        assert direct_search(client, token).status_code == 401
+        assert client.get("/reader/session").status_code == 401
+        page = client.get("/reader/search")
+        assert page.status_code == 401 and "data-csrf" not in page.text
+
+
+@pytest.mark.parametrize("refused", [False, True])
+def test_results_post_performs_renewal_without_session_preflight(
+    reader_env, monkeypatch, mint, refused
+):
+    from datetime import UTC, datetime
+
+    app, identity, clock = reader_env
+    with TestClient(app(), base_url="https://reader.example") as client:
+        login(client)
+        token = page_csrf(client)
+        clock[0] += 601
+
+        class Later(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime.fromtimestamp(clock[0], UTC)
+
+        monkeypatch.setattr("jwt.api_jwt.datetime", Later)
+        identity.renewed_tokens = {
+            "access_token": mint(iat=int(clock[0]), exp=int(clock[0]) + 600),
+            "refresh_token": "rotated-refresh",
+        }
+        identity.refused = refused
+        response = direct_search(client, token)
+        assert response.status_code == (401 if refused else 200)
+        if not refused:
+            assert page_csrf(client) == token
+            assert direct_search(client, token).status_code == 200

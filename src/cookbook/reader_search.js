@@ -15,7 +15,9 @@
     const option = text('option', 'Current book'); option.value = form.dataset.book;
     book.append(option); book.value = option.value;
   }
-  let state = null, csrf = '', busy = false, saved = null, origin = null, y = 0, dead = false;
+  let csrf = form.dataset.csrf ?? '';
+  delete form.dataset.csrf;
+  let state = null, busy = false, saved = null, origin = null, y = 0, dead = false;
   const timeout = () => AbortSignal.timeout(8500);
   function clear() {
     dead = true; state = null; csrf = ''; origin = null;
@@ -30,11 +32,30 @@
   // Explicitly discard even a back/forward-cache copy; a reload starts a fresh search.
   addEventListener('pagehide', discard);
   addEventListener('pageshow', e => {if (e.persisted) location.replace('/reader/search');});
-  async function session() {
-    const r = await fetch('/reader/session', {cache:'no-store', signal:timeout()});
-    if (r.status === 401) {expired(); throw Error();}
-    if (!r.ok) throw Error();
-    csrf = (await r.json()).csrf;
+  async function send(fields) {
+    // Recovery is confined to this read-only endpoint; mutation requests never use it.
+    const post = () => fetch('/reader/search/results', {method:'POST', cache:'no-store', signal:timeout(), headers:{'Content-Type':'application/json'}, body:JSON.stringify({...fields, csrf})});
+    if (dead) throw Error();
+    let r = await post();
+    if (dead) throw Error();
+    if (r.status !== 403) return r;
+    const error = await r.json();
+    if (dead) throw Error();
+    if (error?.error !== 'csrf_denied') return r;
+    const rejected = csrf;
+    csrf = '';
+    const session = await fetch('/reader/session', {cache:'no-store', signal:timeout()});
+    if (dead) throw Error();
+    if (session.status === 401) {expired(); throw Error();}
+    if (!session.ok) throw Error();
+    const data = await session.json();
+    if (dead) throw Error();
+    if (data?.authenticated !== true || typeof data.csrf !== 'string' || !/^[\x21-\x7e]{1,256}$/.test(data.csrf) || data.csrf === rejected) throw Error();
+    csrf = data.csrf;
+    r = await post();
+    if (dead) throw Error();
+    if (r.status === 403) csrf = '';
+    return r;
   }
   function text(tag, value) {const el = document.createElement(tag); el.textContent = value; return el;}
   function paint(name, data, append) {
@@ -71,11 +92,11 @@
       fresh.hidden = true;
     }
     try {
-      await session();
-      const body = {...state, csrf, group:name};
+      const body = {...state, group:name};
       if (name === 'content') body.content_page = groups.content.next ?? 1;
       if (name === 'section') body.section_offset = groups.section.next ?? 0;
-      const r = await fetch('/reader/search/results', {method:'POST', cache:'no-store', signal:timeout(), headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+      const r = await send(Object.freeze(body));
+      if (dead) return;
       if (r.status === 401) {expired(); return;}
       if (r.status === 410) {fresh.hidden = false; status.textContent = 'Pinned publication retired. Start a fresh search explicitly to use current text.'; return;}
       if (!r.ok) throw Error();
@@ -100,7 +121,6 @@
   let scopeURL = '/reader/catalog';
   async function books() {
     try {
-      await session();
       // Load one bounded catalog page per explicit action, never book text.
       moreScopes.disabled = true;
       {
@@ -108,6 +128,7 @@
         if (r.status === 401) {expired(); return;}
         if (!r.ok) throw Error();
         const doc = new DOMParser().parseFromString(await r.text(), 'text/html');
+        if (dead) return;
         for (const a of doc.querySelectorAll('a[href^="/reader/read?at="],a[href^="/reader/book?at="]')) {
           const at = new URL(a.getAttribute('href'), location.href).searchParams.get('at');
           const loc = JSON.parse(atob(at.replace(/-/g,'+').replace(/_/g,'/')));

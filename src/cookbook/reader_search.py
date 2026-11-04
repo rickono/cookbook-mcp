@@ -22,14 +22,14 @@ COVERAGE = (
 )
 
 
-def page(reader, book_id=""):
+def page(reader, book_id="", *, csrf):
     options = "".join(
         f'<option value="{k}">{k.replace("_", " ")}</option>' for k in KINDS
     )
     return reader.page(
         '<div class="layout layout-page"><header class="page-head"><p class="kicker">Find your next meal</p>'
         '<h1>Search library</h1><p class="lede">An ingredient, a dish, a little inspiration.</p></header>'
-        f'<form class="search-form" id="search-form" data-book="{escape(book_id, quote=True)}" method="post" action="/reader/search/results" autocomplete="off">'
+        f'<form class="search-form" id="search-form" data-book="{escape(book_id, quote=True)}" data-csrf="{escape(csrf, quote=True)}" method="post" action="/reader/search/results" autocomplete="off">'
         '<div class="search-bar"><div class="field"><label for="query">Keywords</label>'
         '<input id="query" name="query" placeholder="Try lemon, lentils, or a favorite dish" maxlength="200" required></div>'
         '<button type="submit">Search</button></div><div class="search-filters">'
