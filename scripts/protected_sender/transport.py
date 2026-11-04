@@ -152,14 +152,9 @@ def main():
     if digest(body) != sys.argv[3]:
         raise ValueError("Request changed after admission")
     context = ssl.create_default_context(cafile=str(directory / "ca.pem"))
-    raw = exchange(
-        endpoint,
-        body,
-        credential(directory / "secret"),
-        context,
-    )
-    # Preserve exact provider bytes separately; metadata wrappers never enlarge it.
+    # Claim output before connecting so a stale response cannot discard a send.
     with (directory / "response.json").open("xb") as stream:
+        raw = exchange(endpoint, body, credential(directory / "secret"), context)
         stream.write(raw)
     value = json.loads(raw)
     if not isinstance(value, dict):

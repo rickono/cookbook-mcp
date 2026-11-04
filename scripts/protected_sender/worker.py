@@ -20,6 +20,10 @@ def dispatch_synthetic(directory, seal, ledger, endpoint, *, seconds=240):
     require_fixture_endpoint(endpoint)
     packet, _, scopes = load_packet(directory, seal)
     credential(Path(directory) / "secret")
+    for name in ("response.json", "receipt.json"):
+        path = Path(directory) / name
+        if path.exists() or path.is_symlink():
+            raise ValueError("Retained output requires a fresh dispatch directory")
     deadline = min(seconds, 240, remaining - 30)
     if deadline <= 0:
         raise ValueError("Insufficient watchdog margin for transaction and cleanup")
@@ -32,6 +36,12 @@ def dispatch_synthetic(directory, seal, ledger, endpoint, *, seconds=240):
         json.dumps(semantic, sort_keys=True, separators=(",", ":")).encode()
     )
     reserve(ledger, packet["request_id"], identity, packet["maximum_cost"], scopes)
+    _, remaining = require_sender()
+    deadline = min(deadline, remaining - 30)
+    if deadline <= 0:
+        raise ValueError(
+            "Watchdog margin exhausted during admission; liability retained"
+        )
     response = transaction(
         directory,
         endpoint,
@@ -39,18 +49,19 @@ def dispatch_synthetic(directory, seal, ledger, endpoint, *, seconds=240):
         seconds=deadline,
         synthetic=True,
     )
-    Path(directory, "receipt.json").write_text(
-        json.dumps(
-            {
-                "request_id": packet["request_id"],
-                "seal": seal,
-                "response_sha256": digest(response),
-                "outcome": "received_unreviewed",
-                "charge": "uncertain",
-                "synthetic": True,
-            }
+    with Path(directory, "receipt.json").open("x") as receipt:
+        receipt.write(
+            json.dumps(
+                {
+                    "request_id": packet["request_id"],
+                    "seal": seal,
+                    "response_sha256": digest(response),
+                    "outcome": "received_unreviewed",
+                    "charge": "uncertain",
+                    "synthetic": True,
+                }
+            )
         )
-    )
     return response
 
 

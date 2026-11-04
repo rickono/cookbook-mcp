@@ -172,8 +172,9 @@ def main():
                         args.output / (mode + "-conflict"),
                         ["python", "-c", "print(1)"],
                     )
-                except RuntimeError:
-                    pass
+                except RuntimeError as error:
+                    if "Conflict" not in str(error) or NAME not in str(error):
+                        raise
                 else:
                     raise AssertionError("OCR overlapped sender")
                 assert (
@@ -204,8 +205,9 @@ def main():
                             args.output / "stale-conflict",
                             ["python", "-c", "print(1)"],
                         )
-                    except RuntimeError:
-                        pass
+                    except RuntimeError as error:
+                        if "Conflict" not in str(error) or NAME not in str(error):
+                            raise
                     else:
                         raise AssertionError("Stale slot silently replaced")
                 else:

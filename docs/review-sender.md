@@ -30,7 +30,8 @@ container ID. An occupied or stale slot blocks both launchers.
 identities, effective-correction identity, declared purpose, completeness, physical
 page and canonical region scopes, asset hashes, image metadata, transforms,
 configuration identity, token envelope, charge reservation, and serialized request
-hash. Review and audit packets require declared complete evidence. Image bytes are
+hash. The transport child rechecks the admitted request digest and sends that
+exact buffer. Review and audit packets require declared complete evidence. Image bytes are
 never decoded, rendered, rescaled, or repaired by the sender.
 
 The provider endpoint constants specify exact HTTPS URLs. Requests use POST, TLS
@@ -42,7 +43,9 @@ fixtures, not provider secrets.
 The serialized request and received and decoded response bodies each have a
 16 MiB bound. Streamed gzip decoding stops at the decoded bound. Truncated bodies,
 unsupported encodings, redirects, HTTP failures, and invalid JSON fail the
-transaction. Raw responses and receipt metadata occupy separate files.
+transaction. Raw responses and receipt metadata occupy separate files. Existing
+response or receipt files reject dispatch before reservation. The child claims its
+response file exclusively before connecting.
 
 An independent parent process kills the single HTTP child at an absolute deadline
 of at most 240 seconds, including DNS, TLS, write, and read. Admission reserves
@@ -61,13 +64,15 @@ reservations across processes.
 Admission commits worst-case charges and all applicable attempts before the HTTP
 child starts. Physical pages have six attempts; canonical regions have three.
 Roles, providers, and packet names do not create new counters. An uncertain
-semantic request remains blocked even with a new request ID. A failed admission
+request with the same frozen payload remains blocked even with a new request ID.
+A failed admission
 rolls back all counters together.
 
 A successful HTTP response does not settle charges. Timeout, cancellation, and
 crash liabilities remain reserved until verified reconciliation. Settlements are
 idempotent; conflicting settlements fail. Charges above their reservation retain
-the increased liability and block subsequent admission for investigation.
+the increased liability and verified actual charge, and block subsequent admission
+for investigation. Conflicting settlements cannot erase that recorded overrun.
 
 ## Verification commands
 
