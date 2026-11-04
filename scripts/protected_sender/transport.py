@@ -11,7 +11,13 @@ from contextlib import closing
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from protocol import MAX_BYTES, bounded_read, credential, reject_ambient_overrides
+from protocol import (
+    MAX_BYTES,
+    bounded_read,
+    credential,
+    digest,
+    reject_ambient_overrides,
+)
 
 
 def read_response(response):
@@ -80,7 +86,7 @@ def exchange(endpoint, body, secret, context):
         return read_response(response)
 
 
-def transaction(directory, endpoint, *, seconds=240, synthetic=False):
+def transaction(directory, endpoint, *, request_digest, seconds=240, synthetic=False):
     """Parent-enforced absolute deadline includes DNS, TLS, write, and read.
 
     The parent has already durably reserved attempts/charges. Every failure
@@ -97,7 +103,13 @@ def transaction(directory, endpoint, *, seconds=240, synthetic=False):
     directory = Path(directory)
     try:
         result = subprocess.run(
-            [sys.executable, str(Path(__file__).resolve()), str(directory), endpoint],
+            [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                str(directory),
+                endpoint,
+                request_digest,
+            ],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -136,10 +148,13 @@ def main():
     directory = Path(sys.argv[1])
     endpoint = sys.argv[2]
     require_fixture_endpoint(endpoint)
+    body = bounded_read(directory / "request.json")
+    if digest(body) != sys.argv[3]:
+        raise ValueError("Request changed after admission")
     context = ssl.create_default_context(cafile=str(directory / "ca.pem"))
     raw = exchange(
         endpoint,
-        bounded_read(directory / "request.json"),
+        body,
         credential(directory / "secret"),
         context,
     )

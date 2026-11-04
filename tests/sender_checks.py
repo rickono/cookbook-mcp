@@ -133,6 +133,10 @@ class SenderChecks(unittest.TestCase):
             ledger.settle(path, "first", 2)
         self.assertEqual(ledger.snapshot(path)["liabilities"], 2)
         with self.assertRaises(ValueError):
+            ledger.settle(path, "first", 0)
+        self.assertEqual(ledger.snapshot(path)["liabilities"], 2)
+        self.assertEqual(ledger.snapshot(path)["requests"][0]["actual"], 2)
+        with self.assertRaises(ValueError):
             ledger.reserve(path, "next", "next", 1, {"a" * 64 + "/2": 6})
 
     def packet(self):
@@ -259,7 +263,9 @@ class SenderChecks(unittest.TestCase):
 
     def test_live_dispatch_disabled(self):
         with self.assertRaises(PermissionError):
-            transport.transaction(self.directory, protocol.ENDPOINTS["decisions"])
+            transport.transaction(
+                self.directory, protocol.ENDPOINTS["decisions"], request_digest="0" * 64
+            )
         import worker
 
         with self.assertRaises(PermissionError):
@@ -312,7 +318,14 @@ class SenderChecks(unittest.TestCase):
             )
         self.assertEqual(server.paths, [])
         self.assertEqual(
-            transport.transaction(directory, endpoint, synthetic=True, seconds=3), b"{}"
+            transport.transaction(
+                directory,
+                endpoint,
+                request_digest=protocol.digest(b"{}"),
+                synthetic=True,
+                seconds=3,
+            ),
+            b"{}",
         )
         (directory / "response.json").unlink()
         from worker import dispatch_synthetic
@@ -325,6 +338,7 @@ class SenderChecks(unittest.TestCase):
         with self.assertRaises(ValueError):
             dispatch_synthetic(directory, seal, path, endpoint, seconds=3)
         self.assertEqual(ledger.snapshot(path)["liabilities"], 1)
+
         packet["request_id"] = "renamed"
         renamed = json.dumps(packet).encode()
         (directory / "manifest.json").write_bytes(renamed)
@@ -336,7 +350,13 @@ class SenderChecks(unittest.TestCase):
         (directory / "response.json").unlink()
         mode[0] = "redirect"
         with self.assertRaises(ValueError):
-            transport.transaction(directory, endpoint, synthetic=True, seconds=3)
+            transport.transaction(
+                directory,
+                endpoint,
+                request_digest=packet["request_sha256"],
+                synthetic=True,
+                seconds=3,
+            )
         self.assertEqual(server.paths, ["/fixture", "/fixture", "/fixture"])
         mode[0] = "slow"
         packet["request_id"] = "slow"
@@ -348,6 +368,29 @@ class SenderChecks(unittest.TestCase):
                 directory, protocol.digest(raw), path, endpoint, seconds=0.25
             )
         self.assertLess(time.monotonic() - start, 1)
+        self.assertEqual(ledger.snapshot(path)["liabilities"], 1)
+
+        # Swap the sealed file after durable admission but before child startup.
+        ledger.settle(path, "slow", 0)
+        mode[0] = "normal"
+        packet["request_id"] = "tamper"
+        manifest = json.dumps(packet).encode()
+        (directory / "manifest.json").write_bytes(manifest)
+        observed = len(server.paths)
+        original = transport.transaction
+
+        def replace_before_send(*args, **kwargs):
+            (directory / "request.json").write_bytes(b'{"model":"unadmitted"}')
+            return original(*args, **kwargs)
+
+        with (
+            patch("worker.transaction", replace_before_send),
+            self.assertRaises(ValueError),
+        ):
+            dispatch_synthetic(
+                directory, protocol.digest(manifest), path, endpoint, seconds=3
+            )
+        self.assertEqual(len(server.paths), observed)
         self.assertEqual(ledger.snapshot(path)["liabilities"], 1)
 
     def test_reservation_survives_abrupt_process_exit(self):

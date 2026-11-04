@@ -128,9 +128,11 @@ def settle(path, request_id, actual_cost):
         if row is None:
             raise ValueError("Unknown request")
         reservation, actual, state = row
-        if state == "settled":
+        if state in {"settled", "investigation"}:
             if actual != actual_cost:
                 raise ValueError("Conflicting settlement")
+            if state == "investigation":
+                raise ValueError("Verified overrun remains under investigation")
             return
         if actual_cost > reservation:
             # Preserve the larger obligation and close further admission; the
@@ -141,8 +143,8 @@ def settle(path, request_id, actual_cost):
             )
             db.execute("UPDATE pilot SET blocked=1")
             db.execute(
-                "UPDATE requests SET reservation=? WHERE id=?",
-                (actual_cost, request_id),
+                "UPDATE requests SET reservation=?, actual=?, state='investigation' WHERE id=?",
+                (actual_cost, actual_cost, request_id),
             )
             overrun = True
         else:

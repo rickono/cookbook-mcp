@@ -32,7 +32,13 @@ def dispatch_synthetic(directory, seal, ledger, endpoint, *, seconds=240):
         json.dumps(semantic, sort_keys=True, separators=(",", ":")).encode()
     )
     reserve(ledger, packet["request_id"], identity, packet["maximum_cost"], scopes)
-    response = transaction(directory, endpoint, seconds=deadline, synthetic=True)
+    response = transaction(
+        directory,
+        endpoint,
+        request_digest=packet["request_sha256"],
+        seconds=deadline,
+        synthetic=True,
+    )
     Path(directory, "receipt.json").write_text(
         json.dumps(
             {
