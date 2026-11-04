@@ -25,6 +25,17 @@ No query is written to session storage, browser persistence, history state, URLs
 telemetry or application logs. Existing edge/client/body logging prohibitions apply
 here too. The existing native keyword engine disables access/search/analytics logs.
 
+The authenticated search page supplies its existing session CSRF value in an
+escaped attribute, consumed once into memory and removed from the DOM. Initial,
+repeated, scope/type changes and either continuation POST results directly;
+catalog metadata loading also needs no session preflight. The independent session
+monitor remains active. Only a `403 csrf_denied` permits one session GET and one
+resend of the same read, preserving query, scope, type, group, cursor and publication
+pin. Malformed recovery, repeated denial and other failures require explicit retry.
+Expiry or leaving the page prevents token adoption and further requests. This
+bounded recovery is private to read-only search; mutations retain explicit retry.
+Existing per-fetch deadlines apply separately on the rare recovery path.
+
 The adapter calls `Library.find_book_content` and `Library.search` independently,
 preserving each engine's order, bounds and continuation values. It resolves the
 publication once before dispatch, and pins both groups and later pages to that
