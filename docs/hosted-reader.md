@@ -115,11 +115,26 @@ audience, owner and scope, and only with an issued refresh token. Renewed tokens
 are verified again. Missing/refused/invalid renewal ends reader access; synthetic
 renewal is tested, but **live automatic renewal is unverified**.
 
-Conditional writes serialize refresh and logout across replicas. A concurrent
-session change returns a bounded retryable 503. An ambiguous refresh exchange is
-never replayed with the same rotating token: other tabs retry briefly, then an
-uncompleted ten-second renewal lease requires sign-in. A storage outage fails
-closed with a generic 503 and no private content. No mutation is silently retried.
+Conditional writes serialize refresh and logout across replicas. SessionBook
+rereads after a definite conflict and decides against the fresh record. Activity
+timestamps move forward without overwriting token or logout changes. Passive
+session and publication checks do not write activity. Sustained contention still
+returns a bounded 503 rather than acknowledging an uncommitted activity update.
+An ambiguous refresh exchange is never replayed with the same rotating token.
+Other requests wait and reread within their deadline; an uncompleted ten-second
+renewal lease requires sign-in. Cancellation leaves that lease fail-closed.
+Storage failure serves no private content. Personal mutations require explicit
+retry when persistence is unconfirmed.
+
+Every reader response includes `X-Reader-Request`. Each 503 also includes
+`X-Reader-Failure` with its category, stage, and attempt count. Failure bodies
+retain the category and request reference, while existing personal-state error
+codes keep their meaning. A redacted JSON record includes bounded stage timings
+and a validated revision when available. It excludes identities, cookies, tokens,
+queries, locations, content, and exception messages. Provider timeouts are
+identified as unconfirmed renewal rather than refusal. See
+[reader session design](reader-session-design.md) for concurrency and cancellation
+constraints. These diagnostics do not establish the cause of earlier live 503s.
 
 Protected responses and OAuth redirects use private no-store, no-referrer, restrictive
 CSP, frame denial and nosniff headers. Catalog markup is escaped; no source scripts,

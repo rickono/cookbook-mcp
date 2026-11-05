@@ -109,7 +109,7 @@ async def results(request, library, reader, session):
     except (ValueError, TypeError, UnicodeError):
         return JSONResponse({"error": "invalid_search"}, status_code=400)
     if not data.get("csrf", "").isascii() or not secrets.compare_digest(
-        data.get("csrf", ""), session["csrf"]
+        data.get("csrf", ""), session.csrf
     ):
         return JSONResponse({"error": "csrf_denied"}, status_code=403)
     try:

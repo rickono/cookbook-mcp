@@ -12,6 +12,7 @@ from urllib.parse import urlencode
 from starlette.responses import JSONResponse, RedirectResponse
 
 from .reader_content import decode_location, encode_location
+from .reader_diagnostics import Stage, stage
 from .reader_updates import resolve_current, source_location
 from .storage import Conflict, IntegrityError, canonical
 
@@ -119,11 +120,13 @@ async def endpoint(reader, request, library, owner, session):
 
         rows = []
         for identity, row in state["bookmarks"].items():
-            resolved = await asyncio.to_thread(resolve, row["location"])
+            with stage(Stage.LIBRARY_RESOLVE):
+                resolved = await asyncio.to_thread(resolve, row["location"])
             rows.append({"bookmark_id": identity, "name": row["name"], **resolved})
         resumes = []
         for loc in state["resume"].values():
-            resolved = await asyncio.to_thread(resolve, loc)
+            with stage(Stage.LIBRARY_RESOLVE):
+                resolved = await asyncio.to_thread(resolve, loc)
             resumes.append(
                 {"book_id": loc["book_id"], "source_id": loc["source_id"], **resolved}
             )
@@ -140,7 +143,7 @@ async def endpoint(reader, request, library, owner, session):
     try:
         value = json.loads(body)
         if not isinstance(value, dict) or not secrets.compare_digest(
-            value.get("csrf", ""), session["csrf"]
+            value.get("csrf", ""), session.csrf
         ):
             return JSONResponse({"error": "csrf_denied"}, status_code=403)
         action = value["action"]
@@ -188,7 +191,8 @@ async def book_entry(reader, request, library, owner):
         _, state, _ = await asyncio.to_thread(reader.personal_state.load, owner)
         saved = state["resume"].get(edition_key(loc))
         if saved:
-            resolved = await asyncio.to_thread(resolve_current, library, saved)
+            with stage(Stage.LIBRARY_RESOLVE):
+                resolved = await asyncio.to_thread(resolve_current, library, saved)
             body = '<section class="layout layout-narrow signin"><p class="kicker">Welcome back</p><h1>Continue reading</h1><p class="lede">Your saved place is kept with this edition.</p><div class="actions">'
             if resolved["at"]:
                 body += (

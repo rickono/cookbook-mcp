@@ -137,7 +137,7 @@ async def intake(reader, request, owner, session):
 
         value = json.loads(body)
         if not isinstance(value, dict) or not secrets.compare_digest(
-            value.get("csrf", ""), session["csrf"]
+            value.get("csrf", ""), session.csrf
         ):
             return JSONResponse({"error": "csrf_denied"}, status_code=403)
         if set(value) - {
