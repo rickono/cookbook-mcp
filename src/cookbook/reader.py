@@ -426,7 +426,7 @@ class Reader:
                 )
             except (ValueError, TypeError, UnicodeError):
                 return JSONResponse({"error": "invalid_destination"}, status_code=400)
-            return page(self, location.get("book_id", ""), csrf=session["csrf"])
+            return page(self, location.get("book_id", ""), csrf=session.csrf)
         if path == "/reader/search/results":
             from .reader_search import results
 
