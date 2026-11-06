@@ -568,11 +568,18 @@ class Library:
             ).fetchone()
             if s is None:
                 raise IntegrityError("unavailable identifier")
-            withdrawn = self.suppressed(s)
+            from .withdrawal import current_withdrawals
+
+            # One fresh observation per section call keeps text and both
+            # eligibility projections consistent without caching current policy.
+            withdrawal_events = current_withdrawals(self.runtime.store)
+            withdrawn = self.suppressed(s, withdrawal_events)
             result = {
-                "citation": self.citation(pub, b, s),
+                "citation": self.citation(
+                    pub, b, s, withdrawal_events=withdrawal_events
+                ),
                 "text": "" if withdrawn else s["text"][offset : offset + limit],
-                "eligibility": self.eligibility(s),
+                "eligibility": self.eligibility(s, withdrawal_events),
                 "text_offset": offset,
                 "next_offset": offset + limit
                 if not withdrawn and offset + limit < len(s["text"])

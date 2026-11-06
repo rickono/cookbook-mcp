@@ -180,3 +180,6 @@ clear report drafts. `current_publication_id` is null when no valid current
 publication exists; an exact retired link remains 410 in that case. Storage outages
 still use the existing redacted 503 response. No ingestion/OCR/model/rendering work,
 deployment, live identity change or issue-tracker mutation was performed.
+
+See [section validation and withdrawal observations](reader-validation.md) for
+the policy-read ownership, validated-result reuse, and regression checks for #135.
