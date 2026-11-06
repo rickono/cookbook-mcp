@@ -2,6 +2,8 @@
 
 Investigation for [Investigate session-storage overhead on protected reader requests](https://github.com/rickono/cookbook-mcp/issues/134), 2026-11-05.
 
+See the [write-path follow-up](reader-session-write-followup.md) for subsequent SDK, encoding and direct-HTTP experiments, plus the concurrent-deployment limitation.
+
 ## Finding and recommendation
 
 Session storage dominates the observed authentication path. The smallest evidence-supported recommendation is to retain the current session design and diagnose the remote PUT path before selecting another optimization. Retained hosted traces now independently price conditional writes. Current main already avoids passive writes and search's serial preflight. Preserve those changes and the shared durable authority. Do not add a positive authorization cache or defer activity timestamps.
