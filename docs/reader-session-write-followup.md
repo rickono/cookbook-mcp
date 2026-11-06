@@ -1,5 +1,7 @@
 # Follow-up on slow hosted session writes
 
+The owner reopened the architecture after this investigation. The later [session-authority design](reader-session-authority-design.md) supersedes this document's recommendation to retain the current session layout. Its measurements and evidence limits remain historical findings.
+
 Investigation for [Investigate session-storage overhead on protected reader requests](https://github.com/rickono/cookbook-mcp/issues/134), 2026-11-06. This follows the [initial attribution](reader-session-storage-research.md).
 
 ## Finding
