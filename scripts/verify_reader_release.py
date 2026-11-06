@@ -11,6 +11,7 @@ PYTHON = [
     "reader_session_races",
     "reader_content",
     "reader_original",
+    "reader_raster",
     "reader_search",
     "reader_search_trial",
     "reader_updates",

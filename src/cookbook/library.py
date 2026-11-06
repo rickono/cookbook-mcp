@@ -10,15 +10,21 @@ import re
 import sqlite3
 import tempfile
 import threading
+from collections import OrderedDict
 from contextlib import contextmanager
 from pathlib import Path
 
 from PIL import Image
 
-from .rendering import RenderError, render_page
+from .reader_diagnostics import Stage, stage
+from .rendering import RenderError, raster, render_page
 from .reports import check_region
 from .scanned import LABEL
 from .storage import IntegrityError, digest_file, has_table, verify
+
+RASTER_BYTES = 8 * 1024**2
+RASTER_ENTRIES = 32
+JPEG_QUALITY = 85
 
 ZOOM_EDGE = 2400  # largest render for a region zoom; about 25 MB of RGB on a 1 GB host
 
@@ -34,12 +40,24 @@ def crop_region(im, box, edge):
 
 
 class Library:
-    def __init__(self, runtime, cache_bytes=512 * 1024**2, search_engine=None):
+    def __init__(
+        self,
+        runtime,
+        cache_bytes=512 * 1024**2,
+        search_engine=None,
+        *,
+        raster_cache_bytes=RASTER_BYTES,
+    ):
         self.runtime = runtime
         self.cache_bytes = cache_bytes
         self.asset_lock = threading.Lock()
         self.render_lock = threading.Lock()
         self.search_engine = search_engine
+        if not 0 <= raster_cache_bytes <= RASTER_BYTES:
+            raise ValueError("invalid raster cache budget")
+        self.raster_cache_bytes = raster_cache_bytes
+        self._rasters = OrderedDict()
+        self._raster_size = 0
 
     def model(self, publication_id):
         from .book_model import MODEL_PATH, BookModel
@@ -797,27 +815,77 @@ class Library:
         with self.db(pub) as db:
             b = self.book(db, book_id, source_id)
             s = self.page_row(db, source_id, physical_page)
-            with tempfile.TemporaryDirectory(dir=self.runtime.root) as d:
-                # Pin the verified original while holding the cache lock. Rendering
-                # then cannot block image reads or race cache eviction.
-                original = Path(d) / "original"
-                with self.asset_lock:
-                    os.link(self.cached(pub, b["original_path"]), original)
-                png = Path(d) / "page.png"
-                render_page(original, b["format"], physical_page, png, render_edge)
-                with Image.open(png) as im:
-                    im = im.convert("RGB")
-                    if box is not None:
-                        im = crop_region(im, box, edge)
-                    out = io.BytesIO()
-                    im.save(out, "JPEG", quality=85)
-                    data = out.getvalue()
-            meta = {
-                "citation": self.citation(pub, b, s),
-                "text": "" if self.suppressed(s) else s["text"][:4000],
-                "text_truncated": not self.suppressed(s) and len(s["text"]) > 4000,
-                "width_limit": edge,
-            }
+            # Consult the current manifest before reuse. Never retain text or access
+            # decisions with the pixels. The existing render slot owns this LRU.
+            entry = next(
+                (
+                    e
+                    for e in self.runtime.manifest(pub).files
+                    if e.path == b["original_path"]
+                ),
+                None,
+            )
+            if entry is None or entry.size > self.cache_bytes:
+                raise IntegrityError("unavailable original")
+            key = (
+                b["sha256"],
+                entry.sha256,
+                entry.size,
+                b["format"],
+                physical_page,
+                edge,
+                tuple(box) if box is not None else None,
+                render_edge,
+                JPEG_QUALITY,
+            )
+            data = self._rasters.get(key)
+            if data is not None:
+                with stage(Stage.RASTER_HIT) as span:
+                    span.attempt()
+                    self._rasters.move_to_end(key)
+            else:
+                with stage(Stage.RASTER_MISS) as span:
+                    span.attempt()
+                with tempfile.TemporaryDirectory(dir=self.runtime.root) as d:
+                    original = Path(d) / "original"
+                    with stage(Stage.ORIGINAL_CACHE) as span:
+                        span.attempt()
+                        with self.asset_lock:
+                            os.link(self.cached(pub, b["original_path"]), original)
+                    png = Path(d) / "page.png"
+                    with stage(Stage.ORIGINAL_RENDER) as span:
+                        span.attempt()
+                        render_page(
+                            original, b["format"], physical_page, png, render_edge
+                        )
+                    with stage(Stage.ORIGINAL_ENCODE) as span:
+                        span.attempt()
+                        with Image.open(png) as im:
+                            im = im.convert("RGB")
+                            if box is not None:
+                                im = crop_region(im, box, edge)
+                            out = io.BytesIO()
+                            im.save(out, "JPEG", quality=JPEG_QUALITY)
+                            data = out.getvalue()
+                    raster(data)
+                if len(data) <= self.raster_cache_bytes:
+                    while self._rasters and (
+                        self._raster_size + len(data) > self.raster_cache_bytes
+                        or len(self._rasters) >= RASTER_ENTRIES
+                    ):
+                        _, evicted = self._rasters.popitem(last=False)
+                        self._raster_size -= len(evicted)
+                    self._rasters[key] = data
+                    self._raster_size += len(data)
+            with stage(Stage.ORIGINAL_METADATA) as span:
+                span.attempt()
+                suppressed = self.suppressed(s)
+                meta = {
+                    "citation": self.citation(pub, b, s),
+                    "text": "" if suppressed else s["text"][:4000],
+                    "text_truncated": not suppressed and len(s["text"]) > 4000,
+                    "width_limit": edge,
+                }
             if box is not None:
                 meta.update(region=box, render_edge=render_edge)
             return meta, data

@@ -1,5 +1,6 @@
 """Bounded serving renderer. Offline ingestion keeps its separate OCR guard."""
 
+import io
 import os
 import signal
 import subprocess
@@ -21,6 +22,28 @@ WALL_SECONDS = 15
 
 class RenderError(IntegrityError):
     pass
+
+
+# Browser delivery and reusable page rasters share the same admission check.
+MAX_BYTES = 3_000_000
+MAX_PIXELS = 16_000_000
+
+
+def raster(data):
+    """Reject active formats and oversized rasters before browser delivery or reuse."""
+    from PIL import Image
+
+    if len(data) > MAX_BYTES:
+        raise RenderError("image exceeds delivery bounds")
+    with Image.open(io.BytesIO(data)) as im:
+        if (
+            im.format not in {"JPEG", "PNG", "WEBP"}
+            or im.width * im.height > MAX_PIXELS
+        ):
+            raise RenderError("unsupported image")
+        mime = Image.MIME[im.format]
+        im.verify()
+    return mime
 
 
 def render_page(path, fmt, page, destination, edge=1600):

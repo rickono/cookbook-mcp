@@ -1,21 +1,16 @@
 """Protected originals: identifier-bound selection, existing render limits, raster only."""
 
 import asyncio
-import io
 import json
 from html import escape
 from urllib.parse import urlencode
 
-from PIL import Image
 from starlette.responses import JSONResponse, Response
 
 from .reader_content import decode_location, read
 from .reader_diagnostics import Stage, stage
-from .rendering import RenderError
+from .rendering import RenderError, raster
 from .storage import IntegrityError
-
-MAX_BYTES = 3_000_000
-MAX_PIXELS = 16_000_000
 
 
 def link(at, **selection):
@@ -66,21 +61,6 @@ def candidates(library, loc, data, offset=0):
     return [], None
 
 
-def raster(data):
-    """Reject active formats and oversized rasters before browser delivery."""
-    if len(data) > MAX_BYTES:
-        raise RenderError("image exceeds delivery bounds")
-    with Image.open(io.BytesIO(data)) as im:
-        if (
-            im.format not in {"JPEG", "PNG", "WEBP"}
-            or im.width * im.height > MAX_PIXELS
-        ):
-            raise RenderError("unsupported image")
-        mime = Image.MIME[im.format]
-        im.verify()
-    return mime
-
-
 async def deliver(reader, request, library):
     q = request.query_params
     at = q.get("at", "")
@@ -115,8 +95,12 @@ async def deliver(reader, request, library):
             reader, at, "Publication unavailable or retired.", 410, back=back
         )
     try:
-        data = await asyncio.to_thread(read, library, loc)
-        items, more = await asyncio.to_thread(candidates, library, loc, data, offset)
+        with stage(Stage.ORIGINAL_SOURCE) as span:
+            span.attempt()
+            data = await asyncio.to_thread(read, library, loc)
+            items, more = await asyncio.to_thread(
+                candidates, library, loc, data, offset
+            )
         selected = next(
             (
                 i
@@ -146,11 +130,15 @@ async def deliver(reader, request, library):
                 _, binary = await asyncio.to_thread(
                     library.get_image, *args, selected["image"]
                 )
-            return Response(
-                binary,
-                media_type=raster(binary),
-                headers={"Content-Disposition": "inline"},
-            )
+            with stage(Stage.ORIGINAL_VALIDATE) as span:
+                span.attempt()
+                mime = raster(binary)
+            with stage(Stage.ORIGINAL_RESPONSE):
+                return Response(
+                    binary,
+                    media_type=mime,
+                    headers={"Content-Disposition": "inline"},
+                )
     except RenderError:
         return failure(
             reader,

@@ -47,7 +47,7 @@ def test_native_image_delivery_and_exact_text_return(reader_env, published):
         )
 
 
-def scanned_original(published, tmp_path):
+def scanned_original(published, tmp_path, original_bytes=None):
     import json
     import sqlite3
 
@@ -57,8 +57,31 @@ def scanned_original(published, tmp_path):
     from cookbook.storage import digest_file
 
     m, inputs = fixture_build(tmp_path / "originals", section_count=3, repeats=1)
+    if original_bytes is not None:
+        next(p for k, p in inputs.items() if k.startswith("backup/")).write_bytes(
+            original_bytes
+        )
     with sqlite3.connect(inputs["runtime/index.sqlite"]) as db:
         source = db.execute("select id from sources").fetchone()[0]
+        if original_bytes is not None:
+            import hashlib
+
+            sha = hashlib.sha256(original_bytes).hexdigest()
+            new_source = "pdf:" + sha
+            for (table,) in db.execute(
+                "select name from sqlite_master where type='table'"
+            ).fetchall():
+                if "source_id" in {
+                    c[1] for c in db.execute(f"pragma table_info({table})")
+                }:
+                    db.execute(
+                        f"update {table} set source_id=? where source_id=?",
+                        (new_source, source),
+                    )
+            db.execute(
+                "update sources set id=?,sha256=? where id=?", (new_source, sha, source)
+            )
+            source = new_source
         db.execute("update sources set format='PDF'")
         db.execute(
             "update sections set locator=? where id=?",
@@ -175,7 +198,7 @@ def test_scanned_geometry_refusal_and_withheld_original(
             raise RenderError("/private/book.pdf renderer busy")
 
         monkeypatch.setattr("cookbook.library.render_page", refused)
-        failure = client.get("/reader/image", params={"at": at, "page": 2, "region": 0})
+        failure = client.get("/reader/image", params={"at": at, "page": 2, "region": 1})
         assert failure.status_code == 503 and "/private/" not in failure.text
         assert "whole page" in failure.text and "same text position" in failure.text
         assert client.get("/reader/content", params={"at": at}).json()["text"]

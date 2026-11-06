@@ -85,6 +85,15 @@ class Stage(Enum):
     PERSONAL_STATE = ("personal_state", Category.PERSONAL_STATE)
     CONTENT_DELIVER = ("content_deliver", Category.CONTENT)
     ORIGINAL_DELIVER = ("original_deliver", Category.CONTENT)
+    ORIGINAL_SOURCE = ("original_source", Category.CONTENT)
+    ORIGINAL_CACHE = ("original_cache", Category.CONTENT)
+    ORIGINAL_RENDER = ("original_render", Category.CONTENT)
+    ORIGINAL_ENCODE = ("original_encode", Category.CONTENT)
+    ORIGINAL_METADATA = ("original_metadata", Category.CONTENT)
+    ORIGINAL_VALIDATE = ("original_validate", Category.CONTENT)
+    ORIGINAL_RESPONSE = ("original_response", Category.CONTENT)
+    RASTER_HIT = ("raster_hit", Category.CONTENT)
+    RASTER_MISS = ("raster_miss", Category.CONTENT)
     REPORT_INTAKE = ("report_intake", Category.REPORTS)
 
 

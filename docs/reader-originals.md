@@ -79,3 +79,39 @@ VoiceOver, 320px reflow and zoom/orientation, real hosted authorization/renewal 
 the Mac off, Linux serving enforcement and the specified hosted performance/failure
 budgets. Record versions and source-safe identifiers; keep private/raw evidence
 outside Git. A refusal does not count as successful image delivery.
+
+## Repeated page requests
+
+The shared `Library.get_page` path retains verified JPEG bytes in a private,
+process-local LRU. It retains at most 8 MiB and 32 entries, creates no raster disk
+cache, and forgets its entries on restart. `raster_cache_bytes=0` disables reuse
+for comparisons; the constructor rejects budgets above 8 MiB. Original-file cache
+and renderer limits are unchanged.
+
+Keys include the current manifest's original hash and size, the source hash,
+format, physical page, normalized region, output and intermediate edges, and JPEG
+quality. A changed source or setting requires a new render. The in-memory cache
+cannot survive a renderer code or dependency update. Only completed, raster-checked
+JPEGs enter the LRU. Oversized entries and failures are not retained.
+
+Every request still validates its session, source selection and retained
+publication, and applies current withdrawal policy. Metadata and transcription
+are rebuilt, never cached with pixels. The current policy can withhold
+transcription while still allowing original access. A retired publication or an
+expired or revoked session cannot use a warm raster to obtain delivery. Hits still
+pass browser raster admission and return `private, no-store`.
+
+The existing exclusive nonqueued render slot owns the LRU as well as rendering.
+Hits retain the same busy refusal when that slot is occupied. This intentionally
+preserves contention behavior. No new queue, worker, browser storage or resource
+ceiling is introduced.
+
+Request diagnostics add closed stage names for source validation, original-cache
+verification, rendering, encoding, fresh metadata, raster admission, response
+construction, and raster hits or misses. They contain durations and counts, with
+no cache keys, source identifiers, paths or content. Nested stage durations are
+inclusive and must not be summed. `original_response` measures construction of
+the response object; it does not measure network delivery or browser paint.
+
+See [the raster reuse verification](reader-raster-verification.md) for the
+repeatable synthetic profile and its evidence limits.
