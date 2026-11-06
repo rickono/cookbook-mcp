@@ -1,5 +1,7 @@
 # Reader session storage alternatives
 
+The owner reopened the architecture after this investigation. The later [session-authority design](reader-session-authority-design.md) supersedes this document's recommendation to retain the current session layout. Its measurements and evidence limits remain historical findings.
+
 Research for [Investigate session-storage overhead on protected reader requests](https://github.com/rickono/cookbook-mcp/issues/134), reviewed on 2026-11-05 against main at `9031857c162b070ad4326d5208f33a87e430bf0c`. See the [combined attribution report](reader-session-storage-research.md) for measurements and reproduction. No production requests, deployment, tracker edits, OCR, or performance experiments were performed for this document.
 
 ## Recommendation
