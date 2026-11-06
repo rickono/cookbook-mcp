@@ -108,7 +108,7 @@ def resolve_current(library, location, *, _validated=None):
     }
     try:
         if "section_id" in loc and not loc.get("source_key"):
-            loc = source_location(library, loc)
+            loc = source_location(library, loc, _validated=pinned)
         candidate = {**loc, "publication_id": current}
         book = library.get_book(current, loc["book_id"])
         if book["citation"]["source_id"] != loc["source_id"]:
