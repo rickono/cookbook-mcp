@@ -851,3 +851,47 @@ def test_reader_pool_closes_when_publication_shutdown_fails(
         assert login(client).status_code == 303
         monkeypatch.setattr(PublicationUpdater, "close", failed)
     assert postgres_reader.readers[0].sessions._pool.closed
+
+
+@pytest.mark.parametrize("failed_token", [None, "device-0"])
+def test_logout_all_drains_multiple_revocation_batches_without_blocking_response(
+    reader_env, postgres_reader, monkeypatch, mint, failed_token
+):
+    from collections import Counter
+
+    factory, identity, clock = reader_env
+    release, entered = Event(), Event()
+    calls = []
+    tokens = [f"device-{index}" for index in range(12)]
+    monkeypatch.setattr("cookbook.reader.DEADLINE", 0.2)
+    with TestClient(factory(), base_url="https://reader.example") as client:
+        for token in tokens:
+            identity.tokens = {"access_token": mint(), "refresh_token": token}
+            assert login(client).status_code == 303
+        drain_cleanup(client, postgres_reader)
+
+        async def revoke(token):
+            calls.append(token)
+            entered.set()
+            assert await asyncio.to_thread(release.wait, 3)
+            if token == failed_token:
+                # Even if retry_at becomes due during this drain, attempt each
+                # token only once and continue to the remaining batch.
+                clock[0] += 11
+                raise OSError("synthetic revocation failure")
+
+        identity.revoke = revoke
+        try:
+            response = logout(client, "all")
+            assert response.status_code == 200
+            assert entered.wait(2)
+        finally:
+            release.set()
+        drain_cleanup(client, postgres_reader)
+        assert Counter(calls) == Counter(tokens)
+        stored = query(
+            postgres_reader, "SELECT completed FROM reader_session_retirements"
+        )
+        assert len(stored) == 12
+        assert sum(row["completed"] for row in stored) == (11 if failed_token else 12)
+        assert all(row["ended"] for row in rows(postgres_reader))

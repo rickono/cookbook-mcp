@@ -16,7 +16,7 @@ The runner creates a private temporary cluster with a Unix socket and no TCP lis
 
 ## Observed behavior
 
-The local trial passes 52 HTTP and database checks. The existing reader suite passes another 115 tests with its original session authority.
+The local trial passes 54 HTTP and database checks. The existing reader suite passes another 115 tests with its original session authority.
 
 - Sign-in, catalog and text reading, continuation links, secure cookie attributes, CSRF, and both logout scopes work through the PostgreSQL adapter.
 - A passive session check leaves the session rows unchanged. An active request changes only the requesting device's `seen` column. Credentials and sibling sessions retain their stored values. Guarded storage methods reject any attempted `reader/owners/` access during the request test.
@@ -34,7 +34,7 @@ The activity interval remains zero, and route activity classification remains un
 
 `reader_sessions_postgres.py` owns admission, transactions, refresh coordination, encrypted credentials, and revocation work. Mutations lock the owner before the device row. Ordinary activity takes a shared owner lock, so different devices do not serialize behind one owner update. Logout and token retirement take an exclusive owner lock.
 
-JWT verification and provider requests run outside SQL transactions. Lifecycle commits schedule tracked background cleanup, with up to eight concurrent revocations per batch. Provider cleanup does not delay the committed HTTP response. Shutdown drains tracked cleanup before closing the pool, including when another shutdown hook fails. Ended-cookie checks perform only the primary read. Read Committed isolation is explicit. Pool transactions follow [Psycopg's transaction contexts](https://www.psycopg.org/psycopg3/docs/advanced/pool.html).
+JWT verification and provider requests run outside SQL transactions. Lifecycle commits schedule tracked background cleanup, with up to eight concurrent revocations per batch. A full batch schedules the remaining due work without another HTTP request. Each token is attempted once per drain, including when a failed token becomes due again during that drain. Failed revocations remain durable for a later lifecycle-triggered retry. Provider cleanup does not delay the committed HTTP response. Shutdown finishes the current batch before closing the pool, including when another shutdown hook fails. Ended-cookie checks perform only the primary read. Read Committed isolation is explicit. Pool transactions follow [Psycopg's transaction contexts](https://www.psycopg.org/psycopg3/docs/advanced/pool.html).
 
 `reader_session_schema.sql` is an explicit trial schema. OAuth correlation records remain in the existing store. Bookmarks, reports, and published content keep their existing storage boundaries.
 

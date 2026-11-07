@@ -109,12 +109,15 @@ class PostgresSessionBook:
             return
 
         async def run():
+            attempted = set()
             try:
                 while subject in self._cleanup_pending:
                     self._cleanup_pending.remove(subject)
-                    await self._cleanup(subject)
+                    more = await self._cleanup(subject, attempted)
                     if self._closing:
                         break
+                    if more:
+                        self._cleanup_pending.add(subject)
             finally:
                 self._cleanup_pending.discard(subject)
                 self._cleanup_tasks.pop(subject, None)
@@ -622,7 +625,7 @@ class PostgresSessionBook:
         await self._run(Stage.RENEWAL_SETTLE, discard)
         self._schedule_cleanup(original["subject"])
 
-    async def _cleanup(self, subject):
+    async def _cleanup(self, subject, attempted):
         """Durable retry work; a failure cannot undo confirmed local logout."""
         nonce = secrets.token_urlsafe(32)
 
@@ -636,7 +639,8 @@ class PostgresSessionBook:
                 "UPDATE reader_session_retirements SET claim=%s,retry_at=%s "
                 "WHERE epoch=%s AND subject=%s AND refresh_id IN "
                 "(SELECT refresh_id FROM reader_session_retirements WHERE epoch=%s AND subject=%s "
-                "AND NOT completed AND retry_at<=%s ORDER BY refresh_id LIMIT 8) RETURNING *",
+                "AND NOT completed AND retry_at<=%s AND refresh_id<>ALL(%s) "
+                "ORDER BY refresh_id LIMIT 8) RETURNING *",
                 (
                     nonce,
                     now + LEASE_SECONDS,
@@ -645,11 +649,13 @@ class PostgresSessionBook:
                     self._epoch,
                     subject,
                     now,
+                    list(attempted),
                 ),
             ).fetchall()
 
         try:
             rows = await self._run(Stage.SESSION_END, claim)
+            attempted.update(row["refresh_id"] for row in rows)
 
             async def revoke(row):
                 try:
@@ -670,5 +676,6 @@ class PostgresSessionBook:
                 await self._run(Stage.SESSION_END, completed)
 
             await asyncio.gather(*(revoke(row) for row in rows), return_exceptions=True)
+            return len(rows) == 8
         except Exception:  # noqa: BLE001 - cleanup never changes the committed admission decision
             return
