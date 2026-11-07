@@ -42,6 +42,7 @@ from cookbook.storage import Conflict, LocalStore
 
 class Relay:
     def __init__(self, app, prefix):
+        self.prefix = prefix
         script = base64.b64encode(
             (ROOT / "scripts/session_benchmark_r2_worker.py").read_bytes()
         ).decode()
@@ -103,6 +104,15 @@ class Relay:
             assert result.get("cleanup_failures") == 0, "Synthetic R2 cleanup failed"
             self.process.wait(timeout=15)
             assert self.process.returncode == 0
+        except BaseException:
+            print(
+                json.dumps(
+                    {"cleanup_prefix": self.prefix, "cleanup_unconfirmed": True}
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
+            raise
         finally:
             self._stop()
 
@@ -189,6 +199,7 @@ def main():
     if not args.live_synthetic_writes:
         parser.error("Requires --live-synthetic-writes")
     prefix = "research/session-134/benchmark-" + secrets.token_hex(16)
+    print(json.dumps({"synthetic_prefix": prefix}), file=sys.stderr, flush=True)
     relays = []
     results = []
     with (

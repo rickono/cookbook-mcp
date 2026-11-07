@@ -88,6 +88,10 @@ def logout(client, scope="device"):
     )
 
 
+def drain_cleanup(client, trial, index=0):
+    client.portal.call(trial.readers[index].sessions._drain_cleanup)
+
+
 def test_activity_changes_only_requesting_timestamp_and_never_r2_owner(
     reader_env, postgres_reader, monkeypatch
 ):
@@ -164,6 +168,7 @@ def test_shared_refresh_last_reference_retired_once(reader_env, postgres_reader)
         assert revoked == []
         assert b.get("/reader/catalog").status_code == 200
         assert logout(b).status_code == 200
+        drain_cleanup(b, postgres_reader, 1)
         assert revoked == ["synthetic-refresh"]
         assert query(
             postgres_reader, "SELECT completed FROM reader_session_retirements"
@@ -190,6 +195,8 @@ def test_concurrent_last_references_do_not_lose_cleanup(reader_env, postgres_rea
         with ThreadPoolExecutor(2) as pool:
             results = [pool.submit(logout, c) for c in (a, b)]
             assert [f.result().status_code for f in results] == [200, 200]
+        drain_cleanup(a, postgres_reader)
+        drain_cleanup(b, postgres_reader, 1)
         assert revoked == ["synthetic-refresh"]
 
 
@@ -281,6 +288,7 @@ def test_renewal_rechecks_lifetime_and_logout(
         identity.renew, identity.revoke = renew, revoke
         assert a.get("/reader/catalog").status_code == 401
         assert all(row["ended"] for row in rows(postgres_reader))
+        drain_cleanup(a, postgres_reader)
         assert "rejected-rotation" in revoked
 
 
@@ -325,6 +333,7 @@ def test_failed_revoke_is_durable_and_retried(reader_env, postgres_reader, mint)
         login(client)
         identity.refused = True
         assert logout(client).status_code == 200
+        drain_cleanup(client, postgres_reader)
         assert query(
             postgres_reader, "SELECT completed FROM reader_session_retirements"
         ) == [{"completed": False}]
@@ -332,6 +341,7 @@ def test_failed_revoke_is_durable_and_retried(reader_env, postgres_reader, mint)
         identity.tokens = {"access_token": mint(), "refresh_token": "fresh-login"}
         clock[0] += 11
         assert login(client).status_code == 303
+        drain_cleanup(client, postgres_reader)
         assert query(
             postgres_reader, "SELECT completed FROM reader_session_retirements"
         ) == [{"completed": True}]
@@ -451,6 +461,7 @@ def test_lost_settlement_acknowledgement(
             assert revoked == []
             assert client.get("/reader/session").status_code == 200
         else:
+            drain_cleanup(client, postgres_reader)
             assert revoked == ["rotated-with-lost-ack"]
             clock[0] += 10
             assert client.get("/reader/session").status_code == 401
@@ -731,3 +742,112 @@ def test_ambiguous_exchange_fences_other_device_and_future_sign_in(
         }
         assert login(a).headers["location"] == "/reader/signin-failed"
         assert calls == ["synthetic-refresh"]
+
+
+@pytest.mark.parametrize("operation", ["sign_in", "logout_all"])
+def test_committed_lifecycle_response_does_not_wait_for_revocation_backlog(
+    reader_env, postgres_reader, monkeypatch, mint, operation
+):
+    factory, identity, _ = reader_env
+    monkeypatch.setattr("cookbook.reader.DEADLINE", 0.2)
+    monkeypatch.setattr("cookbook.reader_sessions_postgres.PROVIDER_TIMEOUT", 0.6)
+    with TestClient(factory(), base_url="https://reader.example") as client:
+        for index in range(3):
+            identity.tokens = {
+                "access_token": mint(),
+                "refresh_token": f"device-{index}",
+            }
+            assert login(client).status_code == 303
+        drain_cleanup(client, postgres_reader)
+        reader = postgres_reader.readers[0]
+
+        async def stalled(token):
+            await asyncio.sleep(10)
+
+        identity.revoke = stalled
+        if operation == "sign_in":
+            for index in range(3):
+                query(
+                    postgres_reader,
+                    "INSERT INTO reader_session_retirements(epoch,subject,refresh_id,token) VALUES(%s,%s,%s,%s)",
+                    (
+                        reader.sessions._epoch,
+                        "user-1",
+                        f"pending-{index}",
+                        reader.cipher.encrypt(b"pending-cleanup"),
+                    ),
+                )
+            identity.tokens = {"access_token": mint(), "refresh_token": "fresh-sign-in"}
+            assert login(client).status_code == 303
+            assert client.get("/reader/catalog").status_code == 200
+            cookie_key = hashlib.sha256(
+                client.cookies.get("__Host-reader").encode()
+            ).hexdigest()
+            assert any(
+                row["key"] == cookie_key and not row["ended"]
+                for row in rows(postgres_reader)
+            )
+        else:
+            response = logout(client, "all")
+            assert response.status_code == 200
+            assert '__Host-reader=""' in response.headers["set-cookie"]
+            assert all(row["ended"] for row in rows(postgres_reader))
+        drain_cleanup(client, postgres_reader)
+        assert (
+            query(
+                postgres_reader,
+                "SELECT count(*) AS n FROM reader_session_retirements WHERE NOT completed",
+            )[0]["n"]
+            == 3
+        )
+
+
+def test_ended_cookie_polls_only_read_authority(
+    reader_env, postgres_reader, monkeypatch
+):
+    from cookbook.reader_diagnostics import Stage
+
+    factory, _, _ = reader_env
+    with TestClient(factory(), base_url="https://reader.example") as client:
+        login(client)
+        cookie = client.cookies.get("__Host-reader")
+        assert logout(client).status_code == 200
+        drain_cleanup(client, postgres_reader)
+        book = postgres_reader.readers[0].sessions
+        original = book._run
+        operations = []
+
+        async def observed(at, operation, **kwargs):
+            operations.append(at)
+            return await original(at, operation, **kwargs)
+
+        monkeypatch.setattr(book, "_run", observed)
+        for _ in range(3):
+            client.cookies.clear()
+            client.cookies.set("__Host-reader", cookie)
+            assert client.get("/reader/updates").status_code == 401
+        assert operations == [Stage.SESSION_READ] * 3
+
+
+def test_reader_pool_closes_when_publication_shutdown_fails(
+    reader_env, postgres_reader, monkeypatch
+):
+    from cookbook.hosted import PublicationUpdater
+
+    factory, _, _ = reader_env
+    close_updater = PublicationUpdater.close
+
+    def failed(self):
+        close_updater(self)
+        raise RuntimeError("synthetic updater shutdown failure")
+
+    application = factory()
+    with (
+        pytest.RaisesGroup(
+            pytest.RaisesExc(RuntimeError, match="synthetic updater shutdown")
+        ),
+        TestClient(application, base_url="https://reader.example") as client,
+    ):
+        assert login(client).status_code == 303
+        monkeypatch.setattr(PublicationUpdater, "close", failed)
+    assert postgres_reader.readers[0].sessions._pool.closed

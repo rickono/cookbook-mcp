@@ -16,7 +16,7 @@ The runner creates a private temporary cluster with a Unix socket and no TCP lis
 
 ## Observed behavior
 
-The local trial passes 48 HTTP and database checks. The existing reader suite passes another 115 tests with its original session authority.
+The local trial passes 52 HTTP and database checks. The existing reader suite passes another 115 tests with its original session authority.
 
 - Sign-in, catalog and text reading, continuation links, secure cookie attributes, CSRF, and both logout scopes work through the PostgreSQL adapter.
 - A passive session check leaves the session rows unchanged. An active request changes only the requesting device's `seen` column. Credentials and sibling sessions retain their stored values. Guarded storage methods reject any attempted `reader/owners/` access during the request test.
@@ -34,14 +34,14 @@ The activity interval remains zero, and route activity classification remains un
 
 `reader_sessions_postgres.py` owns admission, transactions, refresh coordination, encrypted credentials, and revocation work. Mutations lock the owner before the device row. Ordinary activity takes a shared owner lock, so different devices do not serialize behind one owner update. Logout and token retirement take an exclusive owner lock.
 
-JWT verification and provider requests run outside SQL transactions. The threaded connection pool closes during the hosted app's shutdown. Read Committed isolation is explicit. Pool transactions follow [Psycopg's transaction contexts](https://www.psycopg.org/psycopg3/docs/advanced/pool.html).
+JWT verification and provider requests run outside SQL transactions. Lifecycle commits schedule tracked background cleanup, with up to eight concurrent revocations per batch. Provider cleanup does not delay the committed HTTP response. Shutdown drains tracked cleanup before closing the pool, including when another shutdown hook fails. Ended-cookie checks perform only the primary read. Read Committed isolation is explicit. Pool transactions follow [Psycopg's transaction contexts](https://www.psycopg.org/psycopg3/docs/advanced/pool.html).
 
 `reader_session_schema.sql` is an explicit trial schema. OAuth correlation records remain in the existing store. Bookmarks, reports, and published content keep their existing storage boundaries.
 
 ## Limits of the result
 
-The passing tests establish the demonstrated local behavior. They do not measure a hosted speedup. No latency comparison was run, and the test host had other active workloads. Synthetic publication data and a local socket cannot represent a remote database's network latency or placement.
+The passing tests establish the demonstrated local behavior. The subsequent [timing comparison](reader-session-timing-trial.md) measures synthetic HTTP journeys with an R2 relay and local PostgreSQL. Its topology and the test host's other workloads limit that result. Synthetic publication data and a local socket cannot establish a hosted database's latency or placement.
 
-Production selection still requires a pinned hosted comparison, real provider acceptance, a restricted database role, schema migration and retention procedures, managed failover guarantees, and the fenced cutover described in the [authority design](reader-session-authority-design.md). Cleanup retries currently run during lifecycle operations. A continuously running cleanup worker is not part of this local trial.
+Production selection still requires a pinned hosted comparison, real provider acceptance, a restricted database role, schema migration and retention procedures, managed failover guarantees, and the fenced cutover described in the [authority design](reader-session-authority-design.md). Lifecycle operations schedule cleanup retries in the background. A continuously running cleanup worker is not part of this local trial.
 
 Recovery here covers restart on the same data directory. Disk loss, database restore, promotion, and an old primary that continues serving require separate fencing and recovery tests. Deployment and session migration have not occurred.

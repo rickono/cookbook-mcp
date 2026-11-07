@@ -5,6 +5,7 @@ import cProfile
 import hashlib
 import json
 import os
+import signal
 import sys
 import time
 
@@ -22,6 +23,14 @@ store = s3_store(
     os.environ["READER_AWS_SECRET_ACCESS_KEY"],
 )
 keys = set()
+
+
+def interrupted(signum, frame):
+    raise SystemExit(128 + signum)
+
+
+for sig in (signal.SIGHUP, signal.SIGTERM):
+    signal.signal(sig, interrupted)
 print(json.dumps({"ready": True, "image": os.environ.get("FLY_IMAGE_REF")}), flush=True)
 try:
     for line in sys.stdin:
@@ -75,6 +84,8 @@ try:
             ]
         print(json.dumps(result), flush=True)
 finally:
+    for sig in (signal.SIGHUP, signal.SIGTERM):
+        signal.signal(sig, signal.SIG_IGN)
     failures = 0
     for key in keys:
         try:
@@ -82,5 +93,14 @@ finally:
             assert store.read_version(key) == (None, None)
         except Exception:  # noqa: BLE001 - report cleanup failure without private error text
             failures += 1
-    print(json.dumps({"cleanup_failures": failures}), flush=True)
     store.client.close()
+    if failures:
+        print(
+            json.dumps({"cleanup_prefix": prefix, "cleanup_failures": failures}),
+            file=sys.stderr,
+            flush=True,
+        )
+    try:
+        print(json.dumps({"cleanup_failures": failures}), flush=True)
+    except BrokenPipeError:
+        pass

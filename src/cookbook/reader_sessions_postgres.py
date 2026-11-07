@@ -7,6 +7,7 @@ Pool work runs in threads; no JWT or provider await holds a SQL transaction.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import hmac
 import secrets
 
@@ -59,6 +60,9 @@ class PostgresSessionBook:
     ):
         self._cipher, self._verifier, self._identity = cipher, verifier, identity
         self._clock = clock
+        self._cleanup_tasks = {}
+        self._cleanup_pending = set()
+        self._closing = False
         self._fingerprint_key = hmac.digest(
             encryption_key, b"reader-session-token-identity-v1", "sha256"
         )
@@ -85,7 +89,40 @@ class PostgresSessionBook:
         conn.isolation_level = IsolationLevel.READ_COMMITTED
 
     async def close(self):
-        await asyncio.to_thread(self._pool.close)
+        self._closing = True
+        try:
+            await self._drain_cleanup()
+        finally:
+            self._cleanup_pending.clear()
+            await asyncio.to_thread(self._pool.close)
+
+    async def _drain_cleanup(self):
+        await asyncio.gather(
+            *list(self._cleanup_tasks.values()), return_exceptions=True
+        )
+
+    def _schedule_cleanup(self, subject):
+        if self._closing:
+            return
+        self._cleanup_pending.add(subject)
+        if subject in self._cleanup_tasks:
+            return
+
+        async def run():
+            try:
+                while subject in self._cleanup_pending:
+                    self._cleanup_pending.remove(subject)
+                    await self._cleanup(subject)
+                    if self._closing:
+                        break
+            finally:
+                self._cleanup_pending.discard(subject)
+                self._cleanup_tasks.pop(subject, None)
+
+        # Background work must not mutate the completed HTTP diagnostic trace.
+        self._cleanup_tasks[subject] = asyncio.create_task(
+            run(), context=contextvars.Context()
+        )
 
     async def _run(self, at, operation, *, transaction=True):
         def run():
@@ -269,7 +306,7 @@ class PostgresSessionBook:
             return NewSession(cookie)
 
         result = await self._run(Stage.SESSION_CREATE, begin)
-        await self._cleanup(subject)
+        self._schedule_cleanup(subject)
         return result
 
     async def end(self, grant: Grant, scope: LogoutScope):
@@ -297,7 +334,7 @@ class PostgresSessionBook:
                 self._end_row(conn, row)
 
         await self._run(Stage.SESSION_END, end)
-        await self._cleanup(subject)
+        self._schedule_cleanup(subject)
 
     async def _drop(self, original, reason, *, nonce=None):
         def drop(conn):
@@ -317,7 +354,7 @@ class PostgresSessionBook:
             return SignIn(reason)
 
         result = await self._run(Stage.SESSION_END, drop)
-        await self._cleanup(original["subject"])
+        self._schedule_cleanup(original["subject"])
         return result
 
     async def authorize(self, cookie, access):
@@ -329,6 +366,8 @@ class PostgresSessionBook:
         while True:
             row = await self._load(key)
             if not row or row["subject"] not in self._verifier.subjects:
+                return SignIn(EndReason.ABSENT)
+            if row["ended"] or row["generation"] != row["owner_generation"]:
                 return SignIn(EndReason.ABSENT)
             if reason := self._invalid(row):
                 result = await self._drop(row, reason)
@@ -567,7 +606,7 @@ class PostgresSessionBook:
                 return self._grant(confirmed)
             await self._discard(original, refresh)
             raise
-        await self._cleanup(original["subject"])
+        self._schedule_cleanup(original["subject"])
         return result
 
     async def _discard(self, original, refresh):
@@ -581,7 +620,7 @@ class PostgresSessionBook:
             )
 
         await self._run(Stage.RENEWAL_SETTLE, discard)
-        await self._cleanup(original["subject"])
+        self._schedule_cleanup(original["subject"])
 
     async def _cleanup(self, subject):
         """Durable retry work; a failure cannot undo confirmed local logout."""
@@ -595,20 +634,31 @@ class PostgresSessionBook:
             now = self._time(conn)
             return conn.execute(
                 "UPDATE reader_session_retirements SET claim=%s,retry_at=%s "
-                "WHERE epoch=%s AND subject=%s AND NOT completed AND retry_at<=%s RETURNING *",
-                (nonce, now + LEASE_SECONDS, self._epoch, subject, now),
+                "WHERE epoch=%s AND subject=%s AND refresh_id IN "
+                "(SELECT refresh_id FROM reader_session_retirements WHERE epoch=%s AND subject=%s "
+                "AND NOT completed AND retry_at<=%s ORDER BY refresh_id LIMIT 8) RETURNING *",
+                (
+                    nonce,
+                    now + LEASE_SECONDS,
+                    self._epoch,
+                    subject,
+                    self._epoch,
+                    subject,
+                    now,
+                ),
             ).fetchall()
 
         try:
             rows = await self._run(Stage.SESSION_END, claim)
-            for row in rows:
+
+            async def revoke(row):
                 try:
                     with stage(Stage.PROVIDER_REVOKE) as span:
                         span.attempt()
                         async with asyncio.timeout(PROVIDER_TIMEOUT):
                             await self._identity.revoke(self._decrypt(row["token"]))
-                except Exception:  # noqa: BLE001, S112 - retained for a subsequent cleanup attempt
-                    continue
+                except Exception:  # noqa: BLE001 - retained for a subsequent cleanup attempt
+                    return
 
                 def completed(conn, row=row):
                     conn.execute(
@@ -618,5 +668,7 @@ class PostgresSessionBook:
                     )
 
                 await self._run(Stage.SESSION_END, completed)
+
+            await asyncio.gather(*(revoke(row) for row in rows), return_exceptions=True)
         except Exception:  # noqa: BLE001 - cleanup never changes the committed admission decision
             return
