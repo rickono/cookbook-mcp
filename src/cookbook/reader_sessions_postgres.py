@@ -595,9 +595,14 @@ class PostgresSessionBook:
                 if isinstance(error, (TimeoutError, OSError, httpx.TransportError))
                 else EndReason.RENEWAL_REFUSED
             )
-            result = await self._drop(original, reason, nonce=nonce)
-            if tokens and tokens.refresh:
-                await self._discard(original, tokens.refresh)
+            try:
+                result = await self._drop(original, reason, nonce=nonce)
+                if tokens and tokens.refresh:
+                    await self._discard(original, tokens.refresh)
+            except Exception:
+                if tokens and tokens.refresh:
+                    await self._reconcile(original, nonce, tokens.refresh)
+                raise
             return (
                 SignIn(EndReason.ENDED_DURING_RENEWAL)
                 if isinstance(result, _Retry)
@@ -688,17 +693,35 @@ class PostgresSessionBook:
         try:
             result = await self._run(Stage.RENEWAL_SETTLE, settle)
         except Exception:
-            confirmed = await self._load(original["key"])
-            if (
-                confirmed
-                and confirmed["settled"] == nonce
-                and not self._invalid(confirmed)
-            ):
-                return self._grant(confirmed)
-            await self._discard(original, refresh)
+            confirmed = await self._reconcile(original, nonce, refresh)
+            if confirmed:
+                return confirmed
             raise
         self._schedule_cleanup(original["subject"])
         return result
+
+    async def _reconcile(self, original, nonce, refresh):
+        """Retain the provider result in its tracked renewal until DB confirmation.
+
+        Never repeat the exchange or revoke based on an unavailable read. A
+        retirement transaction rechecks references under the owner lock, even
+        if an earlier failed commit completes after the confirmation read.
+        """
+        attempt = 0
+        while True:
+            try:
+                confirmed = await self._load(original["key"])
+                if (
+                    confirmed
+                    and confirmed["settled"] == nonce
+                    and not self._invalid(confirmed)
+                ):
+                    return self._grant(confirmed)
+                await self._discard(original, refresh)
+                return None
+            except Exception:  # noqa: BLE001 - transient database failure must retain the returned credential
+                await asyncio.sleep(RENEWAL_POLL[min(attempt, len(RENEWAL_POLL) - 1)])
+                attempt += 1
 
     async def _discard(self, original, refresh):
         def discard(conn):

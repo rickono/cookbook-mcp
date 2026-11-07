@@ -130,3 +130,34 @@ def test_runtime_rejects_unlogged_authority_metadata(database):
         conn.execute("ALTER TABLE reader_session_schema_version SET UNLOGGED")
     with pytest.raises(ValueError, match="logged"):
         preflight(runtime)
+
+
+@pytest.mark.parametrize("indirect", [False, True])
+def test_startup_rejects_set_role_privileges_even_with_noinherit(database, indirect):
+    admin, runtime = database
+    initialize(admin, "reader_runtime")
+    with psycopg.connect(admin, autocommit=True) as conn:
+        conn.execute("CREATE ROLE schema_owner NOLOGIN")
+        conn.execute("ALTER TABLE reader_session_schema_version OWNER TO schema_owner")
+        conn.execute("ALTER ROLE reader_runtime NOINHERIT")
+        if indirect:
+            conn.execute("CREATE ROLE intermediate_role NOLOGIN NOINHERIT")
+            conn.execute("GRANT schema_owner TO intermediate_role")
+            conn.execute("GRANT intermediate_role TO reader_runtime")
+        else:
+            conn.execute("GRANT schema_owner TO reader_runtime")
+    try:
+        with psycopg.connect(runtime) as conn:
+            conn.execute("SET ROLE schema_owner")
+            conn.execute("UPDATE reader_session_schema_version SET version=version")
+        with pytest.raises(ValueError, match="assume another role"):
+            preflight(runtime)
+        with pytest.raises(ValueError, match="assume another role"):
+            initialize(admin, "reader_runtime")
+    finally:
+        with psycopg.connect(admin, autocommit=True) as conn:
+            conn.execute("ALTER ROLE reader_runtime INHERIT")
+            conn.execute("REASSIGN OWNED BY schema_owner TO reader_trial")
+            if indirect:
+                conn.execute("DROP ROLE intermediate_role")
+            conn.execute("DROP ROLE schema_owner")

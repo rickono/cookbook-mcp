@@ -10,7 +10,7 @@ Before activation, verify the provider's acknowledged-write durability and old-p
 
 ## Prepare the database explicitly
 
-1. Create a dedicated database and a restricted login. Keep its credentials separate from schema-administrator credentials. The runtime login must have no superuser, database creation, role creation, replication, row-security bypass, database object creation, or schema metadata mutation privileges.
+1. Create a dedicated database and a restricted login with direct grants. Keep its credentials separate from schema-administrator credentials. The runtime login must have no superuser, database creation, role creation, replication, row-security bypass, database object creation, or schema metadata mutation privileges. Direct and indirect memberships that permit `SET ROLE` are rejected, including `NOINHERIT` memberships.
 2. Save the administrator connection string in a private file with mode `0600`. Use the provider's direct primary endpoint.
 3. Initialize the schema and grant the runtime login access to the session tables:
 
@@ -52,7 +52,9 @@ The exact credential-fencing and machine-update commands must be prepared agains
 
 The PostgreSQL adapter retries due revocations every 60 seconds, independently of HTTP activity. Cleanup continues through the due backlog in batches of at most eight concurrent provider calls. Failed tokens stay durable and are attempted once per drain. Maintenance expires sessions under the owner lock, removes ended device rows, and clears completed retirement ciphertexts. Token-identity fences remain because deleting them could permit reuse of a consumed token.
 
-A claimed provider exchange continues after an HTTP timeout and settles or retires its returned token. Shutdown stops maintenance, drains exchanges, finishes the current cleanup batch, and closes the pool. New connections and authorization reads reject recovery-mode replicas. A confirmed database read is still required on every protected request.
+A claimed provider exchange continues after an HTTP timeout and settles or retires its returned token. If settlement and confirmation both fail during a database outage, the tracked task retains the returned credential and retries confirmation and reference-checked retirement without another provider exchange. It never revokes based on an unavailable confirmation read. Graceful shutdown waits for that reconciliation before closing the pool, so database recovery may be necessary before shutdown finishes. A forced process termination during the outage can still lose an unpersisted provider response; local admission stays fail closed, and provider cleanup remains best effort in that failure case.
+
+Shutdown stops maintenance, drains exchanges, finishes the current cleanup batch, and closes the pool. New connections and authorization reads reject recovery-mode replicas. A confirmed database read is still required on every protected request.
 
 Rollback must retain PostgreSQL authority. Do not redeploy an R2-only image or revive legacy objects. If the new authority is unavailable, fail closed. A database restore requires fresh out-of-database encryption/authority keys and fresh sign-in before restored rows can be served. A version row restored from the same backup is not a recovery fence. Test this procedure before relying on it.
 

@@ -983,3 +983,116 @@ def test_http_timeout_does_not_abandon_rotated_credentials(
             postgres_reader.readers[0].cipher.decrypt(stored["refresh"])
             == b"rotation-after-timeout"
         )
+
+
+@pytest.mark.parametrize("committed", [False, True])
+def test_rotated_token_is_retained_through_database_outage_and_recovery(
+    reader_env, postgres_reader, monkeypatch, mint, committed
+):
+    from cookbook.reader_diagnostics import Stage
+
+    factory, identity, clock = reader_env
+    calls, revoked = [], []
+    monkeypatch.setattr("cookbook.reader.DEADLINE", 0.1)
+
+    async def renew(token):
+        calls.append(token)
+        return {
+            "access_token": mint(iat=int(clock[0]), exp=int(clock[0]) + 600),
+            "refresh_token": "retained-during-database-outage",
+        }
+
+    async def revoke(token):
+        revoked.append(token)
+
+    identity.renew, identity.revoke = renew, revoke
+    with TestClient(factory(), base_url="https://reader.example") as client:
+        login(client)
+        expire(clock, monkeypatch)
+        book = postgres_reader.readers[0].sessions
+        original = book._run
+        state = {"down": False, "fired": False}
+
+        async def failed_database(at, operation, **kwargs):
+            if at is Stage.RENEWAL_SETTLE and not state["fired"]:
+                state["fired"] = True
+                if committed:
+                    await original(at, operation, **kwargs)
+                state["down"] = True
+            if state["down"]:
+                raise OSError("private database outage sentinel")
+            return await original(at, operation, **kwargs)
+
+        monkeypatch.setattr(book, "_run", failed_database)
+        response = client.get("/reader/catalog")
+        assert response.status_code == 503
+        assert "private database" not in response.text
+        assert book._renewals
+        assert revoked == []
+        state["down"] = False
+        client.portal.call(book._drain_renewals)
+        drain_cleanup(client, postgres_reader)
+        assert calls == ["synthetic-refresh"]
+        if committed:
+            assert revoked == []
+            assert client.get("/reader/session").status_code == 200
+        else:
+            assert revoked == ["retained-during-database-outage"]
+            clock[0] += 10
+            assert client.get("/reader/session").status_code == 401
+            assert calls == ["synthetic-refresh"]
+
+
+def test_shutdown_keeps_reconciliation_and_pool_until_database_recovers(
+    reader_env, postgres_reader, monkeypatch, mint
+):
+    from cookbook.reader_diagnostics import Stage
+
+    factory, identity, clock = reader_env
+    monkeypatch.setattr("cookbook.reader.DEADLINE", 0.1)
+    revoked, closing = [], Event()
+
+    async def renew(token):
+        return {
+            "access_token": mint(iat=int(clock[0]), exp=int(clock[0]) + 600),
+            "refresh_token": "shutdown-reconciliation",
+        }
+
+    async def revoke(token):
+        revoked.append(token)
+
+    identity.renew, identity.revoke = renew, revoke
+    with TestClient(factory(), base_url="https://reader.example") as client:
+        login(client)
+        expire(clock, monkeypatch)
+        book = postgres_reader.readers[0].sessions
+        original = book._run
+        state = {"down": False}
+
+        async def database(at, operation, **kwargs):
+            if at is Stage.RENEWAL_SETTLE:
+                state["down"] = True
+            if state["down"]:
+                raise OSError("synthetic outage")
+            return await original(at, operation, **kwargs)
+
+        monkeypatch.setattr(book, "_run", database)
+        assert client.get("/reader/catalog").status_code == 503
+        draining = book._drain_renewals
+
+        async def observed():
+            closing.set()
+            await draining()
+
+        monkeypatch.setattr(book, "_drain_renewals", observed)
+        finish = client.portal.start_task_soon(book.close)
+        try:
+            assert closing.wait(2)
+            assert not finish.done() and not book._pool.closed
+        finally:
+            # Recovery after a transient outage; the settlement itself failed,
+            # so only a fresh reference-checked retirement is permitted.
+            monkeypatch.setattr(book, "_run", original)
+        finish.result(timeout=5)
+        assert revoked == ["shutdown-reconciliation"]
+        assert book._pool.closed
