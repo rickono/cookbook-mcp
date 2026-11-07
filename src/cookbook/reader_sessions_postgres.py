@@ -1,7 +1,7 @@
-"""Local PostgreSQL trial of the reader lifecycle, behind the existing interface.
+"""PostgreSQL reader lifecycle with explicit provisioning and backend selection.
 
-No environment selector or automatic migration: the hosted service keeps R2.
 Pool work runs in threads; no JWT or provider await holds a SQL transaction.
+Runtime never migrates schema. The hosted default remains R2 until cutover.
 """
 
 from __future__ import annotations

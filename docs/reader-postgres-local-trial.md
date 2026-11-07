@@ -2,7 +2,7 @@
 
 The reader runs against PostgreSQL through its existing `begin`, `authorize`, and `end` session interface. The trial uses the actual HTTP handlers, signed JWT verification, encrypted credentials, and synthetic publication fixtures. It makes no provider or R2 calls.
 
-The implementation is on `prototype/local-postgres-sessions`. Hosted configuration still selects the existing R2 authority. PostgreSQL requires the optional `postgres` dependency and an explicit `Reader(session_database=...)` argument. Application startup does not create or migrate tables.
+The reviewed implementation is on `prototype/local-postgres-sessions`. PostgreSQL requires the optional `postgres` dependency and an explicit `Reader(session_database=...)` argument. Subsequent [production preparation](reader-session-deployment.md) adds an environment selector and startup checks. The default remains R2, and application startup does not create or migrate tables.
 
 ## Reproduction command
 
