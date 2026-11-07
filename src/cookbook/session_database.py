@@ -35,12 +35,23 @@ def _no_role_memberships(conn, role):
     # The runtime receives direct grants. Reject all memberships, including
     # NOINHERIT/SET-false grants whose ADMIN option can enable escalation.
     if conn.execute(
-        "SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname<>%s AND pg_has_role(%s,oid,'MEMBER'))",
+        "SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_roles WHERE rolname<>%s AND pg_catalog.pg_has_role(%s,oid,'MEMBER'))",
         (role, role),
     ).fetchone()[0]:
         raise PreflightRefused(
             "Session runtime login must not assume another role or hold role memberships"
         )
+
+
+def _no_object_creation(conn, role):
+    if any(
+        conn.execute(
+            "SELECT pg_catalog.has_database_privilege(%s,pg_catalog.current_database(),'CREATE'),"
+            "pg_catalog.has_schema_privilege(%s,'public','CREATE')",
+            (role, role),
+        ).fetchone()
+    ):
+        raise PreflightRefused("Session runtime login must not create database objects")
 
 
 def initialize(conninfo, runtime_role):
@@ -49,21 +60,29 @@ def initialize(conninfo, runtime_role):
     with psycopg.connect(
         conninfo,
         connect_timeout=5,
-        options="-c statement_timeout=5000 -c search_path=public,pg_catalog",
+        options="-c statement_timeout=5000 -c search_path=public",
     ) as conn:
-        conn.execute("SELECT pg_advisory_xact_lock(1340701)")
-        if conn.execute("SELECT pg_is_in_recovery()").fetchone()[0]:
+        conn.execute("SELECT pg_catalog.pg_advisory_xact_lock(1340701)")
+        if conn.execute("SELECT pg_catalog.pg_is_in_recovery()").fetchone()[0]:
             raise PreflightRefused("Session provisioning requires the primary")
+        role = conn.execute(
+            "SELECT rolsuper,rolcreatedb,rolcreaterole,rolreplication,rolbypassrls FROM pg_catalog.pg_roles WHERE rolname=%s",
+            (runtime_role,),
+        ).fetchone()
+        if role is None or any(role):
+            raise PreflightRefused("Provision a restricted runtime login first")
+        _no_role_memberships(conn, runtime_role)
+        _no_object_creation(conn, runtime_role)
         if (
             conn.execute(
-                "SELECT to_regclass('public.reader_session_schema_version')"
+                "SELECT pg_catalog.to_regclass('public.reader_session_schema_version')"
             ).fetchone()[0]
             is None
         ):
             if any(
-                conn.execute("SELECT to_regclass(%s)", ("public." + table,)).fetchone()[
-                    0
-                ]
+                conn.execute(
+                    "SELECT pg_catalog.to_regclass(%s)", ("public." + table,)
+                ).fetchone()[0]
                 for table in TABLES
             ):
                 raise PreflightRefused("Refusing an unversioned session schema")
@@ -75,18 +94,19 @@ def initialize(conninfo, runtime_role):
                 "INSERT INTO public.reader_session_schema_version VALUES(true,%s,%s)",
                 (VERSION, digest),
             )
+        metadata = conn.execute(
+            "SELECT relkind,relowner=(SELECT oid FROM pg_catalog.pg_roles WHERE rolname=current_user) "
+            "FROM pg_catalog.pg_class WHERE oid=pg_catalog.to_regclass('public.reader_session_schema_version')"
+        ).fetchone()
+        if metadata != ("r", True):
+            raise PreflightRefused(
+                "Session schema metadata must be a table owned by the provisioning login"
+            )
         stored = conn.execute(
             "SELECT version,digest FROM public.reader_session_schema_version"
         ).fetchall()
         if stored != [(VERSION, digest)]:
             raise PreflightRefused("Unsupported session schema version")
-        role = conn.execute(
-            "SELECT rolsuper,rolcreatedb,rolcreaterole,rolreplication,rolbypassrls FROM pg_roles WHERE rolname=%s",
-            (runtime_role,),
-        ).fetchone()
-        if role is None or any(role):
-            raise PreflightRefused("Provision a restricted runtime login first")
-        _no_role_memberships(conn, runtime_role)
         conn.execute(
             sql.SQL("GRANT USAGE ON SCHEMA public TO {}").format(
                 sql.Identifier(runtime_role)
@@ -128,14 +148,9 @@ def preflight(conninfo):
             raise PreflightRefused(
                 "Session runtime login has administrative privileges"
             )
-        _no_role_memberships(conn, conn.execute("SELECT current_user").fetchone()[0])
-        ddl = conn.execute(
-            "SELECT has_database_privilege(current_database(),'CREATE'),has_schema_privilege('public','CREATE')"
-        ).fetchone()
-        if any(ddl):
-            raise PreflightRefused(
-                "Session runtime login must not create database objects"
-            )
+        runtime_role = conn.execute("SELECT current_user").fetchone()[0]
+        _no_role_memberships(conn, runtime_role)
+        _no_object_creation(conn, runtime_role)
         if (
             conn.execute(
                 "SELECT to_regclass('public.reader_session_schema_version')"
@@ -143,6 +158,16 @@ def preflight(conninfo):
             is None
         ):
             raise PreflightRefused("Session database schema is not initialized")
+        for table in (*TABLES, META):
+            row = conn.execute(
+                "SELECT relowner=(SELECT oid FROM pg_roles WHERE rolname=current_user) "
+                "FROM pg_class WHERE oid=to_regclass(%s)",
+                ("public." + table,),
+            ).fetchone()
+            if row and row[0]:
+                raise PreflightRefused(
+                    "Session runtime login must not own session tables"
+                )
         if not conn.execute(
             "SELECT has_table_privilege(%s,%s)", ("public." + META, "SELECT")
         ).fetchone()[0]:

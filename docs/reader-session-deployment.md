@@ -24,7 +24,7 @@ uv run --extra postgres python -m cookbook.session_database initialize --dsn-fil
 uv run --extra postgres python -m cookbook.session_database check --dsn-file /private/path/runtime-dsn
 ```
 
-The initializer is atomic and repeatable for the supported version. It refuses existing unversioned session tables. It never adopts a trial database or upgrades a live schema implicitly. The schema version and source digest must match the deployment image. Runtime startup validates the primary, durable settings, logged tables, schema metadata, and privileges without changing schema. Fixed refusal reasons identify version, privilege, or durability problems. Credentials and driver exceptions are excluded from output.
+The initializer is atomic and repeatable for the supported version. Repeat initialization with the same provisioning login; existing version metadata must be a table it owns. It checks the runtime login before creating tables, resolves administrative built-ins in `pg_catalog`, and refuses existing unversioned session tables. It never adopts a trial database or upgrades a live schema implicitly. The schema version and source digest must match the deployment image. Runtime startup validates the primary, durable settings, logged tables, schema metadata, and privileges without changing schema. The runtime login must not own any session or metadata table. Fixed refusal reasons identify version, privilege, or durability problems. Credentials and driver exceptions are excluded from output.
 
 ## Prove the release before cutover
 
@@ -56,7 +56,7 @@ The image smoke imports psycopg and its pool, loads bundled libpq, and reads the
 
 A claimed provider exchange continues after an HTTP timeout and settles or retires its returned token. If settlement and confirmation both fail during a database outage, the tracked task retains the returned credential and retries confirmation and reference-checked retirement without another provider exchange. It never revokes based on an unavailable confirmation read. Graceful shutdown waits for that reconciliation before closing the pool, so database recovery may be necessary before shutdown finishes. A forced process termination during the outage can still lose an unpersisted provider response; local admission stays fail closed, and provider cleanup remains best effort in that failure case.
 
-Shutdown stops maintenance, drains exchanges, finishes the current cleanup batch, and closes the pool. New connections and authorization reads reject recovery-mode replicas. A confirmed database read is still required on every protected request.
+Shutdown stops maintenance, drains exchanges, finishes the current cleanup batch, and closes the pool. Runtime connections have a five-second server-side idle-transaction timeout, releasing locks when a disconnected client leaves a transaction idle. New connections and authorization reads reject recovery-mode replicas. A confirmed database read is still required on every protected request.
 
 Rollback must retain PostgreSQL authority. Do not redeploy an R2-only image or revive legacy objects. If the new authority is unavailable, fail closed. A database restore requires fresh out-of-database encryption/authority keys and fresh sign-in before restored rows can be served. A version row restored from the same backup is not a recovery fence. Test this procedure before relying on it.
 

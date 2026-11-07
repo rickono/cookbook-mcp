@@ -1123,3 +1123,26 @@ def test_periodic_maintenance_failure_emits_only_a_fixed_event(
     output = capsys.readouterr().out
     assert "session_maintenance_failed" in output
     assert "PRIVATE-MAINTENANCE-SENTINEL" not in output
+
+
+def test_abandoned_idle_transaction_releases_owner_lock(reader_env, postgres_reader):
+    factory, _, _ = reader_env
+    with TestClient(factory(), base_url="https://reader.example") as client:
+        assert login(client).headers["location"] == "/reader/catalog"
+        book = postgres_reader.readers[0].sessions
+        conn = book._pool.getconn()
+        try:
+            conn.execute("BEGIN")
+            conn.execute("SELECT * FROM reader_session_owners FOR UPDATE")
+            # The competing writer must succeed after the server closes the
+            # abandoned transaction, without cooperation from its client.
+            with psycopg.connect(postgres_reader.conninfo, autocommit=True) as other:
+                other.execute("SET statement_timeout=8000")
+                other.execute("SET lock_timeout=7000")
+                other.execute("UPDATE reader_session_owners SET generation=generation")
+            with pytest.raises(psycopg.Error):
+                conn.execute("SELECT 1")
+        finally:
+            conn.close()
+            book._pool.putconn(conn)
+        assert client.get("/reader/catalog").status_code == 200

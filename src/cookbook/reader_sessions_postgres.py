@@ -88,7 +88,7 @@ class PostgresSessionBook:
                 "autocommit": True,
                 "row_factory": dict_row,
                 "connect_timeout": 2,
-                "options": "-c statement_timeout=3000 -c lock_timeout=2000 -c synchronous_commit=on -c search_path=pg_catalog,public",
+                "options": "-c statement_timeout=3000 -c lock_timeout=2000 -c idle_in_transaction_session_timeout=5000 -c synchronous_commit=on -c search_path=pg_catalog,public",
             },
         )
 

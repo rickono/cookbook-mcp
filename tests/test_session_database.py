@@ -212,3 +212,126 @@ def test_cli_reports_fixed_refusal_reason(database, tmp_path, monkeypatch, capsy
     output = capsys.readouterr().out
     assert "Unsupported session schema version" in output
     assert runtime not in output
+
+
+@pytest.mark.parametrize(
+    "signature,result,ending",
+    [
+        ("pg_is_in_recovery()", "boolean", "RETURN false;"),
+        ("pg_advisory_xact_lock(integer)", "void", "RETURN;"),
+    ],
+)
+def test_initializer_does_not_execute_public_shadow_functions(
+    database, signature, result, ending
+):
+    admin, runtime = database
+    with psycopg.connect(admin, autocommit=True) as conn:
+        conn.execute("CREATE TABLE initializer_canary(actor text)")
+        conn.execute("GRANT INSERT ON initializer_canary TO reader_runtime")
+        conn.execute("GRANT CREATE ON SCHEMA public TO reader_runtime")
+    try:
+        with psycopg.connect(runtime, autocommit=True) as conn:
+            conn.execute(
+                f"CREATE FUNCTION public.{signature} RETURNS {result} "
+                "LANGUAGE plpgsql AS $$ BEGIN "
+                "INSERT INTO public.initializer_canary VALUES(current_user); "
+                f"{ending} END $$"
+            )
+        with psycopg.connect(admin, autocommit=True) as conn:
+            conn.execute("REVOKE CREATE ON SCHEMA public FROM reader_runtime")
+        initialize(admin, "reader_runtime")
+        assert preflight(runtime)["restricted_role"]
+        with psycopg.connect(admin) as conn:
+            assert conn.execute("SELECT * FROM initializer_canary").fetchall() == []
+    finally:
+        with psycopg.connect(admin, autocommit=True) as conn:
+            conn.execute(f"DROP FUNCTION IF EXISTS public.{signature}")
+            conn.execute("DROP TABLE initializer_canary")
+            conn.execute("REVOKE CREATE ON SCHEMA public FROM reader_runtime")
+
+
+@pytest.mark.parametrize("scope", ["schema", "database"])
+def test_initializer_refuses_runtime_object_creation_before_creating_schema(
+    database, scope
+):
+    admin, _ = database
+    from psycopg import sql
+
+    with psycopg.connect(admin, autocommit=True) as conn:
+        target = (
+            sql.SQL("SCHEMA public")
+            if scope == "schema"
+            else sql.SQL("DATABASE {}").format(
+                sql.Identifier(conn.execute("SELECT current_database()").fetchone()[0])
+            )
+        )
+        conn.execute(sql.SQL("GRANT CREATE ON {} TO reader_runtime").format(target))
+    try:
+        with pytest.raises(ValueError, match="must not create database objects"):
+            initialize(admin, "reader_runtime")
+        with psycopg.connect(admin) as conn:
+            assert conn.execute(
+                "SELECT to_regclass('public.reader_session_owners')"
+            ).fetchone() == (None,)
+    finally:
+        with psycopg.connect(admin, autocommit=True) as conn:
+            conn.execute(
+                sql.SQL("REVOKE CREATE ON {} FROM reader_runtime").format(target)
+            )
+
+
+@pytest.mark.parametrize(
+    "table",
+    [
+        "reader_session_owners",
+        "reader_device_sessions",
+        "reader_session_exchanges",
+        "reader_session_retirements",
+        "reader_session_schema_version",
+    ],
+)
+def test_preflight_rejects_runtime_table_ownership(database, table):
+    from psycopg import sql
+
+    admin, runtime = database
+    initialize(admin, "reader_runtime")
+    with psycopg.connect(admin, autocommit=True) as conn:
+        conn.execute(
+            sql.SQL("ALTER TABLE public.{} OWNER TO reader_runtime").format(
+                sql.Identifier(table)
+            )
+        )
+    with pytest.raises(ValueError, match="must not own session tables"):
+        preflight(runtime)
+
+
+def test_initializer_refuses_untrusted_metadata_before_selecting_it(database):
+    admin, runtime = database
+    with psycopg.connect(admin, autocommit=True) as conn:
+        conn.execute("CREATE TABLE initializer_canary(actor text)")
+        conn.execute("GRANT INSERT ON initializer_canary TO reader_runtime")
+        conn.execute("GRANT CREATE ON SCHEMA public TO reader_runtime")
+    try:
+        with psycopg.connect(runtime, autocommit=True) as conn:
+            conn.execute(
+                "CREATE FUNCTION public.provisioning_trap() RETURNS text "
+                "LANGUAGE plpgsql AS $$ BEGIN "
+                "INSERT INTO public.initializer_canary VALUES(current_user); "
+                "RETURN 'synthetic'; END $$"
+            )
+            conn.execute(
+                "CREATE VIEW reader_session_schema_version AS "
+                "SELECT 1 AS version,public.provisioning_trap() AS digest"
+            )
+        with psycopg.connect(admin, autocommit=True) as conn:
+            conn.execute("REVOKE CREATE ON SCHEMA public FROM reader_runtime")
+        with pytest.raises(ValueError, match="owned by the provisioning login"):
+            initialize(admin, "reader_runtime")
+        with psycopg.connect(admin) as conn:
+            assert conn.execute("SELECT * FROM initializer_canary").fetchall() == []
+    finally:
+        with psycopg.connect(admin, autocommit=True) as conn:
+            conn.execute("DROP VIEW IF EXISTS reader_session_schema_version")
+            conn.execute("DROP FUNCTION IF EXISTS public.provisioning_trap()")
+            conn.execute("DROP TABLE initializer_canary")
+            conn.execute("REVOKE CREATE ON SCHEMA public FROM reader_runtime")
