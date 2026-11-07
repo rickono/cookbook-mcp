@@ -39,8 +39,8 @@ jobs:
         run: uv run --extra postgres pytest -q tests/test_reader_session_config.py tests/test_reader_benchmark_control.py
       - name: Check deployment code
         run: |
-          uv run --extra postgres ruff check src/cookbook/session_database.py scripts/local_session_postgres.py scripts/try_postgres_reader.py tests/test_session_database.py tests/test_reader_session_config.py
-          uv run --extra postgres ruff format --check src/cookbook/session_database.py scripts/local_session_postgres.py scripts/try_postgres_reader.py tests/test_session_database.py tests/test_reader_session_config.py
+          uv run --extra postgres ruff check src/cookbook/session_database.py src/cookbook/hosted.py scripts/local_session_postgres.py scripts/try_postgres_reader.py tests/test_session_database.py tests/test_reader_session_config.py
+          uv run --extra postgres ruff format --check src/cookbook/session_database.py src/cookbook/hosted.py scripts/local_session_postgres.py scripts/try_postgres_reader.py tests/test_session_database.py tests/test_reader_session_config.py
       - name: Build native Linux deployment image with source-free search smoke check
         run: docker build --platform linux/amd64 -t cookbook-postgres-ci .
   serving:

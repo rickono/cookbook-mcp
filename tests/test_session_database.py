@@ -191,3 +191,24 @@ def test_startup_rejects_admin_membership_with_set_initially_disabled(database):
         with psycopg.connect(admin, autocommit=True) as conn:
             conn.execute("REASSIGN OWNED BY nonset_admin_role TO reader_trial")
             conn.execute("DROP ROLE nonset_admin_role")
+
+
+def test_cli_reports_fixed_refusal_reason(database, tmp_path, monkeypatch, capsys):
+    import sys
+
+    from cookbook.session_database import main
+
+    admin, runtime = database
+    initialize(admin, "reader_runtime")
+    with psycopg.connect(admin, autocommit=True) as conn:
+        conn.execute("UPDATE reader_session_schema_version SET version=2")
+    secret = tmp_path / "dsn"
+    secret.write_text(runtime)
+    secret.chmod(0o600)
+    monkeypatch.setattr(
+        sys, "argv", ["session_database", "check", "--dsn-file", str(secret)]
+    )
+    assert main() == 1
+    output = capsys.readouterr().out
+    assert "Unsupported session schema version" in output
+    assert runtime not in output

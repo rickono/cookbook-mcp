@@ -1,4 +1,4 @@
--- Local trial authority. Apply explicitly; reader startup never migrates a database.
+-- Reader session authority. Provision explicitly; runtime never migrates schema.
 CREATE TABLE reader_session_owners (
     epoch text NOT NULL,
     subject text NOT NULL,

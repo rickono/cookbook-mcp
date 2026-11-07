@@ -22,6 +22,10 @@ TABLES = (
 META = "reader_session_schema_version"
 
 
+class PreflightRefused(ValueError):
+    """A fixed operator-readable refusal containing no connection details."""
+
+
 def _schema():
     raw = Path(__file__).with_name("reader_session_schema.sql").read_bytes()
     return raw.decode(), hashlib.sha256(raw).hexdigest()
@@ -34,7 +38,7 @@ def _no_role_memberships(conn, role):
         "SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname<>%s AND pg_has_role(%s,oid,'MEMBER'))",
         (role, role),
     ).fetchone()[0]:
-        raise ValueError(
+        raise PreflightRefused(
             "Session runtime login must not assume another role or hold role memberships"
         )
 
@@ -49,7 +53,7 @@ def initialize(conninfo, runtime_role):
     ) as conn:
         conn.execute("SELECT pg_advisory_xact_lock(1340701)")
         if conn.execute("SELECT pg_is_in_recovery()").fetchone()[0]:
-            raise ValueError("Session provisioning requires the primary")
+            raise PreflightRefused("Session provisioning requires the primary")
         if (
             conn.execute(
                 "SELECT to_regclass('public.reader_session_schema_version')"
@@ -62,7 +66,7 @@ def initialize(conninfo, runtime_role):
                 ]
                 for table in TABLES
             ):
-                raise ValueError("Refusing an unversioned session schema")
+                raise PreflightRefused("Refusing an unversioned session schema")
             conn.execute(ddl)
             conn.execute(
                 "CREATE TABLE public.reader_session_schema_version (singleton boolean PRIMARY KEY CHECK(singleton), version integer NOT NULL, digest text NOT NULL)"
@@ -75,13 +79,13 @@ def initialize(conninfo, runtime_role):
             "SELECT version,digest FROM public.reader_session_schema_version"
         ).fetchall()
         if stored != [(VERSION, digest)]:
-            raise ValueError("Unsupported session schema version")
+            raise PreflightRefused("Unsupported session schema version")
         role = conn.execute(
             "SELECT rolsuper,rolcreatedb,rolcreaterole,rolreplication,rolbypassrls FROM pg_roles WHERE rolname=%s",
             (runtime_role,),
         ).fetchone()
         if role is None or any(role):
-            raise ValueError("Provision a restricted runtime login first")
+            raise PreflightRefused("Provision a restricted runtime login first")
         _no_role_memberships(conn, runtime_role)
         conn.execute(
             sql.SQL("GRANT USAGE ON SCHEMA public TO {}").format(
@@ -114,34 +118,53 @@ def preflight(conninfo):
             "SELECT pg_is_in_recovery(), current_setting('transaction_read_only'), current_setting('fsync'),current_setting('synchronous_commit')"
         ).fetchone()
         if state != (False, "off", "on", "on"):
-            raise ValueError("Session database requires a durable writable primary")
+            raise PreflightRefused(
+                "Session database requires a durable writable primary"
+            )
         role = conn.execute(
             "SELECT rolsuper,rolcreatedb,rolcreaterole,rolreplication,rolbypassrls FROM pg_roles WHERE rolname=current_user"
         ).fetchone()
         if any(role):
-            raise ValueError("Session runtime login has administrative privileges")
+            raise PreflightRefused(
+                "Session runtime login has administrative privileges"
+            )
         _no_role_memberships(conn, conn.execute("SELECT current_user").fetchone()[0])
         ddl = conn.execute(
             "SELECT has_database_privilege(current_database(),'CREATE'),has_schema_privilege('public','CREATE')"
         ).fetchone()
         if any(ddl):
-            raise ValueError("Session runtime login must not create database objects")
+            raise PreflightRefused(
+                "Session runtime login must not create database objects"
+            )
+        if (
+            conn.execute(
+                "SELECT to_regclass('public.reader_session_schema_version')"
+            ).fetchone()[0]
+            is None
+        ):
+            raise PreflightRefused("Session database schema is not initialized")
+        if not conn.execute(
+            "SELECT has_table_privilege(%s,%s)", ("public." + META, "SELECT")
+        ).fetchone()[0]:
+            raise PreflightRefused(
+                "Session runtime login lacks required table privileges"
+            )
         if conn.execute(
             "SELECT version,digest FROM public.reader_session_schema_version"
         ).fetchall() != [(VERSION, digest)]:
-            raise ValueError("Unsupported session schema version")
+            raise PreflightRefused("Unsupported session schema version")
         if conn.execute(
             "SELECT has_table_privilege(%s,%s)",
             ("public." + META, "INSERT,UPDATE,DELETE,TRUNCATE"),
         ).fetchone()[0]:
-            raise ValueError("Session runtime login can change schema metadata")
+            raise PreflightRefused("Session runtime login can change schema metadata")
         for table in (*TABLES, META):
             row = conn.execute(
                 "SELECT relpersistence FROM pg_class WHERE oid=to_regclass(%s)",
                 ("public." + table,),
             ).fetchone()
             if row != ("p",):
-                raise ValueError("Session authority requires logged tables")
+                raise PreflightRefused("Session authority requires logged tables")
             for privilege in (
                 ("SELECT",)
                 if table == META
@@ -150,7 +173,7 @@ def preflight(conninfo):
                 if not conn.execute(
                     "SELECT has_table_privilege(%s,%s)", ("public." + table, privilege)
                 ).fetchone()[0]:
-                    raise ValueError(
+                    raise PreflightRefused(
                         "Session runtime login lacks required table privileges"
                     )
     return {"schema_version": VERSION, "primary": True, "restricted_role": True}
@@ -167,13 +190,20 @@ def main():
     try:
         info = args.dsn_file.stat()
         if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077:
-            raise ValueError("Credentials file must be private")
+            raise PreflightRefused("Credentials file must be private")
         dsn = args.dsn_file.read_text().strip()
         if args.action == "initialize":
             initialize(dsn, args.runtime_role)
             result = {"schema_version": VERSION, "initialized": True}
         else:
             result = preflight(dsn)
+    except PreflightRefused as error:
+        print(
+            json.dumps(
+                {"status": "refused", "action": args.action, "reason": str(error)}
+            )
+        )
+        return 1
     except Exception:  # noqa: BLE001 - administrative boundary must not print URLs or driver errors
         print(json.dumps({"status": "failed", "action": args.action}))
         return 1

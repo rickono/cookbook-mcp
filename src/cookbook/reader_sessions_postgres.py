@@ -36,6 +36,7 @@ from .reader_sessions import (
     _ended,
     _Handle,
 )
+from .telemetry import event
 
 
 class _Retry:
@@ -122,8 +123,8 @@ class PostgresSessionBook:
                     await asyncio.sleep(MAINTENANCE_SECONDS)
                     try:
                         await self.maintain_once()
-                    except Exception:  # noqa: BLE001, S112 - durable work remains pending for the next sweep
-                        continue
+                    except Exception:  # noqa: BLE001 - fixed event only; durable work stays pending
+                        event("session_maintenance_failed")
 
             self._maintenance_task = asyncio.create_task(
                 maintain(), context=contextvars.Context()

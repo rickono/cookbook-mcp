@@ -749,7 +749,6 @@ def test_committed_lifecycle_response_does_not_wait_for_revocation_backlog(
     reader_env, postgres_reader, monkeypatch, mint, operation
 ):
     factory, identity, _ = reader_env
-    monkeypatch.setattr("cookbook.reader.DEADLINE", 0.2)
     monkeypatch.setattr("cookbook.reader_sessions_postgres.PROVIDER_TIMEOUT", 0.6)
     with TestClient(factory(), base_url="https://reader.example") as client:
         for index in range(3):
@@ -760,6 +759,7 @@ def test_committed_lifecycle_response_does_not_wait_for_revocation_backlog(
             assert login(client).status_code == 303
         drain_cleanup(client, postgres_reader)
         reader = postgres_reader.readers[0]
+        monkeypatch.setattr("cookbook.reader.DEADLINE", 0.5)
 
         async def stalled(token):
             await asyncio.sleep(10)
@@ -863,7 +863,6 @@ def test_logout_all_drains_multiple_revocation_batches_without_blocking_response
     release, entered = Event(), Event()
     calls = []
     tokens = [f"device-{index}" for index in range(12)]
-    monkeypatch.setattr("cookbook.reader.DEADLINE", 0.2)
     with TestClient(factory(), base_url="https://reader.example") as client:
         for token in tokens:
             identity.tokens = {"access_token": mint(), "refresh_token": token}
@@ -881,6 +880,7 @@ def test_logout_all_drains_multiple_revocation_batches_without_blocking_response
                 raise OSError("synthetic revocation failure")
 
         identity.revoke = revoke
+        monkeypatch.setattr("cookbook.reader.DEADLINE", 0.5)
         try:
             response = logout(client, "all")
             assert response.status_code == 200
@@ -955,7 +955,6 @@ def test_http_timeout_does_not_abandon_rotated_credentials(
     factory, identity, clock = reader_env
     release, entered = Event(), Event()
     calls = []
-    monkeypatch.setattr("cookbook.reader.DEADLINE", 0.1)
 
     async def renew(token):
         calls.append(token)
@@ -968,8 +967,9 @@ def test_http_timeout_does_not_abandon_rotated_credentials(
 
     identity.renew = renew
     with TestClient(factory(), base_url="https://reader.example") as client:
-        login(client)
+        assert login(client).headers["location"] == "/reader/catalog"
         expire(clock, monkeypatch)
+        monkeypatch.setattr("cookbook.reader.DEADLINE", 0.5)
         try:
             assert client.get("/reader/catalog").status_code == 503
             assert entered.wait(2)
@@ -993,7 +993,6 @@ def test_rotated_token_is_retained_through_database_outage_and_recovery(
 
     factory, identity, clock = reader_env
     calls, revoked = [], []
-    monkeypatch.setattr("cookbook.reader.DEADLINE", 0.1)
 
     async def renew(token):
         calls.append(token)
@@ -1007,7 +1006,7 @@ def test_rotated_token_is_retained_through_database_outage_and_recovery(
 
     identity.renew, identity.revoke = renew, revoke
     with TestClient(factory(), base_url="https://reader.example") as client:
-        login(client)
+        assert login(client).headers["location"] == "/reader/catalog"
         expire(clock, monkeypatch)
         book = postgres_reader.readers[0].sessions
         original = book._run
@@ -1024,6 +1023,7 @@ def test_rotated_token_is_retained_through_database_outage_and_recovery(
             return await original(at, operation, **kwargs)
 
         monkeypatch.setattr(book, "_run", failed_database)
+        monkeypatch.setattr("cookbook.reader.DEADLINE", 0.5)
         response = client.get("/reader/catalog")
         assert response.status_code == 503
         assert "private database" not in response.text
@@ -1049,7 +1049,6 @@ def test_shutdown_keeps_reconciliation_and_pool_until_database_recovers(
     from cookbook.reader_diagnostics import Stage
 
     factory, identity, clock = reader_env
-    monkeypatch.setattr("cookbook.reader.DEADLINE", 0.1)
     revoked, closing = [], Event()
 
     async def renew(token):
@@ -1063,7 +1062,7 @@ def test_shutdown_keeps_reconciliation_and_pool_until_database_recovers(
 
     identity.renew, identity.revoke = renew, revoke
     with TestClient(factory(), base_url="https://reader.example") as client:
-        login(client)
+        assert login(client).headers["location"] == "/reader/catalog"
         expire(clock, monkeypatch)
         book = postgres_reader.readers[0].sessions
         original = book._run
@@ -1077,6 +1076,7 @@ def test_shutdown_keeps_reconciliation_and_pool_until_database_recovers(
             return await original(at, operation, **kwargs)
 
         monkeypatch.setattr(book, "_run", database)
+        monkeypatch.setattr("cookbook.reader.DEADLINE", 0.5)
         assert client.get("/reader/catalog").status_code == 503
         draining = book._drain_renewals
 
@@ -1096,3 +1096,30 @@ def test_shutdown_keeps_reconciliation_and_pool_until_database_recovers(
         finish.result(timeout=5)
         assert revoked == ["shutdown-reconciliation"]
         assert book._pool.closed
+
+
+def test_periodic_maintenance_failure_emits_only_a_fixed_event(
+    reader_env, postgres_reader, monkeypatch, capsys
+):
+    from cookbook.telemetry import event
+
+    factory, _, _ = reader_env
+    observed = Event()
+    monkeypatch.setattr("cookbook.reader_sessions_postgres.MAINTENANCE_SECONDS", 0.01)
+
+    def logged(name):
+        event(name)
+        observed.set()
+
+    async def failed():
+        raise OSError("PRIVATE-MAINTENANCE-SENTINEL")
+
+    monkeypatch.setattr("cookbook.reader_sessions_postgres.event", logged)
+    with TestClient(factory(), base_url="https://reader.example"):
+        monkeypatch.setattr(
+            postgres_reader.readers[0].sessions, "maintain_once", failed
+        )
+        assert observed.wait(2)
+    output = capsys.readouterr().out
+    assert "session_maintenance_failed" in output
+    assert "PRIVATE-MAINTENANCE-SENTINEL" not in output

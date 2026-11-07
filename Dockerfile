@@ -20,7 +20,13 @@ RUN .venv/bin/pip install --no-cache-dir --no-deps .
 # Source-free Linux smoke check: owned loopback keyword server, no embedding schema.
 RUN .venv/bin/python - <<'PYSMOKE'
 from tempfile import TemporaryDirectory
+import psycopg
+import psycopg_pool
 from cookbook.book_search import BookSearch
+from cookbook.session_database import _schema
+assert psycopg.pq.version() > 0
+assert psycopg_pool.ConnectionPool
+assert _schema()[0] and len(_schema()[1]) == 64
 with TemporaryDirectory() as root:
     engine = BookSearch('/usr/local/bin/typesense-server', root)
     try:

@@ -93,3 +93,20 @@ def test_failed_database_preflight_stops_startup_without_leaking_url(
     assert "PRIVATE-SENTINEL" not in str(error.value)
     assert error.value.__suppress_context__
     assert seen == []
+
+
+def test_fixed_database_refusal_explains_operator_action(configuration, monkeypatch):
+    from cookbook.session_database import PreflightRefused
+
+    verifier, seen = configuration
+    monkeypatch.setenv("READER_SESSION_BACKEND", "postgres")
+    monkeypatch.setenv("READER_SESSION_DATABASE_URL", "postgresql://PRIVATE-SENTINEL")
+
+    def refused(dsn):
+        raise PreflightRefused("Unsupported session schema version")
+
+    monkeypatch.setattr("cookbook.session_database.preflight", refused)
+    with pytest.raises(ValueError, match="Unsupported session schema version") as error:
+        reader_from_environment(verifier)
+    assert "PRIVATE-SENTINEL" not in str(error.value)
+    assert seen == []

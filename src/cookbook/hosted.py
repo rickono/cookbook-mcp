@@ -152,10 +152,12 @@ def reader_from_environment(verifier):
     from .personal_config import personal_from_environment
 
     if backend == "postgres":
-        from .session_database import preflight
+        from .session_database import PreflightRefused, preflight
 
         try:
             preflight(database)
+        except PreflightRefused as error:
+            raise ValueError(str(error)) from None
         except Exception:  # noqa: BLE001 - redact connection details at the startup boundary
             raise ValueError("PostgreSQL session startup checks failed") from None
 

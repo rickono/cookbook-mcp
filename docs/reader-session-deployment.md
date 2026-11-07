@@ -24,7 +24,7 @@ uv run --extra postgres python -m cookbook.session_database initialize --dsn-fil
 uv run --extra postgres python -m cookbook.session_database check --dsn-file /private/path/runtime-dsn
 ```
 
-The initializer is atomic and repeatable for the supported version. It refuses existing unversioned session tables. It never adopts a trial database or upgrades a live schema implicitly. The schema version and source digest must match the deployment image. Runtime startup validates the primary, durable settings, logged tables, schema metadata, and privileges without changing schema. Credentials and driver exceptions are excluded from CLI output.
+The initializer is atomic and repeatable for the supported version. It refuses existing unversioned session tables. It never adopts a trial database or upgrades a live schema implicitly. The schema version and source digest must match the deployment image. Runtime startup validates the primary, durable settings, logged tables, schema metadata, and privileges without changing schema. Fixed refusal reasons identify version, privilege, or durability problems. Credentials and driver exceptions are excluded from output.
 
 ## Prove the release before cutover
 
@@ -50,7 +50,9 @@ The exact credential-fencing and machine-update commands must be prepared agains
 
 ## Operate and recover
 
-The PostgreSQL adapter retries due revocations every 60 seconds, independently of HTTP activity. Cleanup continues through the due backlog in batches of at most eight concurrent provider calls. Failed tokens stay durable and are attempted once per drain. Maintenance expires sessions under the owner lock, removes ended device rows, and clears completed retirement ciphertexts. Token-identity fences remain because deleting them could permit reuse of a consumed token.
+The PostgreSQL adapter retries due revocations every 60 seconds, independently of HTTP activity. Cleanup continues through the due backlog in batches of at most eight concurrent provider calls. Failed tokens stay durable and are attempted once per drain. Maintenance expires sessions under the owner lock, removes ended device rows, and clears completed retirement ciphertexts. Token-identity fences remain because deleting them could permit reuse of a consumed token. Sweep failures emit the fixed `session_maintenance_failed` event without exception text or identifiers.
+
+The image smoke imports psycopg and its pool, loads bundled libpq, and reads the packaged schema before starting the source-free keyword server. Psycopg remains pinned at 3.3.8: the [official release notes](https://www.psycopg.org/psycopg3/docs/news.html) identify its fix for an SSL configuration regression introduced in 3.3.7. An arbitrary release-age cutoff is not used as a reason to restore that regression.
 
 A claimed provider exchange continues after an HTTP timeout and settles or retires its returned token. If settlement and confirmation both fail during a database outage, the tracked task retains the returned credential and retries confirmation and reference-checked retirement without another provider exchange. It never revokes based on an unavailable confirmation read. Graceful shutdown waits for that reconciliation before closing the pool, so database recovery may be necessary before shutdown finishes. A forced process termination during the outage can still lose an unpersisted provider response; local admission stays fail closed, and provider cleanup remains best effort in that failure case.
 
