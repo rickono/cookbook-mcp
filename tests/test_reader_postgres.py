@@ -853,9 +853,9 @@ def test_reader_pool_closes_when_publication_shutdown_fails(
     assert postgres_reader.readers[0].sessions._pool.closed
 
 
-@pytest.mark.parametrize("failed_token", [None, "device-0"])
+@pytest.mark.parametrize("fail_first", [False, True])
 def test_logout_all_drains_multiple_revocation_batches_without_blocking_response(
-    reader_env, postgres_reader, monkeypatch, mint, failed_token
+    reader_env, postgres_reader, monkeypatch, mint, fail_first
 ):
     from collections import Counter
 
@@ -874,7 +874,7 @@ def test_logout_all_drains_multiple_revocation_batches_without_blocking_response
             calls.append(token)
             entered.set()
             assert await asyncio.to_thread(release.wait, 3)
-            if token == failed_token:
+            if fail_first and token == calls[0]:
                 # Even if retry_at becomes due during this drain, attempt each
                 # token only once and continue to the remaining batch.
                 clock[0] += 11
@@ -893,5 +893,5 @@ def test_logout_all_drains_multiple_revocation_batches_without_blocking_response
             postgres_reader, "SELECT completed FROM reader_session_retirements"
         )
         assert len(stored) == 12
-        assert sum(row["completed"] for row in stored) == (11 if failed_token else 12)
+        assert sum(row["completed"] for row in stored) == (11 if fail_first else 12)
         assert all(row["ended"] for row in rows(postgres_reader))
