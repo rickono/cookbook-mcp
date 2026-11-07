@@ -232,6 +232,8 @@ def create_hosted_app(
                 await asyncio.to_thread(updater.close)
                 if search_engine:
                     await asyncio.to_thread(search_engine.close)
+                if reader:
+                    await reader.close()
 
     app.router.lifespan_context = lifespan
     return app

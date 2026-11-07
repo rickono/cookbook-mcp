@@ -177,6 +177,7 @@ class Reader:
         clock=time.time,
         owner_reports=None,
         personal_state=None,
+        session_database=None,
     ):
         if urlsplit(verifier.issuer).scheme != "https" or not verifier.issuer.endswith(
             "/"
@@ -188,7 +189,25 @@ class Reader:
         self.clock = clock
         self.owner_reports = owner_reports
         self.personal_state = personal_state
-        self.sessions = SessionBook(store, self.cipher, verifier, self.identity, clock)
+        if session_database is None:
+            self.sessions = SessionBook(
+                store, self.cipher, verifier, self.identity, clock
+            )
+        else:
+            from .reader_sessions_postgres import PostgresSessionBook
+
+            self.sessions = PostgresSessionBook(
+                session_database,
+                self.cipher,
+                verifier,
+                self.identity,
+                encryption_key,
+                clock=None if clock is time.time else clock,
+            )
+
+    async def close(self):
+        if close := getattr(self.sessions, "close", None):
+            await close()
 
     async def read(self, key):
         with stage(Stage.CALLBACK_TRANSACTION) as span:

@@ -1,6 +1,6 @@
 # Reader session authority
 
-Design recommendation for [Investigate session-storage overhead on protected reader requests](https://github.com/rickono/cookbook-mcp/issues/134), 2026-11-06. This replaces the earlier recommendation to retain the owner-object design. Research and prototypes only; no application change, infrastructure provisioning or deployment has occurred.
+Design recommendation for [Investigate session-storage overhead on protected reader requests](https://github.com/rickono/cookbook-mcp/issues/134), 2026-11-06. This replaces the earlier recommendation to retain the owner-object design. A subsequent [local reader trial](reader-postgres-local-trial.md) implements the session interface against PostgreSQL. Hosted configuration still selects R2. No infrastructure provisioning or deployment has occurred.
 
 ## Decision
 
