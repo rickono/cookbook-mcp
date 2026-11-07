@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+pytest.importorskip("psycopg")
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from benchmark_reader_sessions import close_relays
 
