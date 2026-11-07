@@ -10,7 +10,7 @@ Before activation, verify the provider's acknowledged-write durability and old-p
 
 ## Prepare the database explicitly
 
-1. Create a dedicated database and a restricted login with direct grants. Keep its credentials separate from schema-administrator credentials. The runtime login must have no superuser, database creation, role creation, replication, row-security bypass, database object creation, or schema metadata mutation privileges. Direct and indirect memberships that permit `SET ROLE` are rejected, including `NOINHERIT` memberships.
+1. Create a dedicated database and a restricted login with direct grants. Keep its credentials separate from schema-administrator credentials. The runtime login must have no superuser, database creation, role creation, replication, row-security bypass, database object creation, or schema metadata mutation privileges. All direct and indirect role memberships are rejected, including `NOINHERIT` and grants with `SET FALSE`. An administrative membership could otherwise enable its own `SET ROLE` permission.
 2. Save the administrator connection string in a private file with mode `0600`. Use the provider's direct primary endpoint.
 3. Initialize the schema and grant the runtime login access to the session tables:
 

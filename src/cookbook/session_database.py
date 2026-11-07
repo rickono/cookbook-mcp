@@ -27,14 +27,16 @@ def _schema():
     return raw.decode(), hashlib.sha256(raw).hexdigest()
 
 
-def _no_assumable_roles(conn, role):
-    # Use SET reachability, including indirect NOINHERIT memberships. The runtime
-    # receives direct table grants and does not need to assume any other role.
+def _no_role_memberships(conn, role):
+    # The runtime receives direct grants. Reject all memberships, including
+    # NOINHERIT/SET-false grants whose ADMIN option can enable escalation.
     if conn.execute(
-        "SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname<>%s AND pg_has_role(%s,oid,'SET'))",
+        "SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname<>%s AND pg_has_role(%s,oid,'MEMBER'))",
         (role, role),
     ).fetchone()[0]:
-        raise ValueError("Session runtime login must not assume another role")
+        raise ValueError(
+            "Session runtime login must not assume another role or hold role memberships"
+        )
 
 
 def initialize(conninfo, runtime_role):
@@ -80,7 +82,7 @@ def initialize(conninfo, runtime_role):
         ).fetchone()
         if role is None or any(role):
             raise ValueError("Provision a restricted runtime login first")
-        _no_assumable_roles(conn, runtime_role)
+        _no_role_memberships(conn, runtime_role)
         conn.execute(
             sql.SQL("GRANT USAGE ON SCHEMA public TO {}").format(
                 sql.Identifier(runtime_role)
@@ -118,7 +120,7 @@ def preflight(conninfo):
         ).fetchone()
         if any(role):
             raise ValueError("Session runtime login has administrative privileges")
-        _no_assumable_roles(conn, conn.execute("SELECT current_user").fetchone()[0])
+        _no_role_memberships(conn, conn.execute("SELECT current_user").fetchone()[0])
         ddl = conn.execute(
             "SELECT has_database_privilege(current_database(),'CREATE'),has_schema_privilege('public','CREATE')"
         ).fetchone()

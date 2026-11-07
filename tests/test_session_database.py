@@ -161,3 +161,33 @@ def test_startup_rejects_set_role_privileges_even_with_noinherit(database, indir
             if indirect:
                 conn.execute("DROP ROLE intermediate_role")
             conn.execute("DROP ROLE schema_owner")
+
+
+def test_startup_rejects_admin_membership_with_set_initially_disabled(database):
+    admin, runtime = database
+    initialize(admin, "reader_runtime")
+    with psycopg.connect(admin, autocommit=True) as conn:
+        conn.execute("CREATE ROLE nonset_admin_role NOLOGIN")
+        conn.execute(
+            "ALTER TABLE reader_session_schema_version OWNER TO nonset_admin_role"
+        )
+    try:
+        with psycopg.connect(admin, autocommit=True) as conn:
+            conn.execute(
+                "GRANT nonset_admin_role TO reader_runtime WITH ADMIN TRUE, SET FALSE, INHERIT FALSE"
+            )
+        with psycopg.connect(runtime) as conn:
+            assert conn.execute(
+                "SELECT pg_has_role(current_user,'nonset_admin_role','SET')"
+            ).fetchone() == (False,)
+        with pytest.raises(ValueError, match="role memberships"):
+            preflight(runtime)
+        # ADMIN can enable SET even when it was initially false.
+        with psycopg.connect(runtime) as conn:
+            conn.execute("GRANT nonset_admin_role TO reader_runtime WITH SET TRUE")
+            conn.execute("SET ROLE nonset_admin_role")
+            conn.execute("UPDATE reader_session_schema_version SET version=version")
+    finally:
+        with psycopg.connect(admin, autocommit=True) as conn:
+            conn.execute("REASSIGN OWNED BY nonset_admin_role TO reader_trial")
+            conn.execute("DROP ROLE nonset_admin_role")
