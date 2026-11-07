@@ -51,7 +51,7 @@ def postgres_reader(reader_env, monkeypatch):
             "Refusing to modify a database outside the disposable runner"
         )
         conn.execute(
-            "DROP TABLE IF EXISTS reader_session_retirements,reader_device_sessions,reader_session_owners CASCADE"
+            "DROP TABLE IF EXISTS reader_session_retirements,reader_session_exchanges,reader_device_sessions,reader_session_owners CASCADE"
         )
         conn.execute(schema.read_text())
     readers = []
@@ -657,3 +657,77 @@ def test_settlement_rejects_expired_lease_after_verification_wait(
         monkeypatch.setattr(reader.verifier, "verify_token", delayed)
         assert client.get("/reader/catalog").status_code == 401
         assert rows(postgres_reader)[0]["ended"]
+
+
+@pytest.mark.parametrize("rotated", [False, True])
+def test_distinct_devices_share_one_exchange_and_keep_activity_independent(
+    reader_env, postgres_reader, monkeypatch, mint, rotated
+):
+    factory, identity, clock = reader_env
+    entered, release = Event(), Event()
+    calls = []
+
+    async def renew(token):
+        calls.append(token)
+        entered.set()
+        assert await asyncio.to_thread(release.wait, 4)
+        return {
+            "access_token": mint(iat=int(clock[0]), exp=int(clock[0]) + 600),
+            **({"refresh_token": "shared-rotation"} if rotated else {}),
+        }
+
+    identity.renew = renew
+    with (
+        TestClient(factory(), base_url="https://reader.example") as a,
+        TestClient(factory(), base_url="https://reader.example") as b,
+    ):
+        login(a)
+        login(b)
+        before = {r["key"]: r["seen"] for r in rows(postgres_reader)}
+        expire(clock, monkeypatch)
+        with ThreadPoolExecutor(2) as pool:
+            first = pool.submit(a.get, "/reader/catalog")
+            assert entered.wait(3)
+            second = pool.submit(b.get, "/reader/session")
+            release.set()
+            assert first.result().status_code == second.result().status_code == 200
+        assert calls == ["synthetic-refresh"]
+        active = hashlib.sha256(a.cookies.get("__Host-reader").encode()).hexdigest()
+        for row in rows(postgres_reader):
+            assert row["credential_version"] == 2
+            assert row["seen"] == (
+                clock[0] if row["key"] == active else before[row["key"]]
+            )
+        if not rotated:
+            expire(clock, monkeypatch)
+            assert b.get("/reader/catalog").status_code == 200
+            assert calls == ["synthetic-refresh", "synthetic-refresh"]
+
+
+def test_ambiguous_exchange_fences_other_device_and_future_sign_in(
+    reader_env, postgres_reader, monkeypatch, mint
+):
+    factory, identity, clock = reader_env
+    calls = []
+
+    async def ambiguous(token):
+        calls.append(token)
+        raise OSError("synthetic consumed exchange without response")
+
+    identity.renew = ambiguous
+    with (
+        TestClient(factory(), base_url="https://reader.example") as a,
+        TestClient(factory(), base_url="https://reader.example") as b,
+    ):
+        login(a)
+        login(b)
+        expire(clock, monkeypatch)
+        assert a.get("/reader/catalog").status_code == 401
+        assert b.get("/reader/catalog").status_code == 401
+        assert calls == ["synthetic-refresh"]
+        identity.tokens = {
+            "access_token": mint(iat=int(clock[0]), exp=int(clock[0]) + 600),
+            "refresh_token": "synthetic-refresh",
+        }
+        assert login(a).headers["location"] == "/reader/signin-failed"
+        assert calls == ["synthetic-refresh"]

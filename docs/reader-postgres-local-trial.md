@@ -16,13 +16,13 @@ The runner creates a private temporary cluster with a Unix socket and no TCP lis
 
 ## Observed behavior
 
-The local trial passes 44 HTTP and database checks. The existing reader suite passes another 115 tests with its original session authority.
+The local trial passes 48 HTTP and database checks. The existing reader suite passes another 115 tests with its original session authority.
 
 - Sign-in, catalog and text reading, continuation links, secure cookie attributes, CSRF, and both logout scopes work through the PostgreSQL adapter.
 - A passive session check leaves the session rows unchanged. An active request changes only the requesting device's `seen` column. Credentials and sibling sessions retain their stored values. Guarded storage methods reject any attempted `reader/owners/` access during the request test.
 - Two independent reader instances handle concurrent activity for the same cookie and for different devices. A fresh primary read checks every protected request. There is no positive authorization cache.
 - Concurrent sign-in and all-device logout respect the owner generation. An activity request paused before its write cannot restore a session after logout.
-- Concurrent renewal exchanges the refresh token once. Stale leases and provider timeouts require sign-in without replaying the exchange.
+- Concurrent renewal exchanges the refresh token once, including when distinct device rows share that token. A durable claim belongs to the keyed token identity. Successful renewal updates every live reference's credentials while preserving each device's creation, CSRF, and activity. A confirmed nonrotating renewal permits a future exchange after the new access token expires. An ambiguous exchange permanently fences the identity against sibling reuse and sign-in. Stale leases and provider timeouts require sign-in without replaying the exchange.
 - Settlement rechecks idle expiry, absolute expiry, and logout. A provider response that crosses either deadline does not grant access. Activity uses the claim timestamp rather than time spent waiting for the provider.
 - A lost settlement acknowledgement can recognize the committed result without another exchange. An unconfirmed touch returns 503 without delivering catalog content. A lock timeout also returns a redacted 503.
 - Equal refresh tokens produce the same keyed identity despite different ciphertexts. The last device removal queues one revocation. A provider failure leaves durable retry work. A subsequent lifecycle operation retries eligible work. A retired credential cannot create another session.

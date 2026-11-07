@@ -30,6 +30,20 @@ CREATE TABLE reader_device_sessions (
 );
 CREATE INDEX reader_session_owner ON reader_device_sessions (epoch, subject);
 
+-- One exchange permission for every reference to a token, across devices.
+-- A settled rotating exchange permanently fences the consumed identity.
+CREATE TABLE reader_session_exchanges (
+    epoch text NOT NULL,
+    subject text NOT NULL,
+    refresh_id text NOT NULL,
+    nonce text NOT NULL,
+    started double precision NOT NULL,
+    settled boolean NOT NULL DEFAULT false,
+    failed boolean NOT NULL DEFAULT false,
+    PRIMARY KEY (epoch, subject, refresh_id),
+    FOREIGN KEY (epoch, subject) REFERENCES reader_session_owners
+);
+
 -- A retirement is permanent within this authority epoch. Sign-in cannot reuse it.
 CREATE TABLE reader_session_retirements (
     epoch text NOT NULL,

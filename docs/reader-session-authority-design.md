@@ -73,6 +73,8 @@ Retire a refresh token only when no live session still references it. Compare a 
 
 Refresh has three steps: durably claim a nonce and credential generation; exchange once outside the transaction; conditionally settle. Siblings wait and reread. A stale lease requires sign-in and never permits replaying a possibly consumed refresh token. Before settlement, recheck current epoch, owner/session generation, lease/credential version, and idle/absolute deadlines. Use the claim's qualifying activity time, rather than manufacturing activity after waiting on the provider. A rejected settlement never revives a session and queues eligible replacement-token cleanup.
 
+The local implementation also claims the keyed refresh-token identity across device rows. Distinct devices sharing one token cannot independently exchange it. Confirmed settlement replaces credentials in all live references without extending sibling activity. Successful nonrotating renewal releases the claim for future use after access expiry. An ambiguous exchange fences that identity permanently, including against later sign-in. A consumed rotating identity remains fenced without revoking the provider family through its old token.
+
 A lost settlement acknowledgement is not permission to exchange again. Recognize an already committed result through its nonce/version and token identity. Revoke a returned token only after establishing that it is not authoritative for a live session. This remains a distributed protocol: a database transaction cannot atomically include Auth0.
 
 ## Durability, recovery and cutover

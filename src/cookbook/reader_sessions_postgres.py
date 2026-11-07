@@ -43,6 +43,10 @@ class _Wait:
     pass
 
 
+class _Fenced:
+    pass
+
+
 class PostgresSessionBook:
     """One durable row per device; exact touches, current primary admission.
 
@@ -165,8 +169,9 @@ class PostgresSessionBook:
         if not refresh_id:
             return
         conn.execute(
-            "INSERT INTO reader_session_retirements(epoch,subject,refresh_id,token) "
-            "SELECT %s,%s,%s,%s WHERE NOT EXISTS "
+            "INSERT INTO reader_session_retirements(epoch,subject,refresh_id,token,completed) "
+            "SELECT %s,%s,%s,%s,EXISTS(SELECT 1 FROM reader_session_exchanges "
+            "WHERE epoch=%s AND subject=%s AND refresh_id=%s AND settled) WHERE NOT EXISTS "
             "(SELECT 1 FROM reader_device_sessions WHERE epoch=%s AND subject=%s "
             "AND refresh_id=%s AND NOT ended) ON CONFLICT DO NOTHING",
             (
@@ -177,10 +182,19 @@ class PostgresSessionBook:
                 self._epoch,
                 subject,
                 refresh_id,
+                self._epoch,
+                subject,
+                refresh_id,
             ),
         )
 
     def _end_row(self, conn, row):
+        if row["lease"]:
+            conn.execute(
+                "UPDATE reader_session_exchanges SET failed=true WHERE epoch=%s AND subject=%s "
+                "AND refresh_id=%s AND nonce=%s AND NOT settled",
+                (self._epoch, row["subject"], row["refresh_id"], row["lease"]),
+            )
         conn.execute(
             "UPDATE reader_device_sessions SET ended=true,lease=NULL,renewing=NULL "
             "WHERE epoch=%s AND key=%s",
@@ -222,8 +236,16 @@ class PostgresSessionBook:
             if (
                 refresh_id
                 and conn.execute(
-                    "SELECT 1 FROM reader_session_retirements WHERE epoch=%s AND subject=%s AND refresh_id=%s",
-                    (self._epoch, subject, refresh_id),
+                    "SELECT 1 FROM reader_session_retirements WHERE epoch=%s AND subject=%s AND refresh_id=%s "
+                    "UNION ALL SELECT 1 FROM reader_session_exchanges WHERE epoch=%s AND subject=%s AND refresh_id=%s",
+                    (
+                        self._epoch,
+                        subject,
+                        refresh_id,
+                        self._epoch,
+                        subject,
+                        refresh_id,
+                    ),
                 ).fetchone()
             ):
                 raise ValueError("retired credential cannot create a session")
@@ -256,6 +278,10 @@ class PostgresSessionBook:
         def end(conn):
             row = self._lock(conn, subject, key, exclusive=True)
             if scope is LogoutScope.ALL:
+                conn.execute(
+                    "UPDATE reader_session_exchanges SET failed=true WHERE epoch=%s AND subject=%s AND NOT settled",
+                    (self._epoch, subject),
+                )
                 conn.execute(
                     "UPDATE reader_session_owners SET generation=generation+1 WHERE epoch=%s AND subject=%s",
                     (self._epoch, subject),
@@ -350,7 +376,15 @@ class PostgresSessionBook:
             if live and access is Access.PASSIVE:
                 return self._grant(row)
             result = await self._admit(row, live, nonce, access)
-            if isinstance(result, (_Retry, _Wait)):
+            if isinstance(result, _Fenced):
+                result = await self._drop(row, EndReason.RENEWAL_UNCONFIRMED)
+            if isinstance(result, _Wait):
+                with stage(Stage.RENEWAL_WAIT) as span:
+                    span.attempt()
+                    await asyncio.sleep(RENEWAL_POLL[min(poll, len(RENEWAL_POLL) - 1)])
+                poll += 1
+                continue
+            if isinstance(result, _Retry):
                 continue
             if result is None:
                 return await self._renew(row, nonce)
@@ -358,7 +392,9 @@ class PostgresSessionBook:
 
     async def _admit(self, original, live, nonce, access):
         def admit(conn):
-            row = self._lock(conn, original["subject"], original["key"])
+            row = self._lock(
+                conn, original["subject"], original["key"], exclusive=not live
+            )
             if reason := self._invalid(row):
                 return SignIn(reason)
             if row["credential_version"] != original["credential_version"]:
@@ -366,6 +402,22 @@ class PostgresSessionBook:
             if row["lease"]:
                 return _Wait()
             if not live:
+                existing = conn.execute(
+                    "SELECT * FROM reader_session_exchanges WHERE epoch=%s AND subject=%s AND refresh_id=%s",
+                    (self._epoch, row["subject"], row["refresh_id"]),
+                ).fetchone()
+                if existing:
+                    if (
+                        existing["settled"]
+                        or existing["failed"]
+                        or row["now"] - existing["started"] >= LEASE_SECONDS
+                    ):
+                        return _Fenced()
+                    return _Wait()
+                conn.execute(
+                    "INSERT INTO reader_session_exchanges(epoch,subject,refresh_id,nonce,started) VALUES(%s,%s,%s,%s,%s)",
+                    (self._epoch, row["subject"], row["refresh_id"], nonce, row["now"]),
+                )
                 conn.execute(
                     "UPDATE reader_device_sessions SET lease=%s,renewing=%s,admission=%s "
                     "WHERE epoch=%s AND key=%s",
@@ -454,6 +506,40 @@ class PostgresSessionBook:
             ).fetchone():
                 self._end_row(conn, row)
                 return SignIn(EndReason.TOKEN_REJECTED)
+            exchange = conn.execute(
+                "SELECT * FROM reader_session_exchanges WHERE epoch=%s AND subject=%s AND refresh_id=%s",
+                (self._epoch, row["subject"], row["refresh_id"]),
+            ).fetchone()
+            if not exchange or exchange["nonce"] != nonce or exchange["settled"]:
+                self._end_row(conn, row)
+                self._retire(conn, row["subject"], refresh_id, encrypted_refresh)
+                return SignIn(EndReason.ENDED_DURING_RENEWAL)
+            # All references share one rotating credential. Keep their creation,
+            # CSRF and activity independent while replacing only credentials.
+            conn.execute(
+                "UPDATE reader_device_sessions SET access=%s,refresh=%s,refresh_id=%s,"
+                "credential_version=credential_version+1 "
+                "WHERE epoch=%s AND subject=%s AND refresh_id=%s AND NOT ended AND key<>%s",
+                (
+                    encrypted_access,
+                    encrypted_refresh,
+                    refresh_id,
+                    self._epoch,
+                    row["subject"],
+                    row["refresh_id"],
+                    row["key"],
+                ),
+            )
+            if refresh_id == row["refresh_id"]:
+                conn.execute(
+                    "DELETE FROM reader_session_exchanges WHERE epoch=%s AND subject=%s AND refresh_id=%s",
+                    (self._epoch, row["subject"], row["refresh_id"]),
+                )
+            else:
+                conn.execute(
+                    "UPDATE reader_session_exchanges SET settled=true WHERE epoch=%s AND subject=%s AND refresh_id=%s",
+                    (self._epoch, row["subject"], row["refresh_id"]),
+                )
             conn.execute(
                 "UPDATE reader_device_sessions SET access=%s,refresh=%s,refresh_id=%s,"
                 "credential_version=credential_version+1,lease=NULL,renewing=NULL,settled=%s,"
