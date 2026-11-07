@@ -48,16 +48,19 @@ def local_postgres(binary_dir):
                 "reader.local_trial=on",
             ]
         )
-        subprocess.run(
-            [*control, "-l", str(root / "postgres.log"), "-o", options, "start"],
-            check=True,
-            capture_output=True,
-        )
         try:
+            subprocess.run(
+                [*control, "-l", str(root / "postgres.log"), "-o", options, "start"],
+                check=True,
+                capture_output=True,
+            )
             yield make_conninfo(
                 host=str(socket), port=55432, dbname="postgres", user="reader_trial"
             )
         finally:
-            subprocess.run(
-                [*control, "-m", "immediate", "stop"], check=True, capture_output=True
-            )
+            if (data / "postmaster.pid").exists():
+                subprocess.run(
+                    [*control, "-m", "immediate", "stop"],
+                    check=True,
+                    capture_output=True,
+                )

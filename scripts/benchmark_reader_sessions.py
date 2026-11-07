@@ -60,8 +60,12 @@ class Relay:
             bufsize=1,
         )
         self.lock = threading.Lock()
-        self.ready = self.receive()
-        assert self.ready.get("ready"), "Relay failed to start"
+        try:
+            self.ready = self.receive()
+            assert self.ready.get("ready"), "Relay failed to start"
+        except BaseException:
+            self._stop()
+            raise
         self.samples = []
 
     def receive(self):
@@ -93,11 +97,38 @@ class Relay:
             return result
 
     def close(self):
+        try:
+            self.process.stdin.close()
+            result = self.receive()
+            assert result.get("cleanup_failures") == 0, "Synthetic R2 cleanup failed"
+            self.process.wait(timeout=15)
+            assert self.process.returncode == 0
+        finally:
+            self._stop()
+
+    def _stop(self):
         self.process.stdin.close()
-        result = self.receive()
-        assert result.get("cleanup_failures") == 0, "Synthetic R2 cleanup failed"
-        self.process.wait(timeout=15)
-        assert self.process.returncode == 0
+        try:
+            self.process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait(timeout=5)
+        self.process.stdout.close()
+
+
+def close_relays(relays):
+    failures = []
+    for relay in relays:
+        try:
+            relay.close()
+        except Exception as error:  # noqa: BLE001 - finish every independent cleanup before reporting failures
+            failures.append(error)
+    if failures:
+        raise ExceptionGroup("Synthetic R2 cleanup failed", failures)
 
 
 class RemoteOwnerStore:
@@ -368,10 +399,11 @@ def main():
             }
         finally:
             # Close HTTP clients before deleting synthetic owner records.
-            with contextlib.redirect_stdout(io.StringIO()):
-                stack.close()
-            for relay in relays:
-                relay.close()
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    stack.close()
+            finally:
+                close_relays(relays)
         report["cleanup_failures"] = 0
         report["summary"] = {
             name: {
@@ -412,7 +444,8 @@ def main():
                 }
             )
         )
+        return int(any(r["error"] for r in results))
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

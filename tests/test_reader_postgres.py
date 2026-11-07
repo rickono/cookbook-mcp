@@ -631,3 +631,29 @@ def test_database_restart_retains_session_and_logout(reader_env, postgres_reader
         b.cookies.set("__Host-reader", ended_cookie)
         assert a.get("/reader/catalog").status_code == 200
         assert b.get("/reader/catalog").status_code == 401
+
+
+def test_settlement_rejects_expired_lease_after_verification_wait(
+    reader_env, postgres_reader, monkeypatch, mint
+):
+    factory, identity, clock = reader_env
+    with TestClient(factory(), base_url="https://reader.example") as client:
+        login(client)
+        expire(clock, monkeypatch)
+        reader = postgres_reader.readers[0]
+        renewed = mint(iat=int(clock[0]), exp=int(clock[0]) + 600)
+        verify = reader.verifier.verify_token
+
+        async def delayed(raw, **kwargs):
+            result = await verify(raw, **kwargs)
+            if raw == renewed:
+                clock[0] += 10
+            return result
+
+        identity.renewed_tokens = {
+            "access_token": renewed,
+            "refresh_token": "stale-settlement",
+        }
+        monkeypatch.setattr(reader.verifier, "verify_token", delayed)
+        assert client.get("/reader/catalog").status_code == 401
+        assert rows(postgres_reader)[0]["ended"]

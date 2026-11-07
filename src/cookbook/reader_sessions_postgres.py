@@ -444,6 +444,10 @@ class PostgresSessionBook:
                 self._end_row(conn, row)
                 self._retire(conn, row["subject"], refresh_id, encrypted_refresh)
                 return SignIn(reason)
+            if row["now"] - row["renewing"] >= LEASE_SECONDS:
+                self._end_row(conn, row)
+                self._retire(conn, row["subject"], refresh_id, encrypted_refresh)
+                return SignIn(EndReason.STALE_LEASE)
             if conn.execute(
                 "SELECT 1 FROM reader_session_retirements WHERE epoch=%s AND subject=%s AND refresh_id=%s",
                 (self._epoch, row["subject"], refresh_id),
