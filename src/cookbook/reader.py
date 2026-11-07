@@ -205,6 +205,10 @@ class Reader:
                 clock=None if clock is time.time else clock,
             )
 
+    async def start(self):
+        if start := getattr(self.sessions, "start", None):
+            await start()
+
     async def close(self):
         if close := getattr(self.sessions, "close", None):
             await close()

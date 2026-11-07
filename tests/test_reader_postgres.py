@@ -842,6 +842,7 @@ def test_reader_pool_closes_when_publication_shutdown_fails(
         raise RuntimeError("synthetic updater shutdown failure")
 
     application = factory()
+    monkeypatch.setattr(PublicationUpdater, "close", failed)
     with (
         pytest.RaisesGroup(
             pytest.RaisesExc(RuntimeError, match="synthetic updater shutdown")
@@ -849,7 +850,6 @@ def test_reader_pool_closes_when_publication_shutdown_fails(
         TestClient(application, base_url="https://reader.example") as client,
     ):
         assert login(client).status_code == 303
-        monkeypatch.setattr(PublicationUpdater, "close", failed)
     assert postgres_reader.readers[0].sessions._pool.closed
 
 
@@ -895,3 +895,91 @@ def test_logout_all_drains_multiple_revocation_batches_without_blocking_response
         assert len(stored) == 12
         assert sum(row["completed"] for row in stored) == (11 if fail_first else 12)
         assert all(row["ended"] for row in rows(postgres_reader))
+
+
+def test_periodic_cleanup_retries_without_another_http_request(
+    reader_env, postgres_reader, monkeypatch
+):
+    factory, identity, clock = reader_env
+    finished = Event()
+    monkeypatch.setattr("cookbook.reader_sessions_postgres.MAINTENANCE_SECONDS", 0.02)
+
+    async def revoke(token):
+        if identity.refused:
+            raise OSError("synthetic provider outage")
+        finished.set()
+
+    identity.revoke = revoke
+    with TestClient(factory(), base_url="https://reader.example") as client:
+        login(client)
+        identity.refused = True
+        assert logout(client).status_code == 200
+        drain_cleanup(client, postgres_reader)
+        identity.refused = False
+        clock[0] += 11
+        assert finished.wait(3)
+        drain_cleanup(client, postgres_reader)
+        assert query(
+            postgres_reader, "SELECT completed FROM reader_session_retirements"
+        ) == [{"completed": True}]
+
+
+def test_maintenance_expires_sessions_and_removes_retired_credentials(
+    reader_env, postgres_reader
+):
+    factory, identity, clock = reader_env
+    revoked = []
+
+    async def revoke(token):
+        revoked.append(token)
+
+    identity.revoke = revoke
+    with TestClient(factory(), base_url="https://reader.example") as client:
+        login(client)
+        clock[0] += 7 * 86400
+        book = postgres_reader.readers[0].sessions
+        client.portal.call(book.maintain_once)
+        drain_cleanup(client, postgres_reader)
+        assert rows(postgres_reader) == []
+        assert revoked == ["synthetic-refresh"]
+        client.portal.call(book.maintain_once)
+        drain_cleanup(client, postgres_reader)
+        assert query(
+            postgres_reader, "SELECT token,completed FROM reader_session_retirements"
+        ) == [{"token": b"", "completed": True}]
+
+
+def test_http_timeout_does_not_abandon_rotated_credentials(
+    reader_env, postgres_reader, monkeypatch, mint
+):
+    factory, identity, clock = reader_env
+    release, entered = Event(), Event()
+    calls = []
+    monkeypatch.setattr("cookbook.reader.DEADLINE", 0.1)
+
+    async def renew(token):
+        calls.append(token)
+        entered.set()
+        assert await asyncio.to_thread(release.wait, 3)
+        return {
+            "access_token": mint(iat=int(clock[0]), exp=int(clock[0]) + 600),
+            "refresh_token": "rotation-after-timeout",
+        }
+
+    identity.renew = renew
+    with TestClient(factory(), base_url="https://reader.example") as client:
+        login(client)
+        expire(clock, monkeypatch)
+        try:
+            assert client.get("/reader/catalog").status_code == 503
+            assert entered.wait(2)
+        finally:
+            release.set()
+        client.portal.call(postgres_reader.readers[0].sessions._drain_renewals)
+        assert client.get("/reader/session").status_code == 200
+        assert calls == ["synthetic-refresh"]
+        stored = rows(postgres_reader)[0]
+        assert (
+            postgres_reader.readers[0].cipher.decrypt(stored["refresh"])
+            == b"rotation-after-timeout"
+        )

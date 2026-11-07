@@ -16,9 +16,11 @@ from psycopg import IsolationLevel
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
-from .reader_diagnostics import Stage, stage
+from .reader_diagnostics import Category, Stage, Unavailable, stage
 from .reader_sessions import (
+    IDLE,
     LEASE_SECONDS,
+    LIFETIME,
     PROVIDER_TIMEOUT,
     RENEWAL_POLL,
     SESSION_CAP,
@@ -48,6 +50,9 @@ class _Fenced:
     pass
 
 
+MAINTENANCE_SECONDS = 60
+
+
 class PostgresSessionBook:
     """One durable row per device; exact touches, current primary admission.
 
@@ -63,6 +68,8 @@ class PostgresSessionBook:
         self._cleanup_tasks = {}
         self._cleanup_pending = set()
         self._closing = False
+        self._renewals = set()
+        self._maintenance_task = None
         self._fingerprint_key = hmac.digest(
             encryption_key, b"reader-session-token-identity-v1", "sha256"
         )
@@ -80,21 +87,91 @@ class PostgresSessionBook:
                 "autocommit": True,
                 "row_factory": dict_row,
                 "connect_timeout": 2,
-                "options": "-c statement_timeout=3000 -c lock_timeout=2000 -c synchronous_commit=on",
+                "options": "-c statement_timeout=3000 -c lock_timeout=2000 -c synchronous_commit=on -c search_path=pg_catalog,public",
             },
         )
 
     @staticmethod
     def _configure(conn):
         conn.isolation_level = IsolationLevel.READ_COMMITTED
+        state = conn.execute(
+            "SELECT NOT pg_is_in_recovery() AS primary, current_setting('transaction_read_only') AS readonly"
+        ).fetchone()
+        if not state["primary"] or state["readonly"] != "off":
+            raise ValueError("Session authority requires a writable primary")
 
     async def close(self):
+        if self._maintenance_task:
+            self._maintenance_task.cancel()
+            await asyncio.gather(self._maintenance_task, return_exceptions=True)
+            self._maintenance_task = None
+        await self._drain_renewals()
         self._closing = True
         try:
             await self._drain_cleanup()
         finally:
             self._cleanup_pending.clear()
             await asyncio.to_thread(self._pool.close)
+
+    async def start(self):
+        await asyncio.to_thread(self._pool.wait, 3)
+        if self._maintenance_task is None:
+
+            async def maintain():
+                while True:
+                    await asyncio.sleep(MAINTENANCE_SECONDS)
+                    try:
+                        await self.maintain_once()
+                    except Exception:  # noqa: BLE001, S112 - durable work remains pending for the next sweep
+                        continue
+
+            self._maintenance_task = asyncio.create_task(
+                maintain(), context=contextvars.Context()
+            )
+
+    async def _drain_renewals(self):
+        await asyncio.gather(*list(self._renewals), return_exceptions=True)
+
+    async def maintain_once(self):
+        def candidates(conn):
+            now = self._time(conn)
+            return conn.execute(
+                "SELECT subject FROM reader_device_sessions WHERE epoch=%s "
+                "AND (ended OR %s-seen >= %s OR %s-created >= %s) "
+                "UNION SELECT subject FROM reader_session_retirements WHERE epoch=%s "
+                "AND ((completed AND octet_length(token)>0) OR (NOT completed AND retry_at<=%s)) ORDER BY subject LIMIT 100",
+                (self._epoch, now, IDLE, now, LIFETIME, self._epoch, now),
+            ).fetchall()
+
+        for candidate in await self._run(
+            Stage.SESSION_READ, candidates, transaction=False
+        ):
+            subject = candidate["subject"]
+
+            def sweep(conn, subject=subject):
+                conn.execute(
+                    "SELECT generation FROM reader_session_owners WHERE epoch=%s AND subject=%s FOR UPDATE",
+                    (self._epoch, subject),
+                )
+                now = self._time(conn)
+                entries = conn.execute(
+                    "SELECT * FROM reader_device_sessions WHERE epoch=%s AND subject=%s AND NOT ended",
+                    (self._epoch, subject),
+                ).fetchall()
+                for entry in entries:
+                    if _ended(entry, now):
+                        self._end_row(conn, entry)
+                conn.execute(
+                    "DELETE FROM reader_device_sessions WHERE epoch=%s AND subject=%s AND ended",
+                    (self._epoch, subject),
+                )
+                conn.execute(
+                    "UPDATE reader_session_retirements SET token=''::bytea WHERE epoch=%s AND subject=%s AND completed AND octet_length(token)>0",
+                    (self._epoch, subject),
+                )
+
+            await self._run(Stage.SESSION_END, sweep)
+            self._schedule_cleanup(subject)
 
     async def _drain_cleanup(self):
         await asyncio.gather(
@@ -167,11 +244,13 @@ class PostgresSessionBook:
         def read(conn):
             row = conn.execute(
                 "SELECT s.*, o.generation AS owner_generation, "
-                "extract(epoch FROM clock_timestamp())::float8 AS now "
+                "extract(epoch FROM clock_timestamp())::float8 AS now, NOT pg_is_in_recovery() AS primary "
                 "FROM reader_device_sessions s JOIN reader_session_owners o "
                 "USING (epoch, subject) WHERE s.epoch=%s AND s.key=%s",
                 (self._epoch, key),
             ).fetchone()
+            if row and not row["primary"]:
+                raise Unavailable(Category.SESSION_STORAGE)
             if row and self._clock:
                 row["now"] = self._clock()
             return row
@@ -429,7 +508,16 @@ class PostgresSessionBook:
             if isinstance(result, _Retry):
                 continue
             if result is None:
-                return await self._renew(row, nonce)
+                task = asyncio.create_task(self._renew(row, nonce))
+                self._renewals.add(task)
+
+                def settled(done):
+                    self._renewals.discard(done)
+                    if not done.cancelled():
+                        done.exception()
+
+                task.add_done_callback(settled)
+                return await asyncio.shield(task)
             return result
 
     async def _admit(self, original, live, nonce, access):

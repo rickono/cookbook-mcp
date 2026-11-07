@@ -2,7 +2,7 @@ FROM --platform=$BUILDPLATFORM python:3.12-slim-bookworm AS requirements
 WORKDIR /requirements
 RUN pip install --no-cache-dir uv==0.11.14
 COPY pyproject.toml uv.lock ./
-RUN uv export --frozen --no-dev --no-emit-project --format requirements-txt --output-file requirements.txt
+RUN uv export --frozen --extra postgres --no-dev --no-emit-project --format requirements-txt --output-file requirements.txt
 
 # Official Linux/amd64 30.2 release; checksum pins the downloaded archive.
 ADD --checksum=sha256:cd791605e7c6cc7be457794f534cd4b9f9d361781adb10e40020efc22840ebc3 https://dl.typesense.org/releases/30.2/typesense-server-30.2-linux-amd64.tar.gz /tmp/typesense.tar.gz

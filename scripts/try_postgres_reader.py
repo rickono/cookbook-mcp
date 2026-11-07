@@ -28,7 +28,14 @@ def main():
     root = Path(__file__).resolve().parents[1]
     with local_postgres(args.postgres_bin) as conninfo:
         result = subprocess.run(
-            [sys.executable, "-m", "pytest", "-q", "tests/test_reader_postgres.py"],
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "-q",
+                "tests/test_reader_postgres.py",
+                "tests/test_session_database.py",
+            ],
             cwd=root,
             env={
                 **os.environ,
