@@ -1,6 +1,5 @@
 """The local demo stays synthetic and rejects non-loopback browser origins."""
 
-import html
 import importlib.util
 import re
 from pathlib import Path
@@ -36,10 +35,11 @@ def test_sample_reader_journey_and_local_boundary(tmp_path):
         assert "__Host-reader" not in client.cookies
         book = re.findall(r'href="(/reader/book\?at=[^"]+)"', catalog.text)[0]
         contents = client.get(book)
-        section = re.search(
-            r'href="(/reader/read\?at=[^"]+&amp;back=[^"]+)"', contents.text
-        )
-        reading = client.get(html.unescape(section.group(1)))
+        original = fromstring(contents.text)
+        assert original.xpath('//section[contains(@class,"book-view")]')
+        selected = original.xpath('//nav[@aria-label="Book contents"]/a/@href')[0]
+        selected_at = parse_qs(urlsplit(selected).query)["at"][0]
+        reading = client.get("/reader/read", params={"at": selected_at})
         assert "INGREDIENTS" in reading.text and "Save bookmark" in reading.text
         assert reading.headers["cache-control"] == "private, no-store"
         session = client.get("/reader/session").json()
@@ -63,7 +63,9 @@ def test_sample_reader_journey_and_local_boundary(tmp_path):
         soup_link = fromstring(soup_contents.text).xpath(
             '//a[text()="Tomato and lentil soup"]/@href'
         )[0]
-        soup = client.get(soup_link)
+        soup = client.get(
+            "/reader/read", params={"at": parse_qs(urlsplit(soup_link).query)["at"][0]}
+        )
         assert "unresolved amount" in soup.text
         form = fromstring(soup.text)
         at = parse_qs(urlsplit(soup_link).query)["at"][0]

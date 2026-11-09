@@ -173,7 +173,7 @@ async def results(request, library, reader, session):
             rows, seen = [], set()
             for item in found["results"]:
                 c = item["citation"]
-                href = reading_link(c)
+                href = reading_link(c).replace("/reader/read?", "/reader/book-view?")
                 # Identity includes the native snapshot/target or the exact section.
                 if href in seen:
                     continue

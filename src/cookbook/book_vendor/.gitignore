@@ -1,0 +1,5 @@
+*
+!.gitignore
+!packages.json
+!assets.json
+!assets.zip

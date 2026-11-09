@@ -83,6 +83,10 @@ BOOKS = [
                 "Tomato and lentil soup",
                 "Serves 4 · About 35 minutes\n\nINGREDIENTS\n1 onion, chopped\n2 tablespoons olive oil\n150 g red lentils\n1 can chopped tomatoes\n750 ml vegetable stock\n[unresolved amount: ground cumin]\n\nMETHOD\n1. Soften the onion in olive oil for 8 minutes.\n2. Add the lentils, tomatoes, stock and cumin.\n3. Simmer gently for 20 minutes, stirring occasionally, until the lentils are tender.\n4. Taste for salt. Serve with lemon and bread.\n\nThis sample deliberately includes an uncertain quantity. Inspect the original or submit a report to try the review controls.",
             ),
+            (
+                "A pot for tomorrow",
+                "A bowl of soup improves with a little patience. Let it cool before refrigerating, then warm only what you need.\n\nAdd a splash of water when reheating. Finish with fresh herbs and a squeeze of lemon at the table.",
+            ),
         ],
     ),
 ]
@@ -118,23 +122,108 @@ def page_image(path, title, text):
     image.save(path, "PNG")
 
 
+def write_original(build, bid, title, author, fmt, recipes):
+    """Invented original files; never parse, ingest, OCR, or read a source book."""
+    import zipfile
+    from html import escape
+
+    if fmt == "PDF":
+        from reportlab.lib.pagesizes import A4
+        from reportlab.pdfgen import canvas
+
+        path = build / (bid + ".pdf")
+        book = canvas.Canvas(str(path), pagesize=A4)
+        for heading, body in recipes:
+            book.setFillColorRGB(0.15, 0.3, 0.22)
+            book.rect(0, 730, 595, 112, fill=1, stroke=0)
+            book.setFillColorRGB(1, 1, 1)
+            book.setFont("Times-Bold", 26)
+            book.drawString(45, 785, heading)
+            book.setFillColorRGB(0.1, 0.1, 0.1)
+            text = book.beginText(45, 695)
+            text.setFont("Times-Roman", 13)
+            text.setLeading(19)
+            for line in body.splitlines():
+                for wrapped in textwrap.wrap(line, 76) or [""]:
+                    text.textLine(wrapped)
+            book.drawText(text)
+            book.setFont("Times-Italic", 10)
+            book.drawString(45, 35, title + " · " + author)
+            book.showPage()
+        book.save()
+        return path
+    path = build / (bid + ".epub")
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr(
+            "mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED
+        )
+        archive.writestr(
+            "META-INF/container.xml",
+            '<?xml version="1.0"?><container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0"><rootfiles><rootfile full-path="book.opf" media-type="application/oebps-package+xml"/></rootfiles></container>',
+        )
+        manifest = [
+            '<item id="css" href="book.css" media-type="text/css"/>',
+            '<item id="nav" href="nav.xhtml" properties="nav" media-type="application/xhtml+xml"/>',
+        ]
+        spine, nav = [], []
+        for index, (heading, body) in enumerate(recipes):
+            sid = f"{bid}-{index}"
+            manifest.append(
+                f'<item id="s{index}" href="{sid}.xhtml" media-type="application/xhtml+xml"/>'
+            )
+            spine.append(f'<itemref idref="s{index}"/>')
+            nav.append(f'<li><a href="{sid}.xhtml#start">{escape(heading)}</a></li>')
+            paragraphs = "".join(
+                "<p>" + escape(part).replace("\n", "<br/>") + "</p>"
+                for part in body.split("\n\n")
+            )
+            archive.writestr(
+                sid + ".xhtml",
+                f'<html xmlns="http://www.w3.org/1999/xhtml"><head><title>{escape(heading)}</title><link rel="stylesheet" href="book.css"/></head><body><p class="byline">{escape(title)} · {escape(author)}</p><h1 id="start">{escape(heading)}</h1>{paragraphs}</body></html>',
+            )
+        archive.writestr(
+            "book.css",
+            "body{font-family:Georgia,serif;color:#243f32;line-height:1.6;padding:3%;}h1{font-size:2.2em;border-bottom:3px solid #50755f;padding-bottom:.5em;}p{margin:1.2em 0}.byline{font:small-caps .8em sans-serif;letter-spacing:.08em;}",
+        )
+        archive.writestr(
+            "nav.xhtml",
+            '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><title>Contents</title></head><body><nav epub:type="toc"><ol>'
+            + "".join(nav)
+            + "</ol></nav></body></html>",
+        )
+        archive.writestr(
+            "book.opf",
+            '<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="book-id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="book-id">'
+            + bid
+            + "</dc:identifier><dc:title>"
+            + escape(title)
+            + "</dc:title><dc:creator>"
+            + escape(author)
+            + "</dc:creator><dc:language>en</dc:language></metadata><manifest>"
+            + "".join(manifest)
+            + "</manifest><spine>"
+            + "".join(spine)
+            + "</spine></package>",
+        )
+    return path
+
+
 def sample_library(root):
     store = LocalStore(root / "library")
     runtime = Runtime(store, root / "runtime")
-    pub = "b98de000000000000000000000000002"
+    pub = "b98de000000000000000000000000004"
     if runtime.active() and runtime.active()["publication_id"] == pub:
         runtime.resume_cached()
         return runtime
-    build = root / "samples-v2"
+    build = root / "samples-v4"
     build.mkdir(parents=True, exist_ok=True)
     db = create_index(build / "index.sqlite", pub)
     inputs = {"runtime/index.sqlite": build / "index.sqlite"}
     for number, (bid, title, author, fmt, recipes) in enumerate(BOOKS):
-        original = build / (bid + ".txt")
-        original.write_text("\n\n".join(t + "\n" + body for t, body in recipes))
+        original = write_original(build, bid, title, author, fmt, recipes)
         sha, _ = digest_file(original)
         source = fmt.lower() + ":" + sha
-        original_key = "backup/" + bid + ".txt"
+        original_key = "backup/" + original.name
         inputs[original_key] = original
         sections, images, toc = [], [], []
         for index, (recipe, body) in enumerate(recipes):
@@ -154,7 +243,7 @@ def sample_library(root):
                 "images": [iid],
             }
             if fmt == "PDF":
-                locator = {"kind": "page", "physical_page": 1}
+                locator = {"kind": "page", "physical_page": index + 1}
                 section.update(
                     kind="page",
                     locator=locator,
@@ -163,7 +252,7 @@ def sample_library(root):
                         "label": "Synthetic transcription — unapproved",
                         "check_regions": [
                             {
-                                "physical_page": 1,
+                                "physical_page": index + 1,
                                 "box": [0.06, 0.32, 0.8, 0.49],
                                 "state": "unresolved",
                             }
@@ -241,7 +330,8 @@ class SampleLibrary(Library):
             book = self.book(db, book_id, source_id)
             section = self.page_row(db, source_id, physical_page)
             image = db.execute(
-                "select asset from images where source_id=? limit 1", (source_id,)
+                "select asset from images where source_id=? and id=?",
+                (source_id, json.loads(section["images"])[0]),
             ).fetchone()
             path = self.cached(pub, image[0])
             with Image.open(path) as opened:

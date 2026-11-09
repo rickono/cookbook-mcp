@@ -59,6 +59,10 @@ def read_native(library, loc):
             model_snapshot_id=citation["model_snapshot_id"],
         )
     if not loc.get("target_id"):
+        if not loc.get("contents_offset", 0) and structure["reading_order"]:
+            data["start_reading"] = encode_location(
+                {**base, "target_id": structure["reading_order"][0]["id"]}
+            )
         return data
     result = library.read_book_content(
         pub,
@@ -148,21 +152,22 @@ def read_native(library, loc):
         if related.get("next_related_offset") is not None
         else None
     )
-    occurrences = structure["reading_order"]
-    ids = [o["id"] for o in occurrences]
-    if loc["target_id"] in ids:
-        i = ids.index(loc["target_id"])
-        for n, label in (
-            (i - 1, "Previous reading occurrence"),
-            (i + 1, "Next reading occurrence"),
-        ):
-            if 0 <= n < len(ids):
-                data["adjacent"].append(
-                    {
-                        "label": label,
-                        "at": encode_location({**base, "target_id": ids[n]}),
-                    }
-                )
+    from .reader_navigation import native_neighbors
+
+    data["adjacent"] = [
+        {
+            "label": item["label"],
+            "title": item["title"],
+            "at": encode_location(
+                {
+                    **base,
+                    "target_id": item["target_id"],
+                    "contents_offset": item["contents_offset"],
+                }
+            ),
+        }
+        for item in native_neighbors(library.model(pub), bid, loc["target_id"])
+    ]
     # Interpretation states and source coverage are not complete-content approval.
     data["citation"]["eligibility"] = {
         "eligible": False,

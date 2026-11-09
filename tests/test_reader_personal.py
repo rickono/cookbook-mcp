@@ -134,7 +134,13 @@ def test_resume_priority_retirement_and_latest_accepted_write(
         first = send(a, "resume", "a", at=at)
         assert first.status_code == 200
         assert send(b, "save", "b", at=at, name="Retained").status_code == 200
-        assert "Resume this edition" in b.get("/reader/book", params={"at": book}).text
+        entry = b.get("/reader/book", params={"at": book})
+        assert "Resume this edition" in entry.text
+        assert (
+            "/reader/book.js" in entry.text
+            and 'aria-label="Book contents"' in entry.text
+        )
+        assert "Continue reading</h1>" not in entry.text
         explicit = b.get("/reader/read", params={"at": book})
         assert (
             explicit.status_code == 200 and "Resume this edition" not in explicit.text

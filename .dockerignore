@@ -9,3 +9,9 @@ src/**/__pycache__/
 **/__pycache__/**
 **/*.pyc
 src/**/*.prototype.*
+
+# Serve only the pinned reader bundle; local duplicate directories are not shipped.
+src/cookbook/book_vendor/**
+!src/cookbook/book_vendor/assets.zip
+!src/cookbook/book_vendor/assets.json
+!src/cookbook/book_vendor/packages.json

@@ -15,7 +15,7 @@ class Element {
   closest(selector){const prefix=selector.match(/href\^="([^"]+)"/);return prefix && this.href?.replace('https://reader.example','').startsWith(prefix[1]) ? this : null;}
 }
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
-function fixture({sessionReplies=[]}={}) {
+function fixture({sessionReplies=[], readingReply}={}) {
   const nodes={},events={},posts=[],requests=[],scroll=[];
   for(const id of ['more-scopes','search-form','search-status','fresh-search','content-results','content-status','content-more','section-results','section-status','section-more'])nodes['#'+id]=new Element();
   const form=nodes['#search-form'];form.dataset.csrf='synthetic';form.elements={query:new Element(),book_id:new Element(),kind:new Element()};form.reset=()=>{for(const e of Object.values(form.elements))e.value='';};
@@ -26,12 +26,12 @@ function fixture({sessionReplies=[]}={}) {
   const location={href:'https://reader.example/reader/search',replace(url){this.replaced=url;}};
   const results=[];
   const reading=new Element('main');reading.append(new Element('article'), ...['/reader/personal.js','/reader/reports.js','https://external.example/injected.js'].map(src=>Object.assign(new Element('script'),{src,inert:true})));
-  class Parser {parseFromString(body){return body==='reading'?{querySelector:()=>reading,querySelectorAll:q=>q==='link[rel="stylesheet"][href]'?[Object.assign(new Element('link'),{href:'/reader/presentation.css'})]:q==='script[src]'?reading.childNodes.filter(n=>n.tag==='script'):[]}:{querySelectorAll:()=>[]};}}
+  class Parser {parseFromString(body){return body==='reading'?{querySelector:()=>reading,querySelectorAll:q=>q==='link[rel="stylesheet"][href]'?[Object.assign(new Element('link'),{href:'/reader/presentation.css'})]:q==='script[src]'?reading.childNodes.filter(n=>n.tag==='script'):[]}:{querySelector:()=>null,querySelectorAll:()=>[]};}}
   const fetch=async(url,options={})=>{
     requests.push([url,options]);
     if(url==='/reader/session'){const reply=sessionReplies.shift();if(reply instanceof Error)throw reply;return reply ?? {ok:true,json:async()=>({authenticated:true,csrf:'renewed'})};}
     if(url==='/reader/catalog')return {ok:true,text:async()=>''};
-    if(url.startsWith('/reader/read?'))return {ok:true,text:async()=>'reading'};
+    if(url.startsWith('/reader/read?'))return readingReply ? {ok:false,status:readingReply.status,text:async()=>readingReply.body} : {ok:true,text:async()=>'reading'};
     posts.push(JSON.parse(options.body)); const data=results.shift();
     if(data instanceof Error)throw data;
     return data?.status?{status:data.status,ok:false,json:async()=>data.body}:{ok:true,json:async()=>data};
@@ -195,4 +195,27 @@ test('expiry on the retried POST clears state without further recovery',async()=
  const f=fixture();await flush();f.form.elements.query.value='salt';f.results.push(denied(),{status:401});f.submit();await flush();
  assert.equal(f.posts.length,2);assert.equal(f.requests.filter(([u])=>u==='/reader/session').length,1);
  assert.equal(f.main.childNodes.length,0);assert.equal(f.location.replaced,'/reader');
+});
+
+test('search leaves already handled original-reader navigation alone',async()=>{
+ const f=fixture();await flush();
+ const link=new Element('a');link.href='/reader/read?at=already-handled';
+ const before=f.requests.length;
+ f.main.events.click({defaultPrevented:true,target:link,preventDefault(){throw Error('Already handled');}});
+ await flush();
+ assert.equal(f.requests.length,before);
+});
+
+
+test('an invalid reading response cannot detach the live search form or its results',async()=>{
+ const f=fixture({readingReply:{status:404,body:'{"error":"source_location_unavailable"}'}});await flush();
+ f.form.elements.query.value='retained query';
+ f.results.push({publication_id:'pinned',groups:{content:group([hit('missing')]),section:group()}});
+ f.submit();await flush();
+ const before=f.main.childNodes.length;
+ f.click(f.nodes['#content-results'].childNodes[0].childNodes[0]);await flush();
+ assert.equal(f.main.childNodes.length,before);
+ assert.equal(f.form.elements.query.value,'retained query');
+ assert.equal(f.nodes['#content-results'].childNodes.length,1);
+ assert.match(f.nodes['#search-status'].textContent,/interrupted/);
 });

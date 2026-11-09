@@ -179,8 +179,8 @@ async def endpoint(reader, request, library, owner, session):
     return JSONResponse(result, status_code=status)
 
 
-async def book_entry(reader, request, library, owner):
-    """Catalog-only entry may offer resume; explicit /read destinations bypass it."""
+async def book_entry(reader, request, library, owner, csrf=""):
+    """Offer resume alongside contents; explicit /read destinations bypass it."""
     try:
         loc = decode_location(request.query_params["at"])
         if set(loc) != {"publication_id", "book_id", "source_id"}:
@@ -193,39 +193,38 @@ async def book_entry(reader, request, library, owner):
         if saved:
             with stage(Stage.LIBRARY_RESOLVE):
                 resolved = await asyncio.to_thread(resolve_current, library, saved)
-            body = '<section class="layout layout-narrow signin"><p class="kicker">Welcome back</p><h1>Continue reading</h1><p class="lede">Your saved place is kept with this edition.</p><div class="actions">'
+            body = '<div class="actions resume-reading">'
             if resolved["at"]:
                 body += (
-                    '<a class="button button-primary" href="/reader/read?'
+                    '<a class="button button-primary" href="/reader/book-view?'
                     + escape(urlencode({"at": resolved["at"]}))
                     + '">Resume this edition</a>'
                 )
             else:
                 body += "<p>Remembered location unavailable. Your reference is retained.</p>"
-            body += (
-                '<a class="button" href="/reader/read?'
-                + escape(urlencode({"at": encode_location(loc)}))
-                + '">Open book contents</a></div></section>'
+            body += "</div>"
+            from .reader_book import deliver
+
+            return await deliver(
+                reader, request, library, owner, csrf, entry_banner=body
             )
-            return reader.page(body, protected=True)
     return RedirectResponse(
-        "/reader/read?" + urlencode({"at": encode_location(loc)}), status_code=303
+        "/reader/book-view?" + urlencode({"at": encode_location(loc)}), status_code=303
     )
 
 
 def controls(location, available=True):
+    stable = available and bool(location.get("section_id") or location.get("target_id"))
     return (
         '<section id="reader-personal" data-at="'
         + encode_location(location)
         + '" data-stable="'
-        + (
-            "true"
-            if available and (location.get("section_id") or location.get("target_id"))
-            else "false"
-        )
+        + ("true" if stable else "false")
         + '"><details class="bookmark-panel"><summary>Save a bookmark</summary>'
         '<form id="bookmark-save" method="post" action="/reader/personal" autocomplete="off"><label>Bookmark name (optional)<input name="name" maxlength="120" placeholder="A name to remember"></label><button>Save bookmark</button></form></details>'
-        '<button class="button-quiet" id="remember-location" type="button">Remember this location</button><p id="personal-status" role="status"></p></section><script src="/reader/personal.js" defer></script>'
+        '<button class="button-quiet" id="remember-location" type="button"'
+        + ("" if stable else " disabled")
+        + '>Remember this location</button><p id="personal-status" role="status"></p></section><script src="/reader/personal.js" defer></script>'
     )
 
 

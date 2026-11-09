@@ -71,6 +71,6 @@ jobs:
         run: uv run pytest -q tests/test_reader_preview.py
       - name: Check reader code
         run: |
-          uv run ruff check src/cookbook/reader*.py src/cookbook/owner_reports.py src/cookbook/owner_report_config.py src/cookbook/personal_config.py src/cookbook/storage.py src/cookbook/book_search.py scripts/preview_reader.py scripts/verify_reader_release.py tests/test_reader*.py tests/test_storage_conditions.py tests/test_search_process.py tests/reader_release_fixture.py
-          uv run ruff format --check src/cookbook/reader*.py src/cookbook/owner_reports.py src/cookbook/owner_report_config.py src/cookbook/personal_config.py src/cookbook/storage.py src/cookbook/book_search.py scripts/preview_reader.py scripts/verify_reader_release.py tests/test_reader*.py tests/test_storage_conditions.py tests/test_search_process.py tests/reader_release_fixture.py
+          uv run ruff check src/cookbook/reader*.py src/cookbook/owner_reports.py src/cookbook/owner_report_config.py src/cookbook/personal_config.py src/cookbook/storage.py src/cookbook/book_search.py scripts/preview_reader.py scripts/vendor_book_readers.py scripts/verify_reader_release.py tests/test_reader*.py tests/test_storage_conditions.py tests/test_search_process.py tests/reader_release_fixture.py
+          uv run ruff format --check src/cookbook/reader*.py src/cookbook/owner_reports.py src/cookbook/owner_report_config.py src/cookbook/personal_config.py src/cookbook/storage.py src/cookbook/book_search.py scripts/preview_reader.py scripts/vendor_book_readers.py scripts/verify_reader_release.py tests/test_reader*.py tests/test_storage_conditions.py tests/test_search_process.py tests/reader_release_fixture.py
           git diff --check

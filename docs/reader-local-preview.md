@@ -7,11 +7,11 @@ uv run python scripts/preview_reader.py
 ```
 
 Open [the sample library](http://localhost:8766/reader/login). Sign-in is simulated
-automatically. The actual reader serves three invented books: The Weeknight Table,
+automatically. The actual reader opens original PDF and EPUB files by default and serves three invented books: The Weeknight Table,
 A Small Seasonal Kitchen, and The Soup Notebook. Try searching for `lemon`, opening
 a recipe, saving a bookmark, and inspecting an original. The soup
 sample also offers unresolved content, a check region, and transcription reporting.
-The longer supper passage exercises explicit text continuation.
+The longer supper passage exercises EPUB pagination and automatic continuation in the alternate text view. See [the original-book reader](original-book-reader.md) for source delivery and verification.
 
 The process listens only on IPv4 loopback and accepts only `localhost:8766`.
 It remains running until you press Ctrl+C. Bookmarks and reports are stored

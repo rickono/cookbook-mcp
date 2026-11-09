@@ -19,32 +19,18 @@ def section_label(title, kind, pages):
 
 
 def scanned_contents(toc):
-    entries = []
-    for item in toc:
-        kind = item.get("kind", "")
-        missing = unnamed(item.get("title"), kind)
-        page = item.get("physical_page")
-        group = (
-            "Recipes"
-            if kind == "recipe"
-            else ("Pages without titles" if missing else "Named sections")
-        )
-        entries.append(
-            (
-                {"Recipes": 0, "Named sections": 1, "Pages without titles": 2}[group],
-                missing,
-                {
-                    **item,
-                    "title": section_label(
-                        item.get("title"), kind, [page] if page else []
-                    ),
-                    "group": group,
-                },
-            )
-        )
-    # Python's stable sort preserves source order inside each group. Order the
-    # full metadata list before applying the existing bounded page selection.
-    return [item for _, _, item in sorted(entries, key=lambda x: x[:2])]
+    # Retain source order, including unnamed pages between recipes.
+    return [
+        {
+            **item,
+            "title": section_label(
+                item.get("title"),
+                item.get("kind", ""),
+                [item["physical_page"]] if item.get("physical_page") else [],
+            ),
+        }
+        for item in toc
+    ]
 
 
 def contents_html(data, raw, back, anchor):
