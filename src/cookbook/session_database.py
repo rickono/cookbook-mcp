@@ -137,10 +137,10 @@ def _durability_target(conninfo, durability):
         if (
             not re.fullmatch(r"ep-[a-z0-9.-]+\.aws\.neon\.tech", host)
             or "-pooler" in host.split(".")[0]
-            or target.get("hostaddr")
-            or target.get("service")
-            or os.environ.get("PGHOSTADDR")
-            or os.environ.get("PGSERVICE")
+            or "hostaddr" in target
+            or "service" in target
+            or "PGHOSTADDR" in os.environ
+            or "PGSERVICE" in os.environ
             or target.get("sslmode") != "verify-full"
         ):
             raise PreflightRefused(

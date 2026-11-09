@@ -33,7 +33,7 @@ The initializer is atomic and repeatable for the supported version. Repeat initi
 ## Prove the release before cutover
 
 1. Run the disposable PostgreSQL HTTP and provisioning checks and the explicit serving regression selection. Require the Linux CI job and native `linux/amd64` image build to pass. The source-free Typesense startup smoke check stays enabled.
-2. Review the production preparation changes. The earlier council approval covers the local-trial commit only.
+2. Review the complete production preparation against current main. Council approval at `4a9dd6f` covers the pre-Neon preparation. The Neon policy and integration with the current PDF/EPUB reader require approval on the final revision.
 3. Pin the release image digest. Record the current Fly machine configuration, attached volume, old image digest, and secret version privately. Preserve the current machine, volume, library credentials, reports, and personal metadata.
 4. Run synthetic before/after journeys from the hosted region against both authorities with the same release image and content fixtures. Count failures separately. Require a worthwhile improvement in total request time and fresh authorization checks. Do not use the Mac-versus-relay ratio as production evidence.
 5. Exercise renewal with the real identity provider and a disposable session, both logout scopes, concurrent requests, database disconnection, process restart, and the chosen provider's failover path. Never replay an ambiguous refresh exchange. Verify replacement-token cleanup after a request timeout.

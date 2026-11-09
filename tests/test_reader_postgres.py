@@ -11,6 +11,10 @@ from types import SimpleNamespace
 
 import pytest
 from starlette.testclient import TestClient
+from test_reader_book import (  # noqa: F401 - exercise current original-reader routes on PostgreSQL
+    test_original_reader_preserves_stable_personal_controls,
+    test_retired_original_location_keeps_explicit_source_bound_recovery,
+)
 from test_reader_content import (  # noqa: F401 - run established journeys on this authority
     test_catalog_book_text_continuations_and_login_return,
 )

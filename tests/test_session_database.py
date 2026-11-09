@@ -19,6 +19,8 @@ from cookbook.session_database import initialize, preflight
         "host=ep-synthetic.us-west-2.aws.neon.tech.attacker.example sslmode=verify-full",
         "host=ep-synthetic.us-west-2.aws.neon.tech hostaddr=127.0.0.1 sslmode=verify-full",
         "host=ep-synthetic.us-west-2.aws.neon.tech service=other sslmode=verify-full",
+        "host=ep-synthetic.us-west-2.aws.neon.tech service='' sslmode=verify-full",
+        "host=ep-synthetic.us-west-2.aws.neon.tech hostaddr='' sslmode=verify-full",
         "host=ep-synthetic.us-west-2.aws.neon.tech,localhost sslmode=verify-full",
     ],
 )
@@ -32,8 +34,9 @@ def test_neon_policy_rejects_unsafe_targets_before_connecting(monkeypatch, targe
 
 
 @pytest.mark.parametrize("variable", ["PGHOSTADDR", "PGSERVICE"])
-def test_neon_rejects_inherited_connection_indirection(monkeypatch, variable):
-    monkeypatch.setenv(variable, "127.0.0.1" if variable == "PGHOSTADDR" else "other")
+@pytest.mark.parametrize("value", ["", "synthetic"])
+def test_neon_rejects_inherited_connection_indirection(monkeypatch, variable, value):
+    monkeypatch.setenv(variable, value)
 
     def unexpected(*args, **kwargs):
         pytest.fail("Inherited indirection reached a database connection")
