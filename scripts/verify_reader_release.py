@@ -17,6 +17,7 @@ PYTHON = [
     "reader_search",
     "reader_search_trial",
     "reader_updates",
+    "reader_validation",
     "reader_personal",
     "reader_presentation",
     "owner_reports",
