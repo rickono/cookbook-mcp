@@ -4,6 +4,7 @@ import base64
 import json
 import re
 from html import unescape
+from urllib.parse import parse_qs, urlsplit
 
 from starlette.testclient import TestClient
 from test_reader_http import login
@@ -16,7 +17,7 @@ def destination(pub, source, **extra):
     return base64.urlsafe_b64encode(json.dumps(value).encode()).decode().rstrip("=")
 
 
-def test_scanned_contents_prioritize_recipes_and_keep_unnamed_pages_reachable(
+def test_scanned_contents_keep_source_order_and_unnamed_pages_reachable(
     reader_env, published, tmp_path
 ):
     from lxml import html
@@ -46,20 +47,37 @@ def test_scanned_contents_prioritize_recipes_and_keep_unnamed_pages_reachable(
         login(client)
         at = destination(pub, source)
         data = client.get("/reader/content", params={"at": at}).json()
-        assert [x["title"] for x in data["contents"]] == ["Sauce", "Page 1"]
+        assert [x["title"] for x in data["contents"]] == ["Page 1", "Sauce"]
         assert [decode_at(x["at"])["section_id"] for x in data["contents"]] == [
-            "section-0-1",
             "section-0",
+            "section-0-1",
         ]
         page = html.fromstring(client.get("/reader/read", params={"at": at}).text)
-        assert page.xpath('//h2[text()="Recipes"]')
-        assert page.xpath('//details/summary[text()="Pages without titles"]')
+        assert not page.xpath('//details/summary[text()="Pages without titles"]')
+        start = page.xpath('//a[text()="Start reading"]/@href')[0]
+        assert (
+            decode_at(parse_qs(urlsplit(start).query)["at"][0])["section_id"]
+            == "section-0"
+        )
         assert "Untitled passage" not in page.text_content()
         opened = html.fromstring(
-            client.get("/reader/read", params={"at": data["contents"][1]["at"]}).text
+            client.get("/reader/read", params={"at": data["contents"][0]["at"]}).text
         )
         assert opened.xpath("//h1/text()") == ["Pages 1, 2"]
         assert "Synthetic soup" in opened.text_content()
+        assert opened.xpath(
+            '//nav[@aria-label="Book navigation"]/a[@data-book-next][@hidden]'
+        )
+        current = data["contents"][0]["at"]
+        while True:
+            chunk = client.get("/reader/content", params={"at": current}).json()
+            if not chunk["next_text"]:
+                break
+            current = chunk["next_text"]
+        final = html.fromstring(client.get("/reader/read", params={"at": current}).text)
+        assert final.xpath(
+            '//nav[@aria-label="Book navigation"]/a[@data-book-next][not(@hidden)]'
+        )
         assert (
             library.read_section(pub, "book-0", source, "section-0")["citation"][
                 "section_title"
@@ -88,9 +106,9 @@ def test_scanned_contents_ordering_is_stable_before_pagination():
         {"title": "Soup", "kind": "recipe", "physical_page": 61, "section_id": "recipe"}
     ]
     ordered = scanned_contents(source)
-    assert ordered[0]["section_id"] == "recipe"
-    assert ordered[1]["title"] == "Page 1"
-    assert [x["section_id"] for x in ordered[1:]] == [str(n) for n in range(1, 61)]
+    assert ordered[-1]["section_id"] == "recipe"
+    assert ordered[0]["title"] == "Page 1"
+    assert [x["section_id"] for x in ordered[:60]] == [str(n) for n in range(1, 61)]
     assert source[0]["title"] == "Untitled passage"
 
 
@@ -117,10 +135,10 @@ def test_catalog_book_text_continuations_and_login_return(
             },
             follow_redirects=False,
         )
-        assert callback.headers["location"] == "/reader/read?at=" + at
-        page = client.get(callback.headers["location"])
+        assert callback.headers["location"] == "/reader/book-view?at=" + at
+        page = client.get("/reader/read", params={"at": at})
         assert page.status_code == 200 and "Synthetic bean recipe" in page.text
-        assert "Partial text" in page.text and "Unapproved" in page.text
+        assert "More text follows" in page.text and "Unapproved" in page.text
         assert "private, no-store" == page.headers["cache-control"]
         first = client.get("/reader/content", params={"at": at}).json()
         chunks = [first["text"]]
@@ -584,6 +602,11 @@ def test_native_snapshot_occurrences_and_cursor_binding(
         ).json()
         assert first["citation"]["model_snapshot_id"] == "snapshot-1"
         assert first["citations"][0]["reading_occurrence_id"] == "occ-1"
+        original = client.get(
+            "/reader/book-info", params={"at": entry["contents"][1]["at"]}
+        ).json()
+        assert original["epub_document"] == "chapter.xhtml"
+        assert original["epub_occurrence"] == 1
         assert len(first["references"]) == 1
         chunks = [first["text"]]
         while first["next_text"]:

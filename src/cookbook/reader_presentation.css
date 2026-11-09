@@ -13,7 +13,9 @@
 .trust-label { display: inline-block; font-size: .73rem; line-height: 1.5; color: var(--caution-ink); background: var(--caution-bg); border: 1px solid var(--caution-line); padding: .3rem .6rem; border-radius: 5px; margin-bottom: 1.5rem; }
 #text { max-width: 65ch; }
 .source-text, .comparison-text { font-family: var(--serif); font-size: 1.11rem; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
-.reading-chunk { margin-top: 1rem; }
+.reading-chunk { display: inline; }
+.reader-view .source-text { display: inline; }
+.reader-view .table-region .source-text { display: block; }
 .reading-body > a { margin: 1rem 1rem 0 0; font-weight: 600; }
 .reading-tools { border-left: 1px solid var(--line); padding-left: 1.5rem; font-size: .85rem; }
 .reading-tools > details, .reading-tools #reader-personal, .reading-tools > .original-action { border-bottom: 1px solid var(--line); padding-bottom: .75rem; margin-bottom: .75rem; }
@@ -56,3 +58,38 @@
 .reading-head { margin-bottom: 1rem; }
 .reading-head h1 { font-size: clamp(1.5rem, 1.1rem + 1.6vw, 2.2rem); }
 .reading-byline { margin-top: .35rem; }
+
+/* A compact toolbar stays reachable while the book remains the main surface. */
+.reading-preferences { position: sticky; top: 0; z-index: 4; display: flex; align-items: center; gap: .5rem; margin: 0 0 1.5rem; padding-block: .5rem; background: var(--paper); border-bottom: 1px solid var(--line); font: 400 .8rem/1.5 var(--sans); }
+.reading-preferences button, .reading-preferences summary { font: inherit; min-height: 44px; white-space: nowrap; }
+.reading-preferences > button, .reading-preferences summary { border: 1px solid transparent; border-radius: 6px; padding: .5rem .7rem; background: transparent; }
+.reading-preferences > button:hover, .reading-preferences summary:hover { background: var(--sunk); }
+.reading-menu { position: relative; }
+.reading-menu > nav, .reading-menu > .type-controls { position: absolute; top: calc(100% + .5rem); left: 0; width: min(28rem, calc(100vw - 2 * var(--gutter))); max-height: 65dvh; overflow-y: auto; overscroll-behavior: contain; background: var(--surface); border: 1px solid var(--line-strong); border-radius: 8px; padding: 1rem; box-shadow: 0 .5rem 1.5rem #1f241f18; }
+.reading-menu nav { display: flex; flex-direction: column; gap: .25rem; }
+.reading-menu nav a { display: block; min-height: 44px; padding: .5rem; font-size: .85rem; }
+.reading-menu nav a:hover { background: var(--sunk); }
+.reading-menu nav h2 { font-size: 1rem; margin-block: .5rem; }
+.type-menu > .type-controls { left: auto; right: 0; width: max-content; display: flex; align-items: center; gap: .5rem; }
+.type-controls button { padding-inline: .5rem; min-width: 44px; }
+.type-controls output { min-width: 3.5em; text-align: center; font-variant-numeric: tabular-nums; }
+.reading-preferences button:disabled { opacity: .45; cursor: default; }
+.reader-view[data-text-size="90"] { --reading-size: 1rem; }
+.reader-view[data-text-size="100"] { --reading-size: 1.11rem; }
+.reader-view[data-text-size="115"] { --reading-size: 1.28rem; }
+.reader-view[data-text-size="130"] { --reading-size: 1.44rem; }
+.reader-view[data-text-size="150"] { --reading-size: 1.67rem; }
+.reader-view .source-text { font-size: var(--reading-size, 1.11rem); }
+.reading-focused .reading-layout { display: block; max-width: 42rem; margin-inline: auto; }
+.reading-focused .reading-tools { display: none; }
+.reading-focused .reading-head, .reading-focused .reading-preferences { max-width: 42rem; margin-inline: auto; }
+.book-navigation { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem 1.5rem; border-top: 1px solid var(--line); margin-top: 2.5rem; padding-top: 1rem; font: 600 .85rem/1.5 var(--sans); }
+.book-navigation a { min-height: 44px; }
+.book-navigation a:last-child { margin-left: auto; font-weight: 400; }
+.start-reading { margin-bottom: 1.5rem; }
+.reading-body > .reading-status { margin-top: 1.5rem; }
+@media (max-width: 36rem) {
+  .reading-preferences { gap: 0; justify-content: space-between; }
+  .reading-preferences > button, .reading-preferences summary { padding-inline: .5rem; }
+  .book-navigation { gap: .5rem 1rem; }
+}

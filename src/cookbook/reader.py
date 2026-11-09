@@ -8,6 +8,7 @@ import hashlib
 import json
 import secrets
 import time
+import zipfile
 from dataclasses import dataclass, field
 from html import escape
 from pathlib import Path
@@ -33,6 +34,9 @@ from .reader_sessions import (
 )
 from .storage import canonical
 
+VENDOR_ROOT = Path(__file__).with_name("book_vendor").resolve()
+VENDOR_ASSETS = frozenset(json.loads((VENDOR_ROOT / "assets.json").read_text()))
+
 COOKIE = "__Host-reader"
 TRANSACTION = "__Host-reader-login"
 DEADLINE = 10.0
@@ -43,6 +47,9 @@ PASSIVE_PATHS = frozenset({"/reader/session", "/reader/updates", "/reader/logout
 ASSETS = {
     "/reader/presentation.css": ("reader_presentation.css", "text/css"),
     "/reader/presentation.js": ("reader_presentation.js", "text/javascript"),
+    "/reader/epub.js": ("reader_epub.mjs", "text/javascript"),
+    "/reader/book.js": ("reader_book.js", "text/javascript"),
+    "/reader/book.css": ("reader_book.css", "text/css"),
     "/reader/style.css": ("reader_style.css", "text/css"),
     "/reader/personal.js": ("reader_personal.js", "text/javascript"),
     "/reader/search.js": ("reader_search.js", "text/javascript"),
@@ -252,6 +259,25 @@ class Reader:
 
     async def dispatch(self, request, library, trace):
         path = request.url.path
+        if path.startswith("/reader/vendor/"):
+            import mimetypes
+
+            name = path.removeprefix("/reader/vendor/")
+            if name not in VENDOR_ASSETS:
+                return Response(status_code=404)
+            with zipfile.ZipFile(VENDOR_ROOT / "assets.zip") as archive:
+                binary = archive.read(name)
+            mime = (
+                {
+                    ".mjs": "text/javascript",
+                    ".js": "text/javascript",
+                    ".css": "text/css",
+                    ".wasm": "application/wasm",
+                }.get(Path(name).suffix)
+                or mimetypes.guess_type(name)[0]
+                or "application/octet-stream"
+            )
+            return Response(binary, media_type=mime)
         if path in ASSETS:
             filename, media_type = ASSETS[path]
             return Response(
@@ -345,7 +371,7 @@ class Reader:
             r = RedirectResponse(
                 "/reader/catalog"
                 if destination == "catalog"
-                else "/reader/read?" + urlencode({"at": destination}),
+                else "/reader/book-view?" + urlencode({"at": destination}),
                 status_code=303,
             )
             self.cookie(r, COOKIE, created.cookie, LIFETIME)
@@ -384,6 +410,9 @@ class Reader:
                 if path
                 in (
                     "/reader/read",
+                    "/reader/book-view",
+                    "/reader/book-info",
+                    "/reader/source",
                     "/reader/content",
                     "/reader/updates",
                     "/reader/original",
@@ -412,7 +441,7 @@ class Reader:
             from .reader_personal import book_entry
 
             with stage(Stage.PERSONAL_STATE):
-                return await book_entry(self, request, library, subject)
+                return await book_entry(self, request, library, subject, session.csrf)
         if path == "/reader/search":
             from .reader_search import page
 
@@ -432,6 +461,16 @@ class Reader:
 
             with stage(Stage.LIBRARY_SEARCH):
                 return await results(request, library, self, session)
+        if path == "/reader/source":
+            from .reader_book import source
+
+            with stage(Stage.ORIGINAL_DELIVER):
+                return await source(request, library)
+        if path in ("/reader/book-view", "/reader/book-info"):
+            from .reader_book import deliver as book_view
+
+            with stage(Stage.CONTENT_DELIVER):
+                return await book_view(self, request, library, subject, session.csrf)
         if path in ("/reader/original", "/reader/image"):
             from .reader_original import deliver as original
 
@@ -565,13 +604,13 @@ class Reader:
                 503,
                 retry=link(at),
             )
-        if request.url.path == "/reader/read":
+        if request.url.path in ("/reader/read", "/reader/book-view"):
             at = request.query_params.get("at", "")
             try:
                 decode_location(at)
             except (ValueError, TypeError, UnicodeError):
                 at = ""
-            target = "/reader/read?" + urlencode({"at": at})
+            target = request.url.path + "?" + urlencode({"at": at})
             response = self.page(
                 '<p role="status">Reading interrupted. Retry this location or sign in again.</p><a href="'
                 + escape(target)
@@ -624,6 +663,9 @@ class Reader:
             "/reader/bookmarks",
             "/reader/session",
             "/reader/read",
+            "/reader/book-view",
+            "/reader/book-info",
+            "/reader/source",
             "/reader/content",
             "/reader/updates",
             "/reader/login",
@@ -635,6 +677,7 @@ class Reader:
             "/reader/image",
         ):
             app.routes.insert(0, Route(path, endpoint))
+        app.routes.insert(0, Route("/reader/vendor/{asset:path}", endpoint))
         app.routes.insert(
             0, Route("/reader/search/results", endpoint, methods=["POST"])
         )
@@ -658,7 +701,7 @@ class Reader:
                 "X-Content-Type-Options": "nosniff",
                 "X-Frame-Options": "DENY",
                 "Strict-Transport-Security": "max-age=31536000",
-                "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+                "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self' blob: 'unsafe-inline'; connect-src 'self'; img-src 'self' blob: data:; font-src 'self' blob: data:; frame-src 'self' blob:; worker-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'self'",
             }
         )
         if response.status_code == 503:

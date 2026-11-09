@@ -27,6 +27,7 @@ async function checkPublication() {
     const data = await response.json();
     if (notice.isConnected === false || document.querySelector('#publication-update') !== notice) return;
     if (data.pinned_state === 'withheld') {
+      document.dispatchEvent?.(new Event('reader-withheld'));
       document.querySelector('#text')?.replaceChildren();
       document.querySelector('[data-next-text]')?.remove();
       const status = document.querySelector('[data-reading-status]');
@@ -53,8 +54,9 @@ async function checkPublication() {
       notice.append(message);
       if (data.at) {
         const link = document.createElement('a');
-        link.href = '/reader/read?' + new URLSearchParams({at: data.at}) + '#text';
-        link.textContent = 'Open current text';
+        const original = notice.dataset.view === 'original';
+        link.href = (original ? '/reader/book-view?' : '/reader/read?') + new URLSearchParams({at: data.at}) + (original ? '' : '#text');
+        link.textContent = original ? 'Open current original' : 'Open current text';
         notice.append(link);
       } else {
         const unavailable = document.createElement('p');

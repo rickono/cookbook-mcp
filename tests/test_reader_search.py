@@ -37,7 +37,7 @@ def test_search_groups_source_links_and_private_post(reader_env, published):
         assert section["state"] == "ok" and len(section["results"]) == 1
         hit = section["results"][0]
         assert "salt" in hit["excerpt"] and "Test Author" in hit["authors"]
-        assert "salt" not in hit["href"] and "/reader/read?at=" in hit["href"]
+        assert "salt" not in hit["href"] and "/reader/book-view?at=" in hit["href"]
         assert client.get(hit["href"]).status_code == 200
         assert search(client, author="ignored").status_code == 400
         assert (
@@ -439,7 +439,13 @@ def test_native_results_scope_independent_pages_and_partial_failure(
             "snapshot-1" not in content["results"][0]["href"]
         )  # identifiers encoded by shared reading_link
         opened = client.get(content["results"][0]["href"])
-        assert opened.status_code == 200 and "Synthetic salt essay" in opened.text
+        assert opened.status_code == 200 and "/reader/book.js" in opened.text
+        from lxml import html
+
+        text_link = html.fromstring(opened.text).xpath('//a[text()="Text view"]/@href')[
+            0
+        ]
+        assert "Synthetic salt essay" in client.get(text_link).text
         engine.failed = True
         failed = search(
             client, query="salt", publication_id=manifest.publication_id

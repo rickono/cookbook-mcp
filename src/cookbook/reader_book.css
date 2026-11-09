@@ -1,0 +1,25 @@
+@import url('/reader/vendor/pdfjs-dist/web/pdf_viewer.css');
+body:has(.book-view) main { max-width: none; padding: 0; }
+.book-view { height: calc(100dvh - 5rem); min-height: 28rem; display: flex; flex-direction: column; background: var(--surface); }
+.book-toolbar, .book-controls { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: center; padding: .5rem var(--gutter); border-bottom: 1px solid var(--line); font: .8rem/1.5 var(--sans); }
+.book-toolbar a, .book-toolbar summary { min-height: 44px; }
+.book-title { flex: 1; min-width: 5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--serif); font-size: 1rem; }
+.book-controls label { display: flex; align-items: center; gap: .5rem; margin: 0; font-size: inherit; }
+.book-controls input { width: 5rem; min-height: 44px; padding: .25rem .5rem; }
+.book-controls button { min-height: 44px; padding: .4rem .75rem; font-size: inherit; }
+.book-stage { position: relative; flex: 1; min-height: 16rem; overflow: hidden; }
+.pdf-stage, .epub-stage { position: absolute; inset: 0; overflow: auto; }
+.pdf-stage { background: #dededb; }
+.book-contents { position: relative; }
+.book-contents nav { position: absolute; z-index: 10; top: 100%; left: 0; display: flex; flex-direction: column; width: min(28rem,calc(100vw - 5rem)); max-height: 65dvh; overflow: auto; background: var(--surface); padding: 1rem; border: 1px solid var(--line); box-shadow: 0 .5rem 2rem #0002; }
+.book-contents nav a { display: block; padding: .5rem; }
+[data-book-status] { font-size: .85rem; padding-inline: var(--gutter); margin: .5rem 0; }
+[data-book-status]:empty { display: none; }
+.book-view .resume-reading { padding: .5rem var(--gutter); }
+@media(max-width:36rem) { .book-title { order: 1; flex-basis: 100%; } .book-controls { gap: .4rem; } .book-view { height: calc(100dvh - 6rem); } }
+
+.book-toolbar { position: relative; }
+.book-places > div { position: absolute; z-index: 11; right: var(--gutter); top: 100%; width: min(28rem,calc(100vw - 2 * var(--gutter))); max-height: 65dvh; overflow-y: auto; background: var(--surface); border: 1px solid var(--line); padding: 1rem; box-shadow: 0 .5rem 2rem #0002; }
+.book-places #reader-personal { font-size: .85rem; }
+.book-places #personal-status { margin-block: .5rem; }
+.book-places #publication-update { border-top: 1px solid var(--line); margin-top: 1rem; padding-top: .75rem; font-size: .75rem; color: var(--muted); }
