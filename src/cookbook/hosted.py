@@ -7,7 +7,7 @@ import json
 import os
 import threading
 import time
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -113,6 +113,21 @@ def reader_from_environment(verifier):
         return None
     if any(not os.environ.get(name) for name in READER_NAMES):
         raise ValueError("incomplete reader configuration")
+    backend = os.environ.get("READER_SESSION_BACKEND", "r2")
+    database = os.environ.get("READER_SESSION_DATABASE_URL")
+    if backend not in {"r2", "postgres"}:
+        raise ValueError("READER_SESSION_BACKEND must be r2 or postgres")
+    if backend == "postgres" and not database:
+        raise ValueError("PostgreSQL session authority requires a database URL")
+    if backend == "r2" and database is not None:
+        raise ValueError("Session database URL requires the postgres backend")
+    durability = os.environ.get("READER_SESSION_DURABILITY", "postgres")
+    if durability not in {"postgres", "neon"} or (
+        backend == "r2" and durability != "postgres"
+    ):
+        raise ValueError(
+            "Session durability must be postgres or neon with the postgres backend"
+        )
     origin = os.environ["READER_ORIGIN"]
     audience = urlsplit(verifier.audience)
     if origin != f"{audience.scheme}://{audience.netloc}":
@@ -143,11 +158,22 @@ def reader_from_environment(verifier):
     from .owner_report_config import owner_reports_from_environment
     from .personal_config import personal_from_environment
 
+    if backend == "postgres":
+        from .session_database import PreflightRefused, preflight
+
+        try:
+            preflight(database, durability=durability)
+        except PreflightRefused as error:
+            raise ValueError(str(error)) from None
+        except Exception:  # noqa: BLE001 - redact connection details at the startup boundary
+            raise ValueError("PostgreSQL session startup checks failed") from None
+
     return Reader(
         config,
         verifier,
         store,
         os.environ["READER_SESSION_KEY"].encode(),
+        session_database=database if backend == "postgres" else None,
         owner_reports=owner_reports_from_environment(s3_store),
         personal_state=personal_from_environment(s3_store),
     )
@@ -218,20 +244,21 @@ def create_hosted_app(
 
     @asynccontextmanager
     async def lifespan(app):
-        if search_engine:
-            await asyncio.to_thread(search_engine.start)
-        try:
-            await asyncio.to_thread(runtime.resume_cached)
-        except Exception:  # noqa: BLE001 - redacted service boundary
-            event("cached_publication_invalid")
-        async with original_lifespan(app):
-            updater.start()
+        async with AsyncExitStack() as cleanup:
+            if reader:
+                cleanup.push_async_callback(reader.close)
+                await reader.start()
+            if search_engine:
+                cleanup.push_async_callback(asyncio.to_thread, search_engine.close)
+                await asyncio.to_thread(search_engine.start)
             try:
-                yield
-            finally:
-                await asyncio.to_thread(updater.close)
-                if search_engine:
-                    await asyncio.to_thread(search_engine.close)
+                await asyncio.to_thread(runtime.resume_cached)
+            except Exception:  # noqa: BLE001 - redacted service boundary
+                event("cached_publication_invalid")
+            await cleanup.enter_async_context(original_lifespan(app))
+            cleanup.push_async_callback(asyncio.to_thread, updater.close)
+            updater.start()
+            yield
 
     app.router.lifespan_context = lifespan
     return app

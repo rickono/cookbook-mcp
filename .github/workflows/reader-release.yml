@@ -14,6 +14,35 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  postgres-sessions:
+    name: PostgreSQL session authority
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
+        with:
+          version: '0.11.14'
+      - name: Install PostgreSQL binaries and locked dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql libpq-dev
+          uv sync --frozen --extra postgres
+      - name: Verify actual session requests, schema provisioning, and restricted role
+        run: uv run --extra postgres python scripts/try_postgres_reader.py --postgres-bin "$(pg_config --bindir)"
+      - name: Verify configuration and offline benchmark controls
+        run: uv run --extra postgres pytest -q tests/test_reader_session_config.py tests/test_reader_benchmark_control.py
+      - name: Check deployment code
+        run: |
+          uv run --extra postgres ruff check src/cookbook/session_database.py src/cookbook/hosted.py scripts/local_session_postgres.py scripts/try_postgres_reader.py tests/test_session_database.py tests/test_reader_session_config.py
+          uv run --extra postgres ruff format --check src/cookbook/session_database.py src/cookbook/hosted.py scripts/local_session_postgres.py scripts/try_postgres_reader.py tests/test_session_database.py tests/test_reader_session_config.py
+      - name: Build native Linux deployment image with source-free search smoke check
+        run: docker build --platform linux/amd64 -t cookbook-postgres-ci .
   serving:
     name: Linux serving and reader journeys
     runs-on: ubuntu-24.04
