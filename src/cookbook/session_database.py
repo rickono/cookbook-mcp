@@ -6,11 +6,13 @@ Runtime never migrates. CLI credentials come from a private file, never argv.
 import argparse
 import hashlib
 import json
+import re
 import stat
 from pathlib import Path
 
 import psycopg
 from psycopg import sql
+from psycopg.conninfo import conninfo_to_dict
 
 VERSION = 1
 TABLES = (
@@ -125,8 +127,27 @@ def initialize(conninfo, runtime_role):
         )
 
 
-def preflight(conninfo):
+def _durability_target(conninfo, durability):
+    if durability not in {"postgres", "neon"}:
+        raise PreflightRefused("Unsupported session durability policy")
+    if durability == "neon":
+        target = conninfo_to_dict(conninfo)
+        host = target.get("host", "")
+        if (
+            not re.fullmatch(r"ep-[a-z0-9.-]+\.aws\.neon\.tech", host)
+            or "-pooler" in host.split(".")[0]
+            or target.get("hostaddr")
+            or target.get("service")
+            or target.get("sslmode") != "verify-full"
+        ):
+            raise PreflightRefused(
+                "Neon sessions require a direct AWS Neon endpoint with verified TLS"
+            )
+
+
+def preflight(conninfo, *, durability="postgres"):
     """Check production authority without writing or revealing connection details."""
+    _durability_target(conninfo, durability)
     _, digest = _schema()
     with psycopg.connect(
         conninfo,
@@ -137,10 +158,25 @@ def preflight(conninfo):
         state = conn.execute(
             "SELECT pg_is_in_recovery(), current_setting('transaction_read_only'), current_setting('fsync'),current_setting('synchronous_commit')"
         ).fetchone()
-        if state != (False, "off", "on", "on"):
+        if state[:2] != (False, "off") or state[3] != "on":
             raise PreflightRefused(
                 "Session database requires a durable writable primary"
             )
+        if durability == "postgres" and state[2] != "on":
+            raise PreflightRefused(
+                "Session database requires a durable writable primary"
+            )
+        if durability == "neon":
+            neon = conn.execute(
+                "SELECT current_setting('synchronous_standby_names'),"
+                "current_setting('neon.tenant_id',true),current_setting('neon.timeline_id',true)"
+            ).fetchone()
+            if (
+                not conn.pgconn.ssl_in_use
+                or neon[0] != "walproposer"
+                or not all(neon[1:])
+            ):
+                raise PreflightRefused("Neon session storage checks failed")
         role = conn.execute(
             "SELECT rolsuper,rolcreatedb,rolcreaterole,rolreplication,rolbypassrls FROM pg_roles WHERE rolname=current_user"
         ).fetchone()
@@ -209,6 +245,9 @@ def main():
     parser.add_argument("action", choices=["initialize", "check"])
     parser.add_argument("--dsn-file", type=Path, required=True)
     parser.add_argument("--runtime-role")
+    parser.add_argument(
+        "--durability", choices=["postgres", "neon"], default="postgres"
+    )
     args = parser.parse_args()
     if args.action == "initialize" and not args.runtime_role:
         parser.error("initialize requires --runtime-role")
@@ -221,7 +260,7 @@ def main():
             initialize(dsn, args.runtime_role)
             result = {"schema_version": VERSION, "initialized": True}
         else:
-            result = preflight(dsn)
+            result = preflight(dsn, durability=args.durability)
     except PreflightRefused as error:
         print(
             json.dumps(

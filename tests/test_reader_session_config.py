@@ -33,7 +33,7 @@ def configuration(monkeypatch):
     seen = []
     monkeypatch.setattr("cookbook.hosted.s3_store", lambda *args: object())
     monkeypatch.setattr(
-        "cookbook.session_database.preflight", lambda dsn: {"primary": True}
+        "cookbook.session_database.preflight", lambda dsn, **kwargs: {"primary": True}
     )
 
     def reader(*args, **kwargs):
@@ -84,7 +84,7 @@ def test_failed_database_preflight_stops_startup_without_leaking_url(
     monkeypatch.setenv("READER_SESSION_BACKEND", "postgres")
     monkeypatch.setenv("READER_SESSION_DATABASE_URL", "postgresql://PRIVATE-SENTINEL")
 
-    def failed(dsn):
+    def failed(dsn, **kwargs):
         raise OSError(dsn)
 
     monkeypatch.setattr("cookbook.session_database.preflight", failed)
@@ -102,11 +102,39 @@ def test_fixed_database_refusal_explains_operator_action(configuration, monkeypa
     monkeypatch.setenv("READER_SESSION_BACKEND", "postgres")
     monkeypatch.setenv("READER_SESSION_DATABASE_URL", "postgresql://PRIVATE-SENTINEL")
 
-    def refused(dsn):
+    def refused(dsn, **kwargs):
         raise PreflightRefused("Unsupported session schema version")
 
     monkeypatch.setattr("cookbook.session_database.preflight", refused)
     with pytest.raises(ValueError, match="Unsupported session schema version") as error:
         reader_from_environment(verifier)
     assert "PRIVATE-SENTINEL" not in str(error.value)
+    assert seen == []
+
+
+def test_neon_durability_requires_explicit_selection(configuration, monkeypatch):
+    verifier, _ = configuration
+    monkeypatch.setenv("READER_SESSION_BACKEND", "postgres")
+    monkeypatch.setenv("READER_SESSION_DATABASE_URL", "postgresql://synthetic")
+    monkeypatch.setenv("READER_SESSION_DURABILITY", "neon")
+    policies = []
+    monkeypatch.setattr(
+        "cookbook.session_database.preflight",
+        lambda dsn, **kwargs: policies.append(kwargs["durability"]),
+    )
+    reader_from_environment(verifier)
+    assert policies == ["neon"]
+
+
+@pytest.mark.parametrize("backend,policy", [("r2", "neon"), ("postgres", "other")])
+def test_invalid_durability_configuration_stops_startup(
+    configuration, monkeypatch, backend, policy
+):
+    verifier, seen = configuration
+    monkeypatch.setenv("READER_SESSION_BACKEND", backend)
+    monkeypatch.setenv("READER_SESSION_DURABILITY", policy)
+    if backend == "postgres":
+        monkeypatch.setenv("READER_SESSION_DATABASE_URL", "postgresql://synthetic")
+    with pytest.raises(ValueError, match="durability"):
+        reader_from_environment(verifier)
     assert seen == []

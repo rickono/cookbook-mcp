@@ -121,6 +121,13 @@ def reader_from_environment(verifier):
         raise ValueError("PostgreSQL session authority requires a database URL")
     if backend == "r2" and database:
         raise ValueError("Session database URL requires the postgres backend")
+    durability = os.environ.get("READER_SESSION_DURABILITY", "postgres")
+    if durability not in {"postgres", "neon"} or (
+        backend == "r2" and durability != "postgres"
+    ):
+        raise ValueError(
+            "Session durability must be postgres or neon with the postgres backend"
+        )
     origin = os.environ["READER_ORIGIN"]
     audience = urlsplit(verifier.audience)
     if origin != f"{audience.scheme}://{audience.netloc}":
@@ -155,7 +162,7 @@ def reader_from_environment(verifier):
         from .session_database import PreflightRefused, preflight
 
         try:
-            preflight(database)
+            preflight(database, durability=durability)
         except PreflightRefused as error:
             raise ValueError(str(error)) from None
         except Exception:  # noqa: BLE001 - redact connection details at the startup boundary

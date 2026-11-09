@@ -10,6 +10,116 @@ from psycopg.conninfo import make_conninfo
 from cookbook.session_database import initialize, preflight
 
 
+@pytest.mark.parametrize(
+    "target",
+    [
+        "host=localhost sslmode=verify-full",
+        "host=ep-synthetic.us-west-2.aws.neon.tech sslmode=require",
+        "host=ep-synthetic-pooler.us-west-2.aws.neon.tech sslmode=verify-full",
+        "host=ep-synthetic.us-west-2.aws.neon.tech.attacker.example sslmode=verify-full",
+        "host=ep-synthetic.us-west-2.aws.neon.tech hostaddr=127.0.0.1 sslmode=verify-full",
+        "host=ep-synthetic.us-west-2.aws.neon.tech service=other sslmode=verify-full",
+        "host=ep-synthetic.us-west-2.aws.neon.tech,localhost sslmode=verify-full",
+    ],
+)
+def test_neon_policy_rejects_unsafe_targets_before_connecting(monkeypatch, target):
+    def unexpected(*args, **kwargs):
+        pytest.fail("Unsafe Neon target reached a database connection")
+
+    monkeypatch.setattr(psycopg, "connect", unexpected)
+    with pytest.raises(ValueError, match="direct AWS Neon endpoint with verified TLS"):
+        preflight(target, durability="neon")
+
+
+def test_unknown_durability_policy_is_refused_before_connecting(monkeypatch):
+    def unexpected(*args, **kwargs):
+        pytest.fail("Unknown policy reached a database connection")
+
+    monkeypatch.setattr(psycopg, "connect", unexpected)
+    with pytest.raises(ValueError, match="Unsupported session durability"):
+        preflight("", durability="other")
+
+
+@pytest.mark.parametrize(
+    "state,neon,tls,policy,message",
+    [
+        (
+            (False, "off", "off", "on"),
+            ("walproposer", "tenant", "timeline"),
+            True,
+            "postgres",
+            "durable writable primary",
+        ),
+        (
+            (True, "on", "off", "on"),
+            ("walproposer", "tenant", "timeline"),
+            True,
+            "neon",
+            "durable writable primary",
+        ),
+        (
+            (False, "off", "off", "off"),
+            ("walproposer", "tenant", "timeline"),
+            True,
+            "neon",
+            "durable writable primary",
+        ),
+        (
+            (False, "off", "off", "on"),
+            ("", "tenant", "timeline"),
+            True,
+            "neon",
+            "Neon session storage",
+        ),
+        (
+            (False, "off", "off", "on"),
+            ("walproposer", None, "timeline"),
+            True,
+            "neon",
+            "Neon session storage",
+        ),
+        (
+            (False, "off", "off", "on"),
+            ("walproposer", "tenant", None),
+            True,
+            "neon",
+            "Neon session storage",
+        ),
+        (
+            (False, "off", "off", "on"),
+            ("walproposer", "tenant", "timeline"),
+            False,
+            "neon",
+            "Neon session storage",
+        ),
+    ],
+)
+def test_durability_checks_fail_closed_on_server_mismatch(
+    monkeypatch, state, neon, tls, policy, message
+):
+    from types import SimpleNamespace
+
+    class Connection:
+        pgconn = SimpleNamespace(ssl_in_use=tls)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def execute(self, query):
+            result = state if "pg_is_in_recovery" in query else neon
+            return SimpleNamespace(fetchone=lambda: result)
+
+    monkeypatch.setattr(psycopg, "connect", lambda *args, **kwargs: Connection())
+    with pytest.raises(ValueError, match=message):
+        preflight(
+            "host=ep-synthetic.us-west-2.aws.neon.tech sslmode=verify-full",
+            durability=policy,
+        )
+
+
 @pytest.fixture
 def database():
     dsn = os.environ.get("READER_TRIAL_DATABASE")
