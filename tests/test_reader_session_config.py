@@ -62,15 +62,28 @@ def test_backend_is_explicit_and_legacy_default_is_preserved(
 
 @pytest.mark.parametrize(
     "backend,database",
-    [("other", None), ("postgres", None), ("r2", "postgresql://PRIVATE-SENTINEL")],
+    [
+        ("other", None),
+        ("postgres", None),
+        ("postgres", ""),
+        (None, ""),
+        ("r2", ""),
+        ("r2", "postgresql://PRIVATE-SENTINEL"),
+    ],
 )
 def test_incomplete_or_ambiguous_authority_configuration_stops_startup(
     configuration, monkeypatch, backend, database
 ):
     verifier, seen = configuration
-    monkeypatch.setenv("READER_SESSION_BACKEND", backend)
-    if database:
+    if backend is not None:
+        monkeypatch.setenv("READER_SESSION_BACKEND", backend)
+    if database is not None:
         monkeypatch.setenv("READER_SESSION_DATABASE_URL", database)
+
+    def unexpected_preflight(*args, **kwargs):
+        pytest.fail("Invalid backend configuration reached database preflight")
+
+    monkeypatch.setattr("cookbook.session_database.preflight", unexpected_preflight)
     with pytest.raises(ValueError) as error:
         reader_from_environment(verifier)
     assert "PRIVATE-SENTINEL" not in str(error.value)

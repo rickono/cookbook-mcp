@@ -119,7 +119,7 @@ def reader_from_environment(verifier):
         raise ValueError("READER_SESSION_BACKEND must be r2 or postgres")
     if backend == "postgres" and not database:
         raise ValueError("PostgreSQL session authority requires a database URL")
-    if backend == "r2" and database:
+    if backend == "r2" and database is not None:
         raise ValueError("Session database URL requires the postgres backend")
     durability = os.environ.get("READER_SESSION_DURABILITY", "postgres")
     if durability not in {"postgres", "neon"} or (
@@ -173,7 +173,7 @@ def reader_from_environment(verifier):
         verifier,
         store,
         os.environ["READER_SESSION_KEY"].encode(),
-        session_database=database,
+        session_database=database if backend == "postgres" else None,
         owner_reports=owner_reports_from_environment(s3_store),
         personal_state=personal_from_environment(s3_store),
     )
