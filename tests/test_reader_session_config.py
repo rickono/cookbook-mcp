@@ -112,18 +112,22 @@ def test_fixed_database_refusal_explains_operator_action(configuration, monkeypa
     assert seen == []
 
 
-def test_neon_durability_requires_explicit_selection(configuration, monkeypatch):
+@pytest.mark.parametrize("policy", [None, "neon"])
+def test_neon_durability_requires_explicit_selection(
+    configuration, monkeypatch, policy
+):
     verifier, _ = configuration
     monkeypatch.setenv("READER_SESSION_BACKEND", "postgres")
     monkeypatch.setenv("READER_SESSION_DATABASE_URL", "postgresql://synthetic")
-    monkeypatch.setenv("READER_SESSION_DURABILITY", "neon")
+    if policy:
+        monkeypatch.setenv("READER_SESSION_DURABILITY", policy)
     policies = []
     monkeypatch.setattr(
         "cookbook.session_database.preflight",
         lambda dsn, **kwargs: policies.append(kwargs["durability"]),
     )
     reader_from_environment(verifier)
-    assert policies == ["neon"]
+    assert policies == [policy or "postgres"]
 
 
 @pytest.mark.parametrize("backend,policy", [("r2", "neon"), ("postgres", "other")])

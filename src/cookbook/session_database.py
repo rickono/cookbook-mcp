@@ -6,6 +6,7 @@ Runtime never migrates. CLI credentials come from a private file, never argv.
 import argparse
 import hashlib
 import json
+import os
 import re
 import stat
 from pathlib import Path
@@ -138,6 +139,8 @@ def _durability_target(conninfo, durability):
             or "-pooler" in host.split(".")[0]
             or target.get("hostaddr")
             or target.get("service")
+            or os.environ.get("PGHOSTADDR")
+            or os.environ.get("PGSERVICE")
             or target.get("sslmode") != "verify-full"
         ):
             raise PreflightRefused(

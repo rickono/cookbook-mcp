@@ -31,6 +31,21 @@ def test_neon_policy_rejects_unsafe_targets_before_connecting(monkeypatch, targe
         preflight(target, durability="neon")
 
 
+@pytest.mark.parametrize("variable", ["PGHOSTADDR", "PGSERVICE"])
+def test_neon_rejects_inherited_connection_indirection(monkeypatch, variable):
+    monkeypatch.setenv(variable, "127.0.0.1" if variable == "PGHOSTADDR" else "other")
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("Inherited indirection reached a database connection")
+
+    monkeypatch.setattr(psycopg, "connect", unexpected)
+    with pytest.raises(ValueError, match="direct AWS Neon endpoint with verified TLS"):
+        preflight(
+            "host=ep-synthetic.us-west-2.aws.neon.tech sslmode=verify-full",
+            durability="neon",
+        )
+
+
 def test_unknown_durability_policy_is_refused_before_connecting(monkeypatch):
     def unexpected(*args, **kwargs):
         pytest.fail("Unknown policy reached a database connection")
@@ -158,6 +173,43 @@ def test_provisioning_is_repeatable_and_runtime_is_restricted(database):
             conn.execute("CREATE TABLE public.forbidden_runtime_ddl(i int)")
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
             conn.execute("UPDATE reader_session_schema_version SET version=2")
+
+
+def test_neon_policy_continues_through_real_schema_and_privilege_checks(
+    database, monkeypatch
+):
+    from types import SimpleNamespace
+
+    admin, runtime = database
+    initialize(admin, "reader_runtime")
+    connect = psycopg.connect
+
+    class NeonConnection:
+        pgconn = SimpleNamespace(ssl_in_use=True)
+
+        def __enter__(self):
+            self.conn = connect(runtime, autocommit=True)
+            return self
+
+        def __exit__(self, *args):
+            self.conn.close()
+
+        def execute(self, query, *args):
+            if "pg_is_in_recovery" in query:
+                return SimpleNamespace(fetchone=lambda: (False, "off", "off", "on"))
+            if "neon.tenant_id" in query:
+                return SimpleNamespace(
+                    fetchone=lambda: ("walproposer", "tenant", "timeline")
+                )
+            return self.conn.execute(query, *args)
+
+    monkeypatch.setattr(psycopg, "connect", lambda *args, **kwargs: NeonConnection())
+    target = "host=ep-synthetic.us-west-2.aws.neon.tech sslmode=verify-full"
+    assert preflight(target, durability="neon")["restricted_role"]
+    with connect(admin, autocommit=True) as conn:
+        conn.execute("REVOKE UPDATE ON reader_device_sessions FROM reader_runtime")
+    with pytest.raises(ValueError, match="privileges"):
+        preflight(target, durability="neon")
 
 
 def test_startup_rejects_administrator_and_changed_schema(database):
