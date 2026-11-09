@@ -58,3 +58,48 @@ test('visible stable navigation writes once; another mounted document initialize
   vm.runInContext(script,h.context); await settle();
   assert.equal(h.calls.filter(c=>c[1]?.method==='POST').length,1);
 });
+
+test('accepted original navigation keeps the newest resume while another write is in flight',async()=>{
+ const h=harness(); let release; const attempts=[];let serial=0;
+ h.context.crypto.randomUUID=()=>String(++serial).padStart(32,'0');
+ h.context.fetch=async(url,options)=>{
+   if(options?.method==='POST'){
+     attempts.push(JSON.parse(options.body));
+     if(attempts.length===1)return await new Promise(resolve=>release=()=>resolve({ok:true,status:200,json:async()=>({status:'saved'})}));
+     return {ok:true,status:200,json:async()=>({status:'saved'})};
+   }
+   return {ok:true,status:200,json:async()=>({csrf:'csrf'})};
+ };
+ h.root.dataset.stable='true';h.root.dataset.at='first';h.root.handlers['reader-location']();await settle();
+ h.root.dataset.at='second';h.root.handlers['reader-location']();
+ h.root.dataset.at='newest';h.root.handlers['reader-location']();
+ release();await settle();
+ assert.deepEqual(attempts.map(a=>a.at),['first','newest']);
+ assert.notEqual(attempts[0].operation_id,attempts[1].operation_id);
+});
+
+test('new original navigation waits for an ambiguous write to be retried with its frozen identity',async()=>{
+ const h=harness();const attempts=[];let serial=0;
+ h.context.crypto.randomUUID=()=>String(++serial).padStart(32,'0');
+ h.context.fetch=async(url,options)=>{
+   if(options?.method==='POST'){
+     attempts.push(JSON.parse(options.body));const refused=attempts.length===1;
+     return {ok:!refused,status:refused?503:200,json:async()=>refused?{error:'unconfirmed'}:{status:'saved'}};
+   }
+   return {ok:true,status:200,json:async()=>({csrf:'csrf'})};
+ };
+ h.root.dataset.stable='true';h.root.dataset.at='first';h.root.handlers['reader-location']();await settle();
+ h.root.dataset.at='newest';h.root.handlers['reader-location']();await settle();
+ assert.equal(attempts.length,1);
+ await h.nodes['#personal-retry'].handlers.click();await settle();
+ assert.deepEqual(attempts[0],attempts[1]);
+ assert.equal(attempts[2].at,'newest');
+ assert.notEqual(attempts[2].operation_id,attempts[1].operation_id);
+});
+
+test('a source-navigation resume acknowledgement preserves the bookmark name being drafted',async()=>{
+ const h=harness();h.root.dataset.stable='true';h.root.dataset.at='section';
+ h.nodes['#bookmark-save'].elements.name.value='A name in progress';
+ h.root.handlers['reader-location']();await settle();
+ assert.equal(h.nodes['#bookmark-save'].elements.name.value,'A name in progress');
+});

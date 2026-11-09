@@ -6,7 +6,7 @@
   const status = root.querySelector('#personal-status');
   const form = root.querySelector('#bookmark-save');
   const list = root.querySelector('#bookmark-list');
-  let dead = false, busy = false, pending = null;
+  let dead = false, busy = false, pending = null, resumeAt = null;
   const id = () => crypto.randomUUID().replaceAll('-', '');
   const timeout = () => AbortSignal.timeout(8500);
   let retry = root.querySelector('#personal-retry');
@@ -16,7 +16,7 @@
   retry.hidden = true;
   const active = () => !dead && root.isConnected;
   function expire() {
-    dead = true; pending = null; root.dataset.at = '';
+    dead = true; pending = null; resumeAt = null; root.dataset.at = '';
     if (form) form.elements.name.value = '';
     list?.replaceChildren();
     status.textContent = ''; retry.hidden = true;
@@ -44,7 +44,7 @@
         const label = document.createElement('label'); label.textContent = 'Bookmark name';
         const input = document.createElement('input'); input.maxLength = 120; input.autocomplete = 'off'; input.value = row.name; label.append(input);
         if (row.at) {
-          const link = document.createElement('a'); link.href = '/reader/read?' + new URLSearchParams({at:row.at}); link.textContent = row.name || 'Open bookmark'; li.append(link);
+          const link = document.createElement('a'); link.href = '/reader/book-view?' + new URLSearchParams({at:row.at}); link.textContent = row.name || 'Open bookmark'; li.append(link);
         } else {
           const notice = document.createElement('p'); notice.textContent = 'Location unavailable. Reference retained.'; li.append(notice);
         }
@@ -79,22 +79,34 @@
         }
         throw Error(result.error);
       }
-      const removed = result.status === 'removed'; pending = null;
+      const removed = result.status === 'removed', savedBookmark = pending.action === 'save'; pending = null;
       status.textContent = removed ? 'Removed durably.' : 'Saved durably.';
-      if (form) form.elements.name.value = '';
+      if (form && savedBookmark) form.elements.name.value = '';
       if (list) await refresh();
     } catch {
       if (active()) {status.textContent = 'Persistence unconfirmed. Retry the original attempt; it may already have been saved.'; retry.hidden = false;}
-    } finally {busy = false;}
+    } finally {
+      busy = false;
+      if (active() && !pending && resumeAt) {
+        const at=resumeAt; resumeAt=null;
+        write({action:'resume', at});
+      }
+    }
   }
+  function rememberNavigation() {
+    if (!active() || root.dataset.stable !== 'true' || !root.dataset.at || document.visibilityState !== 'visible') return;
+    if (busy || pending) {resumeAt=root.dataset.at; return;}
+    write({action:'resume', at:root.dataset.at});
+  }
+  root.addEventListener('reader-location', rememberNavigation);
   retry.addEventListener('click', () => write());
   form?.addEventListener('submit', e => {e.preventDefault(); write({action:'save', at:root.dataset.at, name:form.elements.name.value});});
   root.querySelector('#remember-location')?.addEventListener('click', () => write({action:'resume', at:root.dataset.at}));
   root.querySelector('#personal-refresh')?.addEventListener('click', refresh);
   if (list) refresh();
-  // One accepted stable navigation per mounted document. Never write on focus,
+  // Save accepted stable document/contents navigation. Never write on focus,
   // pageshow, session checks, scroll, continuations or a background mount.
   if (root.dataset.stable === 'true' && root.dataset.at && document.visibilityState === 'visible' && performance.getEntriesByType('navigation')[0]?.type !== 'back_forward') {
-    write({action:'resume', at:root.dataset.at});
+    rememberNavigation();
   }
 })();

@@ -1,5 +1,7 @@
 # Protected original inspection
 
+The default full-book PDF/EPUB reader is documented in [Reading original books](original-book-reader.md). This page describes the separate bounded page/image inspection and comparison tool.
+
 Implements [Inspect original pages, images and check regions](https://github.com/rickono/cookbook-mcp/issues/102)
 under #98. Session, shared Library and reading contracts remain those in
 [hosted-reader.md](hosted-reader.md) and [reader-content.md](reader-content.md).

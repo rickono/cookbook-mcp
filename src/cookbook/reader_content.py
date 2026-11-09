@@ -99,7 +99,7 @@ def anchor(at, label, *, back=None):
     )
 
 
-async def deliver(reader, request, library, owner=None, csrf=""):
+async def deliver(reader, request, library, owner=None, csrf="", *, entry_banner=""):
     raw = request.query_params.get("at", "")
     try:
         loc = decode_location(raw)
@@ -163,6 +163,11 @@ async def deliver(reader, request, library, owner=None, csrf=""):
         + escape(urlencode({"at": raw}))
         + '">Search this book</a>'
     )
+    body += (
+        '<a href="/reader/book-view?'
+        + escape(urlencode({"at": raw}))
+        + '">Read original</a>'
+    )
     if back:
         body += anchor(back, "Return to originating location").replace(
             '">', '#text">', 1
@@ -176,15 +181,41 @@ async def deliver(reader, request, library, owner=None, csrf=""):
         + escape(", ".join(c["authors"]))
         + "</p></header>"
     )
-    body += (
-        '<div class="reading-layout"><section class="reading-body"><p class="reading-status" data-reading-status role="status">'
+    body += entry_banner
+    if "text" in data:
+        body += (
+            '<div class="reading-preferences" aria-label="Reading preferences" hidden>'
+            '<details class="reading-menu"><summary>Contents</summary><nav aria-label="Book contents">'
+        )
+        from .reader_contents import contents_html
+
+        body += contents_html(data, raw, back, anchor)
+        body += (
+            '</nav></details><button type="button" data-reading-focus aria-expanded="true">Reading tools</button>'
+            '<details class="reading-menu type-menu"><summary>Text size</summary><div class="type-controls">'
+            '<button type="button" data-text-smaller aria-label="Smaller text">A−</button>'
+            '<output data-text-size aria-live="polite">100%</output>'
+            '<button type="button" data-text-larger aria-label="Larger text">A+</button></div></details></div>'
+        )
+    elif not loc.get("contents_offset", 0):
+        first = next((item for item in data["contents"] if item.get("at")), None)
+        start = data.get("start_reading") or (first["at"] if first else None)
+        if start:
+            body += anchor(start, "Start reading").replace(
+                "<a ", '<a class="button start-reading" ', 1
+            )
+    status = (
+        '<p class="reading-status" data-reading-status role="status">'
         + {
-            "partial_text": "Partial text — more text remains.",
-            "complete_text": "End of selected source text.",
+            "partial_text": "More text follows.",
+            "complete_text": "End of this section.",
             "withheld": "Text withheld by current withdrawal or supersession.",
         }.get(data["state"], "Book contents")
         + "</p>"
     )
+    body += '<div class="reading-layout"><section class="reading-body">'
+    if "text" not in data:
+        body += status
     if "text" in data:
         from .reader_presentation import text_html
 
@@ -199,11 +230,13 @@ async def deliver(reader, request, library, owner=None, csrf=""):
         )
         body += (
             '<article id="text" tabindex="-1" aria-label="Source text">'
+            + '<div class="reading-chunk" id="chunk-start">'
             + text_html(data)
-            + "</article>"
+            + "</div></article>"
+            + status
         )
         if data["next_text"]:
-            body += anchor(data["next_text"], "Continue text", back=back).replace(
+            body += anchor(data["next_text"], "Continue reading", back=back).replace(
                 "<a ", "<a data-next-text ", 1
             )
         if loc.get("offset", 0) and "target_id" not in loc:
@@ -212,6 +245,40 @@ async def deliver(reader, request, library, owner=None, csrf=""):
                 "Previous text",
                 back=back,
             )
+    if "text" in data and data["state"] != "withheld":
+        body += '<nav class="book-navigation" aria-label="Book navigation">'
+        for item in data.get("adjacent", []):
+            # Never skip undelivered text when offering forward navigation.
+            forward = item["label"].startswith("Next")
+            attributes = (
+                "data-book-next" + (" hidden" if data.get("next_text") else "")
+                if forward
+                else "data-book-previous"
+            )
+            label = (
+                "← Previous section"
+                if item["label"].startswith("Previous")
+                else "Next section →"
+            )
+            if item.get("title"):
+                label += " · " + item["title"]
+            body += anchor(item["at"], label).replace(
+                "<a ", "<a " + attributes + " ", 1
+            )
+        contents = {
+            k: v
+            for k, v in loc.items()
+            if k
+            in (
+                "publication_id",
+                "book_id",
+                "source_id",
+                "source_key",
+                "model_snapshot_id",
+            )
+        }
+        body += anchor(encode_location(contents), "Book contents")
+        body += "</nav>"
     for note in data.get("structure_notes", []):
         body += "<p>" + escape(note) + "</p>"
     body += '</section><aside class="reading-tools" aria-label="Reading tools">'
@@ -234,13 +301,9 @@ async def deliver(reader, request, library, owner=None, csrf=""):
     from .reader_contents import contents_html
 
     body += contents_html(data, raw, back, anchor)
-    if any(item.get("group") for item in data["contents"]):
-        body += "<p>Page numbers count from the first page of the source file. Sections are grouped by their imported labels.</p>"
+    if c["format"] in ("PDF", "DJVU"):
+        body += "<p>Page numbers count from the first page of the source file. Sections follow retained source order.</p>"
     body += "</nav><p>Only retained source structure is shown; missing chapter structure is not inferred.</p></details>"
-    body += '<nav class="adjacent-sections" aria-label="Section navigation">'
-    for item in data.get("adjacent", []):
-        body += anchor(item["at"], item["label"], back=raw)
-    body += "</nav>"
     if "text" in data:
         body += '<nav aria-label="Authored references">'
         for item in data["related"] + data.get("references", []):

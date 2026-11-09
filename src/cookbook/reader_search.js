@@ -154,6 +154,8 @@
       if (!r.ok && ![400,404,410].includes(r.status)) throw Error();
       const doc = new DOMParser().parseFromString(await r.text(), 'text/html');
       if (dead) return;
+      const parsedMain=doc.querySelector('main');
+      if (!parsedMain) throw Error('invalid reading response');
       // Moving the parsed body empties it. Capture its assets before adoption,
       // including form/continuation enhancements declared inside that body.
       const styles = [...doc.querySelectorAll('link[rel="stylesheet"][href]')];
@@ -164,7 +166,7 @@
         saved.append(...main.childNodes);
       }
       document.dispatchEvent(new Event('reader-unmounted'));
-      main.replaceChildren(...doc.querySelector('main').childNodes);
+      main.replaceChildren(...parsedMain.childNodes);
       for (const declared of styles) {
         const href = declared.getAttribute('href');
         if (!/^\/reader\/[a-z_-]+\.css$/.test(href)) continue;
@@ -194,6 +196,7 @@
     finally {busy = false;}
   }
   main.addEventListener('click', e => {
+    if (e.defaultPrevented) return;
     const scopeLink = e.target.closest('a[href^="/reader/search?at="]');
     if (saved && scopeLink && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
       e.preventDefault();
@@ -207,7 +210,7 @@
       status.textContent = 'Query retained. Choose Search to apply this book scope.';
       return;
     }
-    const a = e.target.closest('a[href^="/reader/read?at="]');
+    const a = e.target.closest('a[href^="/reader/read?at="],a[href^="/reader/book-view?at="]');
     if (!a || a.hasAttribute('data-next-text') || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
     e.preventDefault(); read(a.getAttribute('href'), a);
   });

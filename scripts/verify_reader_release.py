@@ -7,6 +7,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PYTHON = [
     "reader_release",
+    "reader_book",
+    "reader_navigation",
     "reader_http",
     "reader_session_races",
     "reader_content",
@@ -30,6 +32,7 @@ PYTHON = [
 ]
 NODE = [
     "reader_session",
+    "reader_epub",
     "reader_content",
     "reader_original",
     "reader_search",
