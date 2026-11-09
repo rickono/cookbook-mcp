@@ -1,10 +1,12 @@
 # Deploy the PostgreSQL session authority
 
-Use this sequence after the local trial. The new backend is selectable, but deployment and the database purchase remain pending. The reviewed trial at `f2585c0` is the base. Production preparation is on `feat/reader-postgres-deploy` and requires its own review and Linux checks.
+Use this sequence after the local trial. The new backend is selectable, and the database is provisioned. Production activation remains pending. The reviewed trial at `f2585c0` is the base. Production preparation is on `feat/reader-postgres-deploy` and requires its own review and Linux checks.
 
 ## Choose and verify the service
 
-The reader currently runs in Fly's `sjc` region. The owner selected Neon: a free compatibility test first, followed by a $25/month production budget if validation passes. A separate Free-plan PostgreSQL 17 project now exists in Oregon with compute fixed at 0.25 CU. Production still uses R2. No paid resource or plan upgrade has been created. See the [Neon trial results](reader-neon-trial.md).
+The reader currently runs in Fly's `sjc` region. After the Free trial passed, the owner completed billing for a dedicated Neon organization named Cookbook Reader on November 9, 2026. The PostgreSQL 17 project in Oregon now belongs to that Launch organization. Compute is fixed at 0.25 CU with scale-to-zero disabled. The original organization and its other projects remain on Free. Production still uses R2. See the [Neon trial results](reader-neon-trial.md).
+
+The agreed budget is $25/month. A $25 spending notification is enabled for the dedicated organization, with alerts at 80% and 100%. Notifications do not suspend compute or cap charges. The fixed compute size controls the largest expected cost. Storage, history, and transfer remain metered separately.
 
 Fly support [describes asynchronous replication and possible recent write loss during automatic failover](https://community.fly.io/t/expectations-when-migrating-from-self-managed-to-managed-postgres/28742). Based on that description, the default service does not meet this authority's requirement to preserve acknowledged logouts and refresh claims. [Neon's architecture](https://neon.com/docs/introduction/architecture-overview) describes quorum-durable commits. Hosted latency, capacity within budget, recovery, and old-primary fencing still require validation.
 
@@ -27,6 +29,8 @@ uv run --extra postgres python -m cookbook.session_database check --dsn-file /pr
 ```
 
 For Neon, use `--durability neon` on the check command and set `READER_SESSION_DURABILITY=neon` with the PostgreSQL backend. The connection string must name a direct AWS Neon endpoint and explicitly use `sslmode=verify-full` with a trusted certificate store available in the deployment image. Pooler endpoints, address overrides, and service-file indirection are refused, including inherited `PGHOSTADDR` and `PGSERVICE` settings. The check requires actual TLS, `synchronous_commit=on`, a writable primary, `synchronous_standby_names=walproposer`, and Neon tenant/timeline settings. Ordinary PostgreSQL still requires `fsync=on`; Neon's explicit policy accepts its documented separate quorum storage. These checks verify configuration and identity, not the provider's implementation or failover contract. Runtime-role, schema, and table checks are the same for both policies.
+
+The hosted trial verified `sslrootcert=/etc/ssl/certs/ca-certificates.crt`. The `sslrootcert=system` setting failed certificate verification with that image's libpq. The production connection string must use the tested certificate file.
 
 The initializer is atomic and repeatable for the supported version. Repeat initialization with the same provisioning login; existing version metadata must be a table it owns. It checks the runtime login before creating tables, resolves administrative built-ins in `pg_catalog`, and refuses existing unversioned session tables. It never adopts a trial database or upgrades a live schema implicitly. The schema version and source digest must match the deployment image. Runtime startup validates the primary, durable settings, logged tables, schema metadata, and privileges without changing schema. The runtime login must not own any session or metadata table. Fixed refusal reasons identify version, privilege, or durability problems. Credentials and driver exceptions are excluded from output.
 

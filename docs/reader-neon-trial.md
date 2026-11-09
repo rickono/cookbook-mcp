@@ -40,4 +40,10 @@ A committed synthetic write survived a compute restart. A later check kept an op
 
 A point-in-time branch restored the database to before a synthetic logout. The old key admitted that restored session, demonstrating the rollback hazard. A fresh session key rejected the old cookie, and fresh sign-in worked. The temporary branch and source probe rows were removed.
 
-These exercises establish restart recovery and the restore procedure's key fence. They do not induce a physical network partition or prove arbitrary provider failover fencing. Production remains on R2. Real-provider acceptance, the remaining operational checks, and controlled cutover in the [deployment guide](reader-session-deployment.md) remain pending. No paid upgrade has occurred.
+These exercises establish restart recovery and the restore procedure's key fence. They do not induce a physical network partition or prove arbitrary provider failover fencing. Production remains on R2. Real-provider acceptance, the remaining operational checks, and controlled cutover in the [deployment guide](reader-session-deployment.md) remain pending.
+
+## Dedicated Launch organization
+
+On November 9, the owner completed billing for a separate Cookbook Reader organization on Launch. The trial project moved into that organization. The original organization and its other projects remain on Free. The runtime connection still passed the schema, primary, durability-policy, and restricted-role preflight after transfer.
+
+The primary compute has minimum and maximum sizes of 0.25 CU, with scale-to-zero disabled. History retention remains six hours. A $25 monthly spending notification is enabled. It alerts at $20 and $25 but does not suspend the database or impose a hard charge limit. Production reader sessions have not been switched to Neon.
