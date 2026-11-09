@@ -28,7 +28,7 @@ All 80 comparison requests succeeded. A further 35 Neon requests covered five ba
 
 Storage waits dominated catalog time. Median process CPU was 9.05 ms for R2 and 5.92 ms for Neon. Session storage stages accounted for a median 99.87% and 98.26% of request time respectively. Separate Neon probes measured a 22.42 ms median single-query round trip and a 68.11 ms median one-row transaction. Those probes were outside the HTTP samples. The result supports the small endpoint for the tested workload. It does not establish how many users the endpoint supports continuously.
 
-The Fly machine had one CPU and low load during measurement. Available memory stayed above 173 MiB, and the measurement process peaked at about 154 MiB RSS. The comparison used the existing exact-touch behavior on both sides. No authorization cache or relaxed idle interval was introduced.
+The Fly machine had one CPU and low load during measurement. Available memory was about 213 MiB before measurement and 169 MiB afterward. The measurement process peaked at about 154 MiB RSS. The comparison used the existing exact-touch behavior on both sides. No authorization cache or relaxed idle interval was introduced.
 
 Two setup attempts failed before measurement. The first encountered a Fly SSH authorization error. The second used `sslrootcert=system`, which failed certificate verification with the deployed libpq. The successful run explicitly used `/etc/ssl/certs/ca-certificates.crt`. No failed request was included in a latency sample. All synthetic R2 objects and PostgreSQL rows were removed and their absence verified. Raw outputs and private scripts remain outside Git.
 
