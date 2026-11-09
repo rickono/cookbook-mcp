@@ -234,7 +234,14 @@ def test_saved_scanned_entry_retains_unavailable_reference_and_explicit_destinat
         assert (
             "Remembered location unavailable. Your reference is retained." in entry.text
         )
-        assert "Open book contents" in entry.text
+        from lxml import html
+
+        contents = html.fromstring(entry.text).xpath(
+            '//nav[@aria-label="Book contents"]/a/@href'
+        )
+        assert contents and all(
+            href.startswith("/reader/book-view?at=") for href in contents
+        )
         assert len(policy_reads) == 1
         explicit = client.get("/reader/read", params={"at": at})
         assert explicit.status_code == 200 and "Synthetic soup" in explicit.text
