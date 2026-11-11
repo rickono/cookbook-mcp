@@ -51,7 +51,7 @@ class _Fenced:
     pass
 
 
-MAINTENANCE_SECONDS = 60
+MAINTENANCE_SECONDS = 60 * 60
 
 
 class PostgresSessionBook:
@@ -79,8 +79,9 @@ class PostgresSessionBook:
         ).hex()
         self._pool = ConnectionPool(
             conninfo,
-            min_size=1,
+            min_size=0,
             max_size=8,
+            max_idle=60,
             timeout=2,
             open=True,
             configure=self._configure,
