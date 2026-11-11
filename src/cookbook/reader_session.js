@@ -1,24 +1,41 @@
 (() => {
   let busy = false;
+  let checking = false, pending = false, ended = false;
+  const idleAfter = 5 * 60 * 1000;
+  let lastActivity = Date.now();
   function clear() {
     document.dispatchEvent(new Event('reader-expired'));
     document.querySelector('main')?.replaceChildren();
   }
   async function check() {
-    if (busy) return;
+    if (busy || ended || document.hidden) return;
+    if (checking) {pending = true; return;}
+    checking = true;
     try {
-      const response = await fetch('/reader/session', {cache:'no-store'});
+      document.dispatchEvent(new Event('reader-check'));
+      const response = await fetch('/reader/session', {cache:'no-store',signal:AbortSignal.timeout(10000)});
       if (response.status === 401) {
+        ended = true;
         clear();
         const at = new URL(location.href).searchParams.get('at');
         location.replace(at ? '/reader/login?' + new URLSearchParams({return:at}) : '/reader');
       }
-    } catch {}
+    } catch {} finally {
+      checking = false;
+      if (pending && !ended) {pending = false; void check();}
+    }
   }
-  setInterval(check, 60000);
-  addEventListener('pageshow', check);
-  addEventListener('focus', check);
-  document.addEventListener('visibilitychange', () => {if (!document.hidden) check();});
+  function resume() {lastActivity = Date.now(); return check();}
+  function interaction() {
+    const idle = Date.now() - lastActivity >= idleAfter;
+    lastActivity = Date.now();
+    if (idle) return check();
+  }
+  setInterval(() => {if (Date.now() - lastActivity < idleAfter) return check();}, 60000);
+  addEventListener('pageshow', resume);
+  addEventListener('focus', resume);
+  for (const event of ['pointerdown', 'keydown', 'scroll']) document.addEventListener(event, interaction, {passive:true,capture:true});
+  document.addEventListener('visibilitychange', () => {if (!document.hidden) resume();});
 
   const form = document.querySelector('form[action="/reader/logout"]');
   if (!form) return;

@@ -59,7 +59,15 @@ The exact credential-fencing and machine-update commands must be prepared agains
 
 ## Operate and recover
 
-The PostgreSQL adapter retries due revocations every 60 seconds, independently of HTTP activity. Cleanup continues through the due backlog in batches of at most eight concurrent provider calls. Failed tokens stay durable and are attempted once per drain. Maintenance expires sessions under the owner lock, removes ended device rows, and clears completed retirement ciphertexts. Token-identity fences remain because deleting them could permit reuse of a consumed token. Sweep failures emit the fixed `session_maintenance_failed` event without exception text or identifiers.
+The PostgreSQL adapter retries due revocations hourly, independently of HTTP activity. Lifecycle actions still schedule cleanup immediately. Cleanup continues through the due backlog in batches of at most eight concurrent provider calls. Failed tokens stay durable and are attempted once per drain. Maintenance expires sessions under the owner lock, removes ended device rows, and clears completed retirement ciphertexts. Admission still enforces expiry on every request; the hourly schedule only delays housekeeping and retries of failed provider revocations. Token-identity fences remain because deleting them could permit reuse of a consumed token. Sweep failures emit the fixed `session_maintenance_failed` event without exception text or identifiers.
+
+### Sparse use and database suspension
+
+Use Neon's Free plan with scale-to-zero for sparse personal use, after checking its current compute, storage, and transfer allowances. The initial Launch deployment kept the database running continuously; that is not required by the session authority. A suspended database retains committed sessions and wakes on a new connection. The first request after suspension can take longer and must be checked against the reader's request deadline.
+
+The connection pool has no minimum connections and releases idle connections after 60 seconds. Server maintenance runs hourly, so it can wake the database briefly even when nobody uses the reader. Health checks do not query the session database. Browser session and publication checks share a monitor: it polls once a minute only while visible and within five minutes of interaction. Hidden or unattended tabs stop polling. Returning by focus, visibility, keyboard, pointer, or scrolling triggers a fresh check. Overlapping checks are serialized with a fresh follow-up; a prior authorization response is never reused to authorize a later request.
+
+These browser events only control passive checks. They do not extend server-side activity timestamps or change the seven-day idle and thirty-day absolute limits. Every protected content request still reads the current primary authority. Existing tabs must reload to receive the updated polling script.
 
 The image smoke imports psycopg and its pool, loads bundled libpq, and reads the packaged schema before starting the source-free keyword server. Psycopg remains pinned at 3.3.8: the [official release notes](https://www.psycopg.org/psycopg3/docs/news.html) identify its fix for an SSL configuration regression introduced in 3.3.7.
 

@@ -74,8 +74,6 @@ async function checkPublication() {
     notice.setAttribute('aria-label', 'Publication update check interrupted; retry by refocusing this page');
   }
 }
-addEventListener('focus', checkPublication);
-addEventListener('pageshow', checkPublication);
-setInterval(checkPublication, 60000);
+document.addEventListener('reader-check', checkPublication);
 
 })();

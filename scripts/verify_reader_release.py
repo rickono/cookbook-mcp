@@ -32,6 +32,7 @@ PYTHON = [
     "rendering",
 ]
 NODE = [
+    "reader_idle",
     "reader_session",
     "reader_epub",
     "reader_content",

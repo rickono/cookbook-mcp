@@ -10,9 +10,9 @@ function fixture(response) {
   const text = {replaceChildren(){chunks.length=0;}};
   const at = Buffer.from(JSON.stringify({publication_id:'old'})).toString('base64url');
   const location = {href:'https://reader.example/reader/read?at='+at,replace(url){this.replaced=url;}};
-  const document = {querySelector(q){return {'#publication-update':notice,'#text':text,'main':text,'[role="status"]':{},'[data-reading-status]':status,'[data-next-text]':continuation}[q];},createElement(){return {};}};
+  const document = {addEventListener(k,v){callbacks[k]=v;},querySelector(q){return {'#publication-update':notice,'#text':text,'main':text,'[role="status"]':{},'[data-reading-status]':status,'[data-next-text]':continuation}[q];},createElement(){return {};}};
   vm.runInNewContext(script,{document,location,URL,URLSearchParams,AbortSignal,atob,addEventListener(k,v){callbacks[k]=v;},setInterval(){},fetch:async()=>response});
-  return {notice,chunks,continuation,location,status,check:()=>callbacks.focus()};
+  return {notice,chunks,continuation,location,status,check:()=>callbacks['reader-check']()};
 }
 const ok = data => ({ok:true,status:200,json:async()=>data});
 test('update notice preserves old text and explicit navigation without moving focus', async()=>{
