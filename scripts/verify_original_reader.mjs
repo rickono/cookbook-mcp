@@ -289,8 +289,11 @@ try {
    const stream=filler+'0 0 1 rg 20 20 '+(40+40*i)+' 100 re f\n';
    objects.push('<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 300]/Contents '+(4+2*i)+' 0 R>>','<</Length '+stream.length+'>>stream\n'+stream+'endstream');
  }
+ // Page objects precede the content streams, so opening reads the head and
+ // tail, and later pages' content is read only when shown.
  let pdfText='%PDF-1.4\n'; const offsets=[];
- objects.forEach((object,i)=>{offsets.push(pdfText.length);pdfText+=(i+1)+' 0 obj\n'+object+'\nendobj\n';});
+ const pageObjects=objects.flatMap((_,i)=>i>1&&i%2===0?[i]:[]), streams=objects.flatMap((_,i)=>i>1&&i%2?[i]:[]);
+ for(const i of [0,1,...pageObjects,...streams]){offsets[i]=pdfText.length;pdfText+=(i+1)+' 0 obj\n'+objects[i]+'\nendobj\n';}
  const xref=pdfText.length;
  pdfText+='xref\n0 '+(objects.length+1)+'\n0000000000 65535 f \n'+offsets.map(n=>String(n).padStart(10,'0')+' 00000 n \n').join('')+'trailer\n<</Size '+(objects.length+1)+'/Root 1 0 R>>\nstartxref\n'+xref+'\n%%EOF\n';
  const largePdf=Buffer.from(pdfText,'latin1');
@@ -304,6 +307,24 @@ try {
  await page.waitForFunction(n=>document.querySelector('.pdfViewer .page[data-page-number="'+n+'"] canvas')?.width>0,pages);
  assert.equal(await page.locator('[data-book-status]').textContent(),'');
  assert.ok(served.ranges>=3 && served.whole===0,'Large PDF was not read by ranges: '+JSON.stringify(served));
+ await page.unroute('**/reader/source?*');
+ // pdf.js never asks for a failed range again, so a refused range must end the
+ // wait with a message: for a later page, or for the opening itself.
+ let refuse;
+ await page.route('**/reader/source?*',route=>{
+   if(!refuse(route.request().headers().range||''))return serve(largePdf)(route);
+   served.refused++;return route.fulfill({status:500});
+ });
+ refuse=()=>false;served={ranges:0,whole:0,refused:0};
+ await page.goto('http://localhost:8766/reader/catalog');
+ await page.getByRole('link',{name:'The Soup Notebook',exact:false}).first().click();
+ await page.waitForFunction(()=>document.querySelector('[data-book-status]')?.textContent==='');
+ refuse=()=>true;
+ await page.locator('[data-book-page]').fill(String(pages));await page.locator('[data-book-page]').dispatchEvent('change');
+ await page.waitForFunction(()=>/Reopen this book/.test(document.querySelector('[data-book-status]')?.textContent),null,{timeout:15000});
+ refuse=header=>header!=='bytes=0-524287';served={ranges:0,whole:0,refused:0};await page.reload();
+ await page.waitForFunction(()=>/could not be opened/.test(document.querySelector('[data-book-status]')?.textContent),null,{timeout:15000});
+ assert.ok(served.refused>=1 && served.whole===0,'Refused PDF ranges did not end the opening: '+JSON.stringify(served));
  await page.unroute('**/reader/source?*');
  assert.deepEqual(errors,[]);
  console.log('PASS: original EPUB with publisher CSS, sandbox, source jumps without reloading, original PDF rendering/paging/page jumps, text fallback, search-and-return, hostile-book script/network isolation, desktop/390px/320px.');

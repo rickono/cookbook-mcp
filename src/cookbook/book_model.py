@@ -417,8 +417,8 @@ class BookModel:
         """Validate a destination as read() does, without projecting source nodes.
 
         The same edition, selection, continuation, span-bounds and same-book
-        document checks run for the part where reading would start. Callers that
-        only need identity (saved places, update notices, the original viewer)
+        document checks run for every part from where reading would start. Callers
+        that only need identity (saved places, update notices, the original viewer)
         must not pay for text, link and table projection.
         """
         with connection(self.path) as db:
@@ -433,10 +433,9 @@ class BookModel:
             title = self.selection_title(db, book_id, target_id)
             if title:
                 response["selection_title"] = title
-            if parts:
-                part = parts[position["part"]]
-                self.part_start(db, book_id, part, position, position["part"])
-                response["citations"].append(self.part_citation(db, book_id, part))
+            for i in range(position["part"], len(parts)):
+                self.part_start(db, book_id, parts[i], position, i)
+                response["citations"].append(self.part_citation(db, book_id, parts[i]))
             return response
 
     def read(

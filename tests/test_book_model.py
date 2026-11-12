@@ -159,7 +159,9 @@ def test_locate_matches_read_identity_without_projecting_text(structured):
             assert "nodes" not in located
             assert located["citation"] == response["citation"]
             assert located["entity"] == response["entity"]
-            assert located["citations"] == response["citations"][:1]
+            # read() stops at its budget; locate() checks every remaining part.
+            checked = located["citations"][: len(response["citations"])]
+            assert checked == response["citations"]
             cursor = response["next_cursor"]
     first = model.read(book, targets[0]["id"], node_budget=1)
     with pytest.raises(IntegrityError, match="continuation"):
@@ -173,6 +175,16 @@ def test_locate_matches_read_identity_without_projecting_text(structured):
         model.locate(uuid.uuid4().hex, targets[0]["id"])
     with pytest.raises(IntegrityError):
         model.locate(book, "../../private")
+    # A broken later part is refused, not only the part where reading starts.
+    selection = model.selection
+
+    def broken(db, book_id, target_id):
+        parts, entity = selection(db, book_id, target_id)
+        return [*parts, {**parts[0], "document_id": "foreign"}], entity
+
+    model.selection = broken
+    with pytest.raises(IntegrityError, match="source span"):
+        model.locate(book, targets[0]["id"])
 
 
 def test_publication_activation_requires_complete_model_and_index_preparation(

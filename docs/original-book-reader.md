@@ -80,7 +80,10 @@ Opening reads only what the first page needs:
   view preloads its engine while the page parses. Book pages, book information
   and source bytes stay `private, no-store`.
 - PDF requests the first and last 512 KiB concurrently, then gives pdf.js exact
-  ranges for the remaining objects. It never downloads the whole file.
+  ranges for the remaining objects. If the first range is refused, pdf.js loads
+  the file itself, as before. A later range that fails from a network error,
+  timeout or server error is tried twice more. If it still fails, the opening
+  reports an unavailable book, or a later page asks the reader to reopen it.
 - EPUB reads the ZIP central directory from the last 256 KiB, then fetches only
   the members it displays. Nearby members are coalesced into one range. Members
   are checked against their CRC-32 and the budgets below before use. If ranges
@@ -129,8 +132,9 @@ PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs node scripts/verify_original_rea
 
 The check covers original EPUB text and publisher CSS, the iframe sandbox,
 range-only EPUB opening and contents jumps (with the whole-archive fallback
-when ranges are refused or a first-page image range fails), range-only reading of a multi-page PDF larger than
-the opening ranges, embedded image decoding,
+when ranges are refused or a first-page image range fails), range-only reading
+of a multi-page PDF larger than the opening ranges (and the message when one of
+its ranges fails), embedded image decoding,
 hostile-book script/network isolation, PDF rendering and page controls, PDF
 contents jumps, text fallback, search return, and desktop/390px/320px layouts.
 `verify_reader_flow.mjs` still checks the alternate text reader.

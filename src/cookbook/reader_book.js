@@ -33,14 +33,24 @@ const stop = () => {
 };
 document.addEventListener('reader-expired', stop);
 document.addEventListener('reader-unmounted', stop);
+// AbortSignal.any is missing before Safari 17.4; keep the timeout either way.
+function either(signals) {
+  if (AbortSignal.any) return AbortSignal.any(signals);
+  const controller = new AbortController();
+  for (const signal of signals) {
+    if (signal.aborted) controller.abort(signal.reason);
+    else signal.addEventListener('abort', () => controller.abort(signal.reason), {once:true});
+  }
+  return controller.signal;
+}
 async function response(path, {headers, signal} = {}) {
   const timeout = AbortSignal.timeout(30000);
-  const result = await fetch(path, {cache:'no-store', headers, signal: signal && AbortSignal.any ? AbortSignal.any([timeout, signal]) : signal || timeout});
+  const result = await fetch(path, {cache:'no-store', headers, signal: signal ? either([timeout, signal]) : timeout});
   if (result.status === 401) {
     expire();
     throw Error('expired');
   }
-  if (!result.ok) throw Error('unavailable');
+  if (!result.ok) throw Object.assign(Error('unavailable'), {transient: result.status >= 500});
   return result;
 }
 // Ordered classic scripts: both download at once, then run in insertion order.
@@ -56,7 +66,19 @@ const styled = async stage => {
     await new Promise(resolve => setTimeout(resolve, 20));
 };
 // One exact byte range of the original; anything but that span is refused.
+// pdf.js never asks for a failed range again, so network errors, timeouts and
+// server errors are retried twice before the range fails.
 async function fetchRange(path, header) {
+  for (let attempt = 1; ; attempt++) {
+    try { return await rangeOnce(path, header); }
+    catch (error) {
+      const transient = error?.transient || error instanceof TypeError || error?.name === 'TimeoutError';
+      if (attempt === 3 || !transient || sources.signal.aborted) throw error;
+      await new Promise(resolve => setTimeout(resolve, 250 * attempt));
+    }
+  }
+}
+async function rangeOnce(path, header) {
   const result = await response(path, {headers:{Range:header}, signal:sources.signal});
   const match = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(result.headers.get('Content-Range') || '');
   if (result.status !== 206 || !match) {
@@ -149,12 +171,15 @@ async function contents(data, append=false) {
       viewer = new PDFViewer({container,viewer:container.firstElementChild,eventBus:events,linkService:links,enableScripting:false});
       links.setViewer(viewer);
       const options={rangeChunkSize:CHUNK,disableStream:true,disableAutoFetch:true,isEvalSupported:false,useWasm:false,cMapUrl:'/reader/vendor/pdfjs-dist/cmaps/',cMapPacked:true,standardFontDataUrl:'/reader/vendor/pdfjs-dist/standard_fonts/'};
-      let first;
+      let first, rangeFailed;
       try {first=await head;} catch (error) {if(error?.message==='expired' || !active()) throw error;}
       if (!active()) return;
       if (first) {
         const last=await tail.then(last => last.total===first.total && last.end===last.total-1 ? last : undefined, error => {if(error?.message==='expired') throw error;});
         const transport=new pdfjs.PDFDataRangeTransport(first.total, first.bytes, first.end===first.total-1);
+        // A failed range never arrives, so it must end the opening here.
+        let failRange;
+        rangeFailed=new Promise((_, reject) => {failRange=reject;}); rangeFailed.catch(() => {});
         transport.requestDataRange=async (begin, end) => {
           try {
             let bytes;
@@ -166,13 +191,17 @@ async function contents(data, append=false) {
             }
             if (active()) transport.onDataRange(begin, bytes);
           } catch (error) {
-            if (active() && error?.message!=='expired') status.textContent='Part of this PDF could not be loaded. Retry this page, choose another page, or use Text view.';
+            if (!active() || error?.message==='expired') return;
+            failRange(error);
+            status.textContent='Part of this PDF could not be loaded. Reopen this book or use Text view.';
           }
         };
         transport.abort=() => sources.abort();
         loading=pdfjs.getDocument({...options, range:transport});
       } else loading=pdfjs.getDocument({...options, url:source, withCredentials:true});
-      pdf=await loading.promise;
+      // On a failed range the stalled task is left for stop(): destroying pdf.js
+      // mid-load raises an unhandled termination error in its worker.
+      pdf=await (rangeFailed ? Promise.race([loading.promise, rangeFailed]) : loading.promise);
       if (!active()) {pdf.destroy(); return;}
       if (data.physical_page > pdf.numPages) throw Error('source page unavailable');
       events.on('pagesinit', () => {if(active()){viewer.currentScaleValue='page-width'; viewer.currentPageNumber=data.physical_page; status.textContent='Opening page…';}});
