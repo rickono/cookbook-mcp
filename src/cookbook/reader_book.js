@@ -234,8 +234,16 @@ async function contents(data, append=false) {
         container.hidden=false;
         const view=rendition=book.renderTo(container,{width:'100%',height:'100%',spread:'none',allowScriptedContent:false,allowPopups:false});
         // EPUB.js reports a failed section without settling display(), which
-        // also holds later page turns. Fail that display so its caller reports it.
-        view.on('displayerror', error => view.displaying?.reject(error));
+        // also holds later page turns. Its _display() sets displaying just
+        // before calling manager.display(), so fail that display, not one that
+        // has since replaced it.
+        view.on('started', () => {
+          const place=view.manager.display;
+          view.manager.display=function (...args) {
+            const pending=view.displaying;
+            return place.apply(this,args).catch(error => { pending?.reject(error); throw error; });
+          };
+        });
         rendition.hooks.content.register(content => {
           for (const link of content.document.querySelectorAll('a[href]')) {
             if (/^(?:https?:|\/\/|mailto:|javascript:)/i.test(link.getAttribute('href'))) link.removeAttribute('href');

@@ -134,24 +134,29 @@ try {
    const zip=new window.JSZip();
    zip.file('mimetype','application/epub+zip');
    zip.file('META-INF/container.xml','<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0"><rootfiles><rootfile full-path="OEBPS/book.opf" media-type="application/oebps-package+xml"/></rootfiles></container>');
-   zip.file('OEBPS/book.opf','<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">paths</dc:identifier><dc:title>Source path fixture</dc:title><dc:language>en</dc:language></metadata><manifest><item id="a" href="../part1/intro.xhtml" media-type="application/xhtml+xml"/><item id="b" href="../intro.xhtml" media-type="application/xhtml+xml"/><item id="c" href="Text/Part%201.xhtml" media-type="application/xhtml+xml"/><item id="p" href="plate.png" media-type="image/png"/></manifest><spine><itemref idref="a"/><itemref idref="b"/><itemref idref="c"/></spine></package>');
+   zip.file('OEBPS/book.opf','<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">paths</dc:identifier><dc:title>Source path fixture</dc:title><dc:language>en</dc:language></metadata><manifest><item id="a" href="../part1/intro.xhtml" media-type="application/xhtml+xml"/><item id="b" href="../intro.xhtml" media-type="application/xhtml+xml"/><item id="c" href="Text/Part%201.xhtml" media-type="application/xhtml+xml"/><item id="p" href="plate.png" media-type="image/png"/><item id="f" href="figure.png" media-type="image/png"/></manifest><spine><itemref idref="a"/><itemref idref="b"/><itemref idref="c"/></spine></package>');
    for(const [path,title] of [['part1/intro.xhtml','Nested source chapter'],['intro.xhtml','Root source chapter'],['OEBPS/Text/Part 1.xhtml','Encoded source chapter']]){
-     zip.file(path,'<html xmlns="http://www.w3.org/1999/xhtml"><head><title>'+title+'</title></head><body><h1 id="start">'+title+'</h1><p>Invented source for path checks.</p>'+(path==='intro.xhtml'?'<img src="OEBPS/plate.png" alt=""/>':'')+'</body></html>');
+     zip.file(path,'<html xmlns="http://www.w3.org/1999/xhtml"><head><title>'+title+'</title></head><body><h1 id="start">'+title+'</h1><p>Invented source for path checks.</p>'+(path==='intro.xhtml'?'<img src="OEBPS/plate.png" alt=""/>':path==='part1/intro.xhtml'?'<img src="../OEBPS/figure.png" alt=""/>':'')+'</body></html>');
    }
    // An invented image on the root chapter, read by its own range when shown.
    zip.file('OEBPS/plate.png',Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aP1sAAAAASUVORK5CYII='),c=>c.charCodeAt(0)),{compression:'STORE'});
+   zip.file('OEBPS/figure.png',Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aP1sAAAAASUVORK5CYII='),c=>c.charCodeAt(0)),{compression:'STORE'});
    // Trailing filler keeps the chapters outside the directory tail, so they
    // are read as separate deflated ranges.
    const filler=new Uint8Array(1536*1024); for(let i=0;i<filler.length;i+=65536)crypto.getRandomValues(filler.subarray(i,i+65536));
    zip.file('OEBPS/filler.bin',filler,{compression:'STORE'});
    return Array.from(await zip.generateAsync({type:'uint8array',compression:'DEFLATE'}));
  });
- let requestedDocument='intro.xhtml', wholeArchive=false, brokenImage=false;
- const pathBytes=Buffer.from(pathArchive), plateHeader=pathBytes.indexOf('OEBPS/plate.png')-30;
- await page.route('**/reader/source?*',route=>{
-   // Refuse the image's range, as a failed or interrupted asset read would.
+ let requestedDocument='intro.xhtml', wholeArchive=false, brokenImage=false, holds={};
+ const pathBytes=Buffer.from(pathArchive), plateHeader=pathBytes.indexOf('OEBPS/plate.png')-30, figureHeader=pathBytes.indexOf('OEBPS/figure.png')-30;
+ // A hold reports when its image is requested and answers once opened.
+ const hold=()=>{const held={};held.seen=new Promise(resolve=>held.asked=resolve);held.released=new Promise(resolve=>held.open=resolve);return held;};
+ await page.route('**/reader/source?*',async route=>{
    const match=/^bytes=(\d+)-(\d+)$/.exec(route.request().headers().range||'');
-   if(brokenImage && match && Number(match[1])<=plateHeader && Number(match[2])>=plateHeader){served.refused++;return route.fulfill({status:500});}
+   const covers=offset=>match && Number(match[1])<=offset && Number(match[2])>=offset;
+   // Refuse the image's range, as a failed or interrupted asset read would.
+   if(brokenImage && covers(plateHeader)){holds.plate?.asked();await holds.plate?.released;served.refused++;return route.fulfill({status:500});}
+   if(covers(figureHeader)){holds.figure?.asked();await holds.figure?.released;}
    return serve(pathBytes,{ranges:!wholeArchive})(route);
  });
  await routeInfo(data=>{
@@ -190,6 +195,23 @@ try {
  await jump.click();
  await page.waitForFunction(()=>document.querySelector('[data-book-status]')?.textContent==='');
  await page.waitForFunction(()=>document.querySelector('iframe')?.contentDocument.querySelector('h1')?.textContent==='Root source chapter');
+ // A jump whose image fails after the reader has moved on to a second jump
+ // does not fail that second jump.
+ requestedDocument='OEBPS/Text/Part 1.xhtml';brokenImage=true;served={ranges:0,whole:0,refused:0};await page.reload();
+ await page.waitForFunction(()=>document.querySelector('[data-book-status]')?.textContent==='');
+ holds={plate:hold(),figure:hold()};
+ await page.locator('.book-contents summary').click();
+ requestedDocument='intro.xhtml';await jump.click();await holds.plate.seen;
+ requestedDocument='part1/intro.xhtml';await jump.click();await holds.figure.seen;
+ holds.plate.open();
+ while(served.refused<3)await page.waitForTimeout(50);
+ // Give the first jump's last refusal time to reach EPUB.js.
+ await page.waitForTimeout(500);
+ holds.figure.open();
+ await page.waitForFunction(()=>document.querySelector('[data-book-status]')?.textContent==='',null,{timeout:15000});
+ await page.waitForFunction(()=>document.querySelector('iframe')?.contentDocument.querySelector('h1')?.textContent==='Nested source chapter');
+ assert.equal(await page.locator('.book-contents').evaluate(contents=>contents.open),false,'Second jump did not finish');
+ brokenImage=false;holds={};
  await page.unroute('**/reader/source?*');await unrouteInfo();
  // Exercise the production display handoff, including repeated occurrences and
  // href aliases that EPUB.js itself maps to the same lookup key.
@@ -277,6 +299,8 @@ try {
  await page.getByRole('link',{name:'Read original',exact:true}).click();
  await page.waitForFunction(()=>document.querySelector('[data-book-status]')?.textContent==='');
  await page.getByRole('link',{name:'Search this book',exact:true}).click();
+ // The deferred search script selects the current book after the page parses.
+ await page.waitForFunction(()=>document.querySelector('#book')?.value==='notebook');
  assert.equal(await page.getByLabel('Look in',{exact:true}).inputValue(),'notebook');
  await page.getByLabel('Keywords',{exact:true}).fill('lentils');
  await page.getByRole('button',{name:'Search',exact:true}).click();
