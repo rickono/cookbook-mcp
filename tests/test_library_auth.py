@@ -151,3 +151,30 @@ def test_corrupt_asset_cache_is_reverified(published):
     (runtime.root / "cache" / entry.sha256).unlink()
     with pytest.raises(IntegrityError):
         lib.get_image(*args)
+
+
+def test_verified_cache_is_rehashed_only_after_local_change(published, monkeypatch):
+    import os
+
+    import cookbook.library as library_module
+
+    m, _, _, runtime, lib, _ = published
+    citation = lib.search("salt")["results"][0]["citation"]
+    args = (m.publication_id, citation["book_id"], citation["source_id"], "image-0")
+    _, original = lib.get_image(*args)
+    hashed = []
+    digest = library_module.digest_file
+    monkeypatch.setattr(
+        library_module, "digest_file", lambda path: hashed.append(path) or digest(path)
+    )
+    assert lib.get_image(*args)[1] == original
+    assert lib.get_image(*args)[1] == original
+    assert hashed == []
+    entry = next(e for e in m.files if e.path == "assets/image")
+    cached = runtime.root / "cache" / entry.sha256
+    before = cached.stat()
+    # Same size and restored mtime: the change time still differs.
+    cached.write_bytes(bytes(len(original)))
+    os.utime(cached, ns=(before.st_atime_ns, before.st_mtime_ns))
+    assert lib.get_image(*args)[1] == original
+    assert hashed == [cached]

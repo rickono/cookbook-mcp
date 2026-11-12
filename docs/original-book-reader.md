@@ -53,15 +53,46 @@ Native snapshot/target validation stays in the shared library reading path.
 `GET /reader/source?at=…` accepts the identifier envelope, never a source path or
 arbitrary URL. Each request checks the current reader session, retained
 publication and selected book/source. The existing verified original cache
-supplies the file. PDF delivery supports single byte ranges, suffix ranges and
-HEAD requests. Invalid ranges return 416. An open file descriptor keeps a
-stream valid if another cache operation removes its directory entry.
+supplies the file. A cached original is re-hashed only after its device, inode,
+size or nanosecond modification/change time differs from the last verified
+state, following the manifest-cache rule; this detects local changes, not
+hostile host mutation. Delivery supports single byte ranges, suffix ranges and
+HEAD requests for both formats. Invalid ranges return 416. An open file
+descriptor keeps a stream valid if another cache operation removes its
+directory entry.
 
 Original bytes are delivered only to the authorized browser. They use
 `private, no-store`, no-referrer and nosniff. The browser retains the open book
 in memory; there is no IndexedDB, local-storage book cache, service worker or
 new source download action. Delivering original bytes cannot prevent the owner
 from saving bytes already received.
+
+### Opening
+
+Opening reads only what the first page needs:
+
+- The book view validates its destination by identity, without projecting
+  section text. It inlines the same opening information as `/reader/book-info`
+  (JSON-escaped), so the viewer starts without another request.
+  `/reader/book-info` remains the contents-jump endpoint.
+- Viewer code and first-party scripts/styles are public and carry an ETag with
+  `Cache-Control: no-cache`, so repeat opens revalidate with 304 responses. The
+  view preloads its engine while the page parses. Book pages, book information
+  and source bytes stay `private, no-store`.
+- PDF requests the first and last 512 KiB concurrently, then gives pdf.js exact
+  ranges for the remaining objects. If the first range is refused, pdf.js loads
+  the file itself, as before. A later range that fails from a network error,
+  timeout or server error is tried twice more. If it still fails, the opening
+  reports an unavailable book, or a later page asks the reader to reopen it.
+- EPUB reads the ZIP central directory from the last 256 KiB, then fetches only
+  the members it displays. Nearby members are coalesced into one range. Members
+  are checked against their CRC-32 and the budgets below before use. If ranges
+  are refused, the archive cannot be indexed, or any member fails before the
+  first page is shown, the browser downloads the whole original once, as before.
+  A member that fails later makes that jump report an unavailable location. A
+  jump the reader has already replaced with another does not affect the newer one.
+- When search hosts the view, the stylesheet arrives with it. Viewer setup waits
+  (bounded) until the stage is laid out, since both engines measure it.
 
 The browser EPUB path admits at most 50,000 ZIP entries, 256 MiB total expanded
 size and 32 MiB per member, with distinct member names and the EPUB mimetype.
@@ -102,13 +133,19 @@ PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs node scripts/verify_original_rea
 ```
 
 The check covers original EPUB text and publisher CSS, the iframe sandbox,
-contents jumps without another archive request, embedded image decoding,
+range-only EPUB opening and contents jumps (with the whole-archive fallback
+when ranges are refused or a first-page image range fails, and the report when
+a later section's image range fails, including after a newer jump),
+range-only reading of a multi-page PDF larger than the opening ranges (and the
+message when one of its ranges fails), embedded image decoding,
 hostile-book script/network isolation, PDF rendering and page controls, PDF
 contents jumps, text fallback, search return, and desktop/390px/320px layouts.
 `verify_reader_flow.mjs` still checks the alternate text reader.
 
 `tests/test_reader_book.py` covers authenticated source bytes, HEAD/ranges,
-source mismatches, expiry and vendor-directory confinement. The existing
+source mismatches, expiry, vendor-directory confinement, asset revalidation
+and the escaped inline opening information. `tests/reader_epub.test.mjs` covers
+the ZIP index, exact ranges, CRC and budget refusals. The existing
 reader search, originals, session, personal-state and text tests remain
 applicable. These checks establish local Chromium behavior using invented
 books. They do not establish Safari/device coverage, compatibility with every

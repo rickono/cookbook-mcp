@@ -363,7 +363,13 @@ def page_error(reader, message, status, recovery=""):
     return result
 
 
-def read(library, loc):
+def read(library, loc, *, text=True):
+    """Validate and read a location. text=False skips native text projection.
+
+    Saved places, update notices and the original viewer need the same identity,
+    withheld and source-span checks as the text view, but not projected text.
+    Retained sections are already bounded and keep their eligibility read.
+    """
     pub, book, source = (loc[k] for k in ("publication_id", "book_id", "source_id"))
     book_data = library.get_book(
         pub,
@@ -381,7 +387,7 @@ def read(library, loc):
     ):
         from .reader_native import read_native
 
-        return read_native(library, loc)
+        return read_native(library, loc, text=text)
     if book_data["citation"]["source_id"] != source:
         raise IntegrityError("source mismatch")
     base = {"publication_id": pub, "book_id": book, "source_id": source}

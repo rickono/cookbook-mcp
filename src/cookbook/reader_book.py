@@ -127,7 +127,7 @@ async def source(request, library):
 
 
 def information(library, loc):
-    data = read(library, loc)
+    data = read(library, loc, text=False)
     from .reader_updates import resolve_current, source_location
 
     citation = data["citation"]
@@ -177,6 +177,17 @@ def information(library, loc):
                 result["epub_anchor"] = node.get("source_attributes", {}).get("id", "")
                 result["epub_xpath"] = node.get("source_xpath", "")
     return result
+
+
+# Viewer code is public and revalidated; fetching it while the page parses lets
+# opening overlap with the first source ranges instead of waiting for book.js.
+PRELOAD = {
+    "PDF": '<link rel="modulepreload" href="/reader/vendor/pdfjs-dist/build/pdf.mjs">'
+    '<link rel="modulepreload" href="/reader/vendor/pdfjs-dist/web/pdf_viewer.mjs">',
+    "EPUB": '<link rel="modulepreload" href="/reader/epub.js">'
+    '<link rel="preload" as="script" href="/reader/vendor/jszip/dist/jszip.min.js">'
+    '<link rel="preload" as="script" href="/reader/vendor/epubjs/dist/epub.min.js">',
+}
 
 
 async def deliver(reader, request, library, owner=None, csrf="", *, entry_banner=""):
@@ -233,10 +244,20 @@ async def deliver(reader, request, library, owner=None, csrf="", *, entry_banner
         for item in data["contents"]
         if item.get("at")
     )
+    # The opening needs these immediately; /reader/book-info remains for navigation.
+    inline = (
+        json.dumps(data)
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+    )
     body = (
-        '<link rel="stylesheet" href="/reader/book.css"><section class="book-view" data-book-at="'
+        PRELOAD[data["format"]]
+        + '<link rel="stylesheet" href="/reader/book.css"><section class="book-view" data-book-at="'
         + escape(at)
-        + '">'
+        + '"><script type="application/json" data-book-info>'
+        + inline
+        + "</script>"
         '<header class="book-toolbar"><a href="/reader/catalog">Books</a><details class="book-contents"><summary>Contents</summary><nav aria-label="Book contents">'
         + navigation
         + "</nav></details>"

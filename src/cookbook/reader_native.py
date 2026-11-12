@@ -5,7 +5,7 @@ import hashlib
 from .storage import IntegrityError, canonical
 
 
-def read_native(library, loc):
+def read_native(library, loc, *, text=True):
     from .reader_content import encode_location, move
 
     pub, bid = loc["publication_id"], loc["book_id"]
@@ -63,6 +63,18 @@ def read_native(library, loc):
             data["start_reading"] = encode_location(
                 {**base, "target_id": structure["reading_order"][0]["id"]}
             )
+        return data
+    if not text:
+        # Identity-only callers get the same validation without text projection.
+        located = library.model(pub).locate(bid, loc["target_id"], loc.get("cursor"))
+        if located.get("selection_title"):
+            data["citation"]["section_title"] = located["selection_title"]
+        data["state"] = "located"
+        data["citation"]["locator"] = {
+            "source_parts": located["citations"],
+            "coverage": structure["coverage"],
+            "entity_state": (located["entity"] or {}).get("state"),
+        }
         return data
     result = library.read_book_content(
         pub,

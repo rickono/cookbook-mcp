@@ -106,6 +106,67 @@ def test_public_vendor_assets_are_bounded_to_the_packaged_directory(tmp_path):
         )
 
 
+def test_public_viewer_code_revalidates_while_books_are_never_stored(tmp_path):
+    with TestClient(preview.app(tmp_path), base_url="http://localhost:8766") as client:
+        # Public code needs no session and is answered before authorization.
+        for path in ["/reader/vendor/pdfjs-dist/build/pdf.mjs", "/reader/book.js"]:
+            first = client.get(path)
+            tag = first.headers["etag"]
+            assert first.status_code == 200 and first.content
+            assert first.headers["cache-control"] == "no-cache"
+            assert "pragma" not in first.headers
+            for offered in [tag, "W/" + tag, '"other", ' + tag, "*"]:
+                again = client.get(path, headers={"If-None-Match": offered})
+                assert again.status_code == 304 and not again.content
+                assert again.headers["etag"] == tag
+                assert again.headers["cache-control"] == "no-cache"
+            changed = client.get(path, headers={"If-None-Match": '"other"'})
+            assert changed.status_code == 200 and changed.content == first.content
+        catalog = client.get("/reader/login")
+        assert catalog.headers["cache-control"] == "private, no-store"
+        tree = entry(client, catalog, "The Soup Notebook")
+        at = tree.xpath("//section[@data-book-at]/@data-book-at")[0]
+        for path in ["/reader/book-view", "/reader/book-info", "/reader/source"]:
+            protected = client.get(
+                path, params={"at": at}, headers={"If-None-Match": "*"}
+            )
+            assert protected.status_code == 200 and "etag" not in protected.headers
+            assert protected.headers["cache-control"] == "private, no-store"
+            assert protected.headers["pragma"] == "no-cache"
+
+
+def test_book_view_inlines_escaped_opening_information(tmp_path, monkeypatch):
+    import json
+
+    from cookbook import reader_book
+
+    real = reader_book.information
+
+    def hostile(library, loc):
+        data = real(library, loc)
+        return {**data, "probe": "</script><script>alert(1)</script>&amp;"}
+
+    monkeypatch.setattr(reader_book, "information", hostile)
+    with TestClient(preview.app(tmp_path), base_url="http://localhost:8766") as client:
+        catalog = client.get("/reader/login")
+        for title, preload in [
+            ("The Weeknight Table", "/reader/epub.js"),
+            ("The Soup Notebook", "/reader/vendor/pdfjs-dist/build/pdf.mjs"),
+        ]:
+            tree = entry(client, catalog, title)
+            at = tree.xpath("//section[@data-book-at]/@data-book-at")[0]
+            view = client.get("/reader/book-view", params={"at": at}).text
+            script = tree.xpath("//script[@data-book-info]")
+            assert len(script) == 1 and script[0].get("type") == "application/json"
+            raw = view.split('<script type="application/json" data-book-info>')[1]
+            raw = raw.split("</script>")[0]
+            # HTML-significant characters cannot close or alter the element.
+            assert not set("<>&") & set(raw)
+            info = client.get("/reader/book-info", params={"at": at}).json()
+            assert json.loads(raw) == info and "</script>" in info["probe"]
+            assert tree.xpath('//link[@rel="modulepreload"]/@href')[0] == preload
+
+
 def test_original_reader_preserves_stable_personal_controls(
     reader_env, published, tmp_path
 ):

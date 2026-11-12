@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import functools
 import hashlib
 import json
 import secrets
@@ -60,6 +61,30 @@ ASSETS = {
     "/reader/updates.js": ("reader_updates.js", "text/javascript"),
     "/reader/session.js": ("reader_session.js", "text/javascript"),
 }
+
+
+def entity_tag(body):
+    return '"' + hashlib.sha256(body).hexdigest()[:32] + '"'
+
+
+@functools.cache
+def vendor_asset(name):
+    # Only names in the packaged VENDOR_ASSETS manifest reach this bounded cache.
+    with zipfile.ZipFile(VENDOR_ROOT / "assets.zip") as archive:
+        binary = archive.read(name)
+    return binary, entity_tag(binary)
+
+
+def public_asset(request, body, media_type, tag=None):
+    """Public static bytes; finish() lets browsers keep them only with revalidation."""
+    tag = tag or entity_tag(body)
+    offered = {
+        t.strip().removeprefix("W/")
+        for t in request.headers.get("if-none-match", "").split(",")
+    }
+    if tag in offered or "*" in offered:
+        return Response(status_code=304, headers={"ETag": tag})
+    return Response(body, media_type=media_type, headers={"ETag": tag})
 
 
 def opaque():
@@ -288,8 +313,7 @@ class Reader:
             name = path.removeprefix("/reader/vendor/")
             if name not in VENDOR_ASSETS:
                 return Response(status_code=404)
-            with zipfile.ZipFile(VENDOR_ROOT / "assets.zip") as archive:
-                binary = archive.read(name)
+            binary, tag = vendor_asset(name)
             mime = (
                 {
                     ".mjs": "text/javascript",
@@ -300,11 +324,11 @@ class Reader:
                 or mimetypes.guess_type(name)[0]
                 or "application/octet-stream"
             )
-            return Response(binary, media_type=mime)
+            return public_asset(request, binary, mime, tag)
         if path in ASSETS:
             filename, media_type = ASSETS[path]
-            return Response(
-                Path(__file__).with_name(filename).read_text(), media_type=media_type
+            return public_asset(
+                request, Path(__file__).with_name(filename).read_bytes(), media_type
             )
         if path == "/reader/login":
             # Only named, opaque destinations; never accept a URL supplied by a client.
@@ -716,10 +740,15 @@ class Reader:
             # the transient protocol URL before rendering any reader UI.
             response = RedirectResponse("/reader/signin-failed", status_code=303)
             self.cookie(response, TRANSACTION, "", 0)
+        public = response.status_code in (200, 304) and (
+            request.url.path in ASSETS or request.url.path.startswith("/reader/vendor/")
+        )
+        if not public:
+            # Protected pages, data, and original bytes are never stored.
+            response.headers["Pragma"] = "no-cache"
         response.headers.update(
             {
-                "Cache-Control": "private, no-store",
-                "Pragma": "no-cache",
+                "Cache-Control": "no-cache" if public else "private, no-store",
                 "Referrer-Policy": "no-referrer",
                 "X-Content-Type-Options": "nosniff",
                 "X-Frame-Options": "DENY",
