@@ -84,8 +84,8 @@ Opening reads only what the first page needs:
 - EPUB reads the ZIP central directory from the last 256 KiB, then fetches only
   the members it displays. Nearby members are coalesced into one range. Members
   are checked against their CRC-32 and the budgets below before use. If ranges
-  are refused or the archive cannot be indexed before the first page is shown,
-  the browser downloads the whole original once, as before.
+  are refused, the archive cannot be indexed, or any member fails before the
+  first page is shown, the browser downloads the whole original once, as before.
 - When search hosts the view, the stylesheet arrives with it. Viewer setup waits
   (bounded) until the stage is laid out, since both engines measure it.
 
@@ -129,7 +129,7 @@ PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs node scripts/verify_original_rea
 
 The check covers original EPUB text and publisher CSS, the iframe sandbox,
 range-only EPUB opening and contents jumps (with the whole-archive fallback
-when ranges are refused), range-only reading of a multi-page PDF larger than
+when ranges are refused or a first-page image range fails), range-only reading of a multi-page PDF larger than
 the opening ranges, embedded image decoding,
 hostile-book script/network isolation, PDF rendering and page controls, PDF
 contents jumps, text fallback, search return, and desktop/390px/320px layouts.

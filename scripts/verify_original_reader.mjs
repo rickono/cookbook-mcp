@@ -134,18 +134,26 @@ try {
    const zip=new window.JSZip();
    zip.file('mimetype','application/epub+zip');
    zip.file('META-INF/container.xml','<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0"><rootfiles><rootfile full-path="OEBPS/book.opf" media-type="application/oebps-package+xml"/></rootfiles></container>');
-   zip.file('OEBPS/book.opf','<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">paths</dc:identifier><dc:title>Source path fixture</dc:title><dc:language>en</dc:language></metadata><manifest><item id="a" href="../part1/intro.xhtml" media-type="application/xhtml+xml"/><item id="b" href="../intro.xhtml" media-type="application/xhtml+xml"/><item id="c" href="Text/Part%201.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="a"/><itemref idref="b"/><itemref idref="c"/></spine></package>');
+   zip.file('OEBPS/book.opf','<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">paths</dc:identifier><dc:title>Source path fixture</dc:title><dc:language>en</dc:language></metadata><manifest><item id="a" href="../part1/intro.xhtml" media-type="application/xhtml+xml"/><item id="b" href="../intro.xhtml" media-type="application/xhtml+xml"/><item id="c" href="Text/Part%201.xhtml" media-type="application/xhtml+xml"/><item id="p" href="plate.png" media-type="image/png"/></manifest><spine><itemref idref="a"/><itemref idref="b"/><itemref idref="c"/></spine></package>');
    for(const [path,title] of [['part1/intro.xhtml','Nested source chapter'],['intro.xhtml','Root source chapter'],['OEBPS/Text/Part 1.xhtml','Encoded source chapter']]){
-     zip.file(path,'<html xmlns="http://www.w3.org/1999/xhtml"><head><title>'+title+'</title></head><body><h1 id="start">'+title+'</h1><p>Invented source for path checks.</p></body></html>');
+     zip.file(path,'<html xmlns="http://www.w3.org/1999/xhtml"><head><title>'+title+'</title></head><body><h1 id="start">'+title+'</h1><p>Invented source for path checks.</p>'+(path==='intro.xhtml'?'<img src="OEBPS/plate.png" alt=""/>':'')+'</body></html>');
    }
+   // An invented image on the root chapter, read by its own range when shown.
+   zip.file('OEBPS/plate.png',Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aP1sAAAAASUVORK5CYII='),c=>c.charCodeAt(0)),{compression:'STORE'});
    // Trailing filler keeps the chapters outside the directory tail, so they
    // are read as separate deflated ranges.
    const filler=new Uint8Array(1536*1024); for(let i=0;i<filler.length;i+=65536)crypto.getRandomValues(filler.subarray(i,i+65536));
    zip.file('OEBPS/filler.bin',filler,{compression:'STORE'});
    return Array.from(await zip.generateAsync({type:'uint8array',compression:'DEFLATE'}));
  });
- let requestedDocument='intro.xhtml', wholeArchive=false;
- await page.route('**/reader/source?*',route=>serve(Buffer.from(pathArchive),{ranges:!wholeArchive})(route));
+ let requestedDocument='intro.xhtml', wholeArchive=false, brokenImage=false;
+ const pathBytes=Buffer.from(pathArchive), plateHeader=pathBytes.indexOf('OEBPS/plate.png')-30;
+ await page.route('**/reader/source?*',route=>{
+   // Refuse the image's range, as a failed or interrupted asset read would.
+   const match=/^bytes=(\d+)-(\d+)$/.exec(route.request().headers().range||'');
+   if(brokenImage && match && Number(match[1])<=plateHeader && Number(match[2])>=plateHeader){served.refused++;return route.fulfill({status:500});}
+   return serve(pathBytes,{ranges:!wholeArchive})(route);
+ });
  await routeInfo(data=>{
    data.epub_document=requestedDocument;data.epub_anchor='start';delete data.epub_xpath;delete data.epub_occurrence;
    return data;
@@ -159,6 +167,15 @@ try {
    if(ranged)assert.ok(served.ranges>=2 && served.whole===0,'Range-read EPUB fell back to the whole archive: '+JSON.stringify(served));
    else assert.equal(served.whole,1,'Whole-archive fallback did not run');
  }
+ // A first-page asset that cannot be read by range falls back to one whole read.
+ requestedDocument='intro.xhtml';wholeArchive=false;brokenImage=true;served={ranges:0,whole:0,refused:0};await page.reload();
+ await page.waitForFunction(()=>document.querySelector('[data-book-status]')?.textContent==='',null,{timeout:15000});
+ assert.ok(served.refused>=1 && served.whole===1,'Failed first-page asset did not fall back to the whole archive: '+JSON.stringify(served));
+ const fallbackFrame=page.frames().find(frame=>frame.parentFrame());
+ assert.equal(await fallbackFrame.locator('h1').textContent(),'Root source chapter');
+ await fallbackFrame.locator('img').evaluate(image=>image.decode());
+ assert.equal(await fallbackFrame.locator('img').evaluate(image=>image.naturalWidth),1);
+ brokenImage=false;
  await page.unroute('**/reader/source?*');await unrouteInfo();
  // Exercise the production display handoff, including repeated occurrences and
  // href aliases that EPUB.js itself maps to the same lookup key.

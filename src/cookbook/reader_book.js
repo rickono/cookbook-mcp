@@ -201,7 +201,7 @@ async function contents(data, append=false) {
       const show=async opened => {
         book=opened;
         await stage;
-        if (!active()) return;
+        if (!active() || book!==opened) return;
         container.hidden=false;
         rendition=book.renderTo(container,{width:'100%',height:'100%',spread:'none',allowScriptedContent:false,allowPopups:false});
         rendition.hooks.content.register(content => {
@@ -223,7 +223,11 @@ async function contents(data, append=false) {
         if (!active()) return;
         opened=await epub.openRangeEpub(window.ePub, archive);
         if (!active()) {opened.destroy(); return;}
-        await show(opened);
+        // EPUB.js reports a failed asset without settling display(), so a
+        // failed first-page member must end the wait here.
+        const shown=show(opened);
+        shown.catch(() => {});
+        await Promise.race([shown, archive.failed]);
       } catch (error) {
         if (!active() || error?.message==='expired' || (opened && !archive?.error)) throw error;
         try {book?.destroy();} catch {}
