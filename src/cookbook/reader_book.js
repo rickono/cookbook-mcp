@@ -232,7 +232,10 @@ async function contents(data, append=false) {
         await stage;
         if (!active() || book!==opened) return;
         container.hidden=false;
-        rendition=book.renderTo(container,{width:'100%',height:'100%',spread:'none',allowScriptedContent:false,allowPopups:false});
+        const view=rendition=book.renderTo(container,{width:'100%',height:'100%',spread:'none',allowScriptedContent:false,allowPopups:false});
+        // EPUB.js reports a failed section without settling display(), which
+        // also holds later page turns. Fail that display so its caller reports it.
+        view.on('displayerror', error => view.displaying?.reject(error));
         rendition.hooks.content.register(content => {
           for (const link of content.document.querySelectorAll('a[href]')) {
             if (/^(?:https?:|\/\/|mailto:|javascript:)/i.test(link.getAttribute('href'))) link.removeAttribute('href');

@@ -175,7 +175,21 @@ try {
  assert.equal(await fallbackFrame.locator('h1').textContent(),'Root source chapter');
  await fallbackFrame.locator('img').evaluate(image=>image.decode());
  assert.equal(await fallbackFrame.locator('img').evaluate(image=>image.naturalWidth),1);
+ // After opening, a jump to a section whose asset cannot be read reports the
+ // failure instead of waiting, and a later jump still displays.
+ requestedDocument='OEBPS/Text/Part 1.xhtml';served={ranges:0,whole:0,refused:0};await page.reload();
+ await page.waitForFunction(()=>document.querySelector('[data-book-status]')?.textContent==='');
+ assert.ok(served.refused===0 && served.whole===0,'Opening read the later section asset: '+JSON.stringify(served));
+ requestedDocument='intro.xhtml';
+ await page.locator('.book-contents summary').click();
+ const jump=page.getByRole('navigation',{name:'Book contents'}).getByRole('link',{name:'Green herb sauce',exact:true});
+ await jump.click();
+ await page.waitForFunction(()=>/could not be opened/.test(document.querySelector('[data-book-status]')?.textContent),null,{timeout:15000});
+ assert.ok(served.refused>=1 && served.whole===0,'Failed section asset was not refused by range: '+JSON.stringify(served));
  brokenImage=false;
+ await jump.click();
+ await page.waitForFunction(()=>document.querySelector('[data-book-status]')?.textContent==='');
+ await page.waitForFunction(()=>document.querySelector('iframe')?.contentDocument.querySelector('h1')?.textContent==='Root source chapter');
  await page.unroute('**/reader/source?*');await unrouteInfo();
  // Exercise the production display handoff, including repeated occurrences and
  // href aliases that EPUB.js itself maps to the same lookup key.

@@ -416,8 +416,10 @@ class BookModel:
     def locate(self, book_id, target_id, cursor=None):
         """Validate a destination as read() does, without projecting source nodes.
 
-        The same edition, selection, continuation, span-bounds and same-book
-        document checks run for every part from where reading would start. Callers
+        The edition, selection, span-bounds and same-book document checks run for
+        every part from where reading would start, and a continuation must fall
+        within its part. Only read() checks a continuation offset against the end
+        of its text node, since that needs the text this skips. Callers
         that only need identity (saved places, update notices, the original viewer)
         must not pay for text, link and table projection.
         """
