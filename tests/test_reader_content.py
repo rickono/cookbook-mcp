@@ -602,9 +602,32 @@ def test_native_snapshot_occurrences_and_cursor_binding(
         ).json()
         assert first["citation"]["model_snapshot_id"] == "snapshot-1"
         assert first["citations"][0]["reading_occurrence_id"] == "occ-1"
-        original = client.get(
-            "/reader/book-info", params={"at": entry["contents"][1]["at"]}
-        ).json()
+        from cookbook.book_model import BookModel
+        from cookbook.reader_content import decode_location, encode_location
+
+        projected = BookModel.read
+
+        def no_projection(*args, **kwargs):
+            raise AssertionError("original view projected source text")
+
+        BookModel.read = no_projection
+        try:
+            original = client.get(
+                "/reader/book-info", params={"at": entry["contents"][1]["at"]}
+            ).json()
+            view = client.get(
+                "/reader/book-view", params={"at": entry["contents"][1]["at"]}
+            )
+            assert view.status_code == 200 and "book-info" in view.text
+            forged = {**decode_location(entry["contents"][1]["at"]), "cursor": "e30"}
+            assert (
+                client.get(
+                    "/reader/book-info", params={"at": encode_location(forged)}
+                ).status_code
+                == 404
+            )
+        finally:
+            BookModel.read = projected
         assert original["epub_document"] == "chapter.xhtml"
         assert original["epub_occurrence"] == 1
         assert len(first["references"]) == 1

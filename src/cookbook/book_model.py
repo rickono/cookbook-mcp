@@ -347,6 +347,98 @@ class BookModel:
                 break
         return parts
 
+    def position(self, db, book_id, target_id, cursor):
+        """Validate edition, selection and continuation exactly once for read/locate."""
+        edition = self.edition(db, book_id)
+        parts, entity = self.selection(db, book_id, target_id)
+        signature = hashlib.sha256(
+            canonical([self.publication_id, self.snapshot, book_id, target_id, parts])
+        ).hexdigest()
+        position = {
+            "selection": signature,
+            "part": 0,
+            "preorder": None,
+            "offset": None,
+        }
+        if cursor:
+            try:
+                if len(cursor) > 512:
+                    raise ValueError()
+                position = json.loads(base64.urlsafe_b64decode(cursor))
+                if (
+                    set(position) != {"selection", "part", "preorder", "offset"}
+                    or position["selection"] != signature
+                    or type(position["part"]) is not int
+                    or not 0 <= position["part"] < len(parts)
+                ):
+                    raise ValueError()
+            except (ValueError, TypeError, KeyError):
+                raise IntegrityError("invalid source continuation") from None
+        return edition, parts, entity, signature, position
+
+    def part_start(self, db, book_id, part, position, index):
+        lo, hi = bounds(db, part)
+        current = lo
+        if index == position["part"] and position["preorder"] is not None:
+            if (
+                type(position["preorder"]) is not int
+                or type(position["offset"]) is not int
+            ):
+                raise IntegrityError("invalid source continuation")
+            current = position["preorder"], position["offset"]
+            if not lo <= current <= hi:
+                raise IntegrityError("invalid source continuation")
+        return current, hi
+
+    def part_citation(self, db, book_id, part):
+        doc = db.execute(
+            "select path from documents where id=? and edition_id=?",
+            (part["document_id"], book_id),
+        ).fetchone()
+        if doc is None:
+            raise IntegrityError("cross-book source selection")
+        return {
+            "document_id": part["document_id"],
+            "resource_path": doc["path"],
+            "reading_occurrence_id": part["reading_occurrence_id"],
+            "start": part["start"],
+            "end": part["end"],
+        }
+
+    def selection_title(self, db, book_id, target_id):
+        title = db.execute(
+            "select label from navigation where id=? and edition_id=? "
+            "union all select label from entities where id=? and edition_id=? limit 1",
+            (target_id, book_id, target_id, book_id),
+        ).fetchone()
+        return title[0] if title else None
+
+    def locate(self, book_id, target_id, cursor=None):
+        """Validate a destination as read() does, without projecting source nodes.
+
+        The same edition, selection, continuation, span-bounds and same-book
+        document checks run for the part where reading would start. Callers that
+        only need identity (saved places, update notices, the original viewer)
+        must not pay for text, link and table projection.
+        """
+        with connection(self.path) as db:
+            edition, parts, entity, _, position = self.position(
+                db, book_id, target_id, cursor
+            )
+            response = {
+                "citation": self.citation(edition, target_id=target_id),
+                "entity": entity,
+                "citations": [],
+            }
+            title = self.selection_title(db, book_id, target_id)
+            if title:
+                response["selection_title"] = title
+            if parts:
+                part = parts[position["part"]]
+                self.part_start(db, book_id, part, position, position["part"])
+                response["citations"].append(self.part_citation(db, book_id, part))
+            return response
+
     def read(
         self,
         book_id,
@@ -365,33 +457,9 @@ class BookModel:
         ):
             raise IntegrityError("invalid reading budget")
         with connection(self.path) as db:
-            edition = self.edition(db, book_id)
-            parts, entity = self.selection(db, book_id, target_id)
-            signature = hashlib.sha256(
-                canonical(
-                    [self.publication_id, self.snapshot, book_id, target_id, parts]
-                )
-            ).hexdigest()
-            position = {
-                "selection": signature,
-                "part": 0,
-                "preorder": None,
-                "offset": None,
-            }
-            if cursor:
-                try:
-                    if len(cursor) > 512:
-                        raise ValueError()
-                    position = json.loads(base64.urlsafe_b64decode(cursor))
-                    if (
-                        set(position) != {"selection", "part", "preorder", "offset"}
-                        or position["selection"] != signature
-                        or type(position["part"]) is not int
-                        or not 0 <= position["part"] < len(parts)
-                    ):
-                        raise ValueError()
-                except (ValueError, TypeError, KeyError):
-                    raise IntegrityError("invalid source continuation") from None
+            edition, parts, entity, signature, position = self.position(
+                db, book_id, target_id, cursor
+            )
             response = {
                 "citation": self.citation(edition, target_id=target_id),
                 "coverage": self.coverage(db, book_id),
@@ -400,13 +468,9 @@ class BookModel:
                 "citations": [],
                 "next_cursor": None,
             }
-            title = db.execute(
-                "select label from navigation where id=? and edition_id=? "
-                "union all select label from entities where id=? and edition_id=? limit 1",
-                (target_id, book_id, target_id, book_id),
-            ).fetchone()
+            title = self.selection_title(db, book_id, target_id)
             if title:
-                response["selection_title"] = title[0]
+                response["selection_title"] = title
             if entity and not cursor:
                 related = db.execute(
                     "select id,kind,payload from entities where edition_id=? and (json_extract(payload,'$.recipe_id')=? or json_extract(payload,'$.source_recipe_id')=?) order by kind,coalesce(json_extract(payload,'$.ordinal'),0),id limit 17 offset ?",
@@ -439,30 +503,8 @@ class BookModel:
 
             for i in range(position["part"], len(parts)):
                 part = parts[i]
-                lo, hi = bounds(db, part)
-                current = lo
-                if i == position["part"] and position["preorder"] is not None:
-                    if (
-                        type(position["preorder"]) is not int
-                        or type(position["offset"]) is not int
-                    ):
-                        raise IntegrityError("invalid source continuation")
-                    current = position["preorder"], position["offset"]
-                    if not lo <= current <= hi:
-                        raise IntegrityError("invalid source continuation")
-                doc = db.execute(
-                    "select path from documents where id=? and edition_id=?",
-                    (part["document_id"], book_id),
-                ).fetchone()
-                if doc is None:
-                    raise IntegrityError("cross-book source selection")
-                citation = {
-                    "document_id": part["document_id"],
-                    "resource_path": doc["path"],
-                    "reading_occurrence_id": part["reading_occurrence_id"],
-                    "start": part["start"],
-                    "end": part["end"],
-                }
+                current, hi = self.part_start(db, book_id, part, position, i)
+                citation = self.part_citation(db, book_id, part)
                 cite_size = len(canonical(citation))
                 if used + cite_size > byte_budget:
                     return continuation(i, *current)

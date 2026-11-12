@@ -6,13 +6,30 @@ const browser=await chromium.launch({headless:true,channel:'chrome'});
 try {
  const page=await browser.newPage({viewport:{width:1200,height:900}});
  const errors=[]; page.on('pageerror',e=>errors.push(e.message));
+ // Opening and jumps must read exact ranges, never the whole original again.
+ let downloads=0,whole=0;
+ page.on('request',r=>{if(new URL(r.url()).pathname==='/reader/source'){downloads++;if(!r.headers().range)whole++;}});
+ // Serve an invented original like /reader/source: 206 for a Range, else 200.
+ // `whole` counts client requests for the complete file (no Range header).
+ let served={ranges:0,whole:0};
+ const serve=(bytes,{ranges=true}={})=>route=>{
+   const header=route.request().headers().range;
+   if(!header)served.whole++;
+   const match=ranges && /^bytes=(\d*)-(\d*)$/.exec(header||'');
+   if(!match)return route.fulfill({body:bytes,contentType:'application/octet-stream'});
+   const size=bytes.length;
+   const start=match[1]?Number(match[1]):Math.max(0,size-Number(match[2]));
+   const end=match[1]?Math.min(match[2]?Number(match[2]):size-1,size-1):size-1;
+   served.ranges++;
+   return route.fulfill({status:206,body:bytes.subarray(start,end+1),contentType:'application/octet-stream',headers:{'Content-Range':`bytes ${start}-${end}/${size}`,'Accept-Ranges':'bytes'}});
+ };
  await page.goto('http://localhost:8766/reader/login');
  await page.waitForURL('**/reader/catalog');
  assert.match(await page.locator('.preview-banner').textContent(),/Local preview/);
  let laterAt;
- await page.route('**/reader/book-info?*',async route=>{
-   const response=await route.fetch(); const data=await response.json();
-   const loc=JSON.parse(Buffer.from(new URL(route.request().url()).searchParams.get('at'),'base64url').toString());
+ // Synthetic contents pagination, applied to fetched and inline opening information.
+ const paginate=(data,url)=>{
+   const loc=JSON.parse(Buffer.from(new URL(url).searchParams.get('at'),'base64url').toString());
    if(data.format==='EPUB' && !loc.section_id && !loc.target_id){
      if(loc.contents_offset===30){
        data.contents=[{title:'Later contents pagination check',at:laterAt}];data.next_contents=null;
@@ -22,27 +39,45 @@ try {
        data.next_contents=Buffer.from(JSON.stringify({...loc,contents_offset:30})).toString('base64url');
      }
    }
-   await route.fulfill({response,json:data});
- });
+   return data;
+ };
+ // The opening information arrives inline in book-view; later navigation fetches
+ // book-info. Synthetic rewrites must apply to both copies.
+ const INLINE='<script type="application/json" data-book-info>';
+ const views=url=>['/reader/book','/reader/book-view'].includes(url.pathname);
+ const routeInfo=async transform=>{
+   await page.route('**/reader/book-info?*',async route=>{
+     const response=await route.fetch();
+     await route.fulfill({response,json:transform(await response.json(),route.request().url())});
+   });
+   await page.route(views,async route=>{
+     const response=await route.fetch(); const body=await response.text();
+     const [before,rest]=body.split(INLINE); const end=rest.indexOf('</script>');
+     const json=JSON.stringify(transform(JSON.parse(rest.slice(0,end)),route.request().url())).replace(/</g,'\\u003c').replace(/>/g,'\\u003e').replace(/&/g,'\\u0026');
+     await route.fulfill({response,body:before+INLINE+json+rest.slice(end)});
+   });
+ };
+ const unrouteInfo=async()=>{await page.unroute('**/reader/book-info?*');await page.unroute(views);};
+ await routeInfo(paginate);
  await page.getByRole('link',{name:'The Weeknight Table',exact:false}).first().click();
  await page.waitForFunction(()=>document.querySelector('[data-book-status]')?.textContent==='');
  assert.equal(new URL(page.url()).pathname,'/reader/book-view');
+ assert.ok(downloads>0 && whole===0,'The EPUB opened by downloading the whole archive');
  await page.locator('.book-contents summary').click();
  await page.getByRole('button',{name:'More contents',exact:true}).click();
  await page.getByRole('link',{name:'Later contents pagination check',exact:true}).waitFor();
  await page.locator('.book-contents summary').click();
- await page.unroute('**/reader/book-info?*');
+ await unrouteInfo();
  let frame=page.frames().find(frame=>frame.parentFrame());
  assert.ok(frame,'Original EPUB iframe missing');
  assert.equal(await frame.locator('h1').textContent(),'Lemony white beans with greens');
  assert.equal(await frame.locator('body').evaluate(el=>getComputedStyle(el).color),'rgb(36, 63, 50)','Publisher stylesheet did not load');
  assert.equal(await frame.frameElement().then(el=>el.getAttribute('sandbox')),'allow-same-origin');
- let downloads=0; page.on('request',r=>{if(new URL(r.url()).pathname==='/reader/source')downloads++;});
  await page.locator('.book-contents summary').click();
  await page.getByRole('navigation',{name:'Book contents'}).getByRole('link',{name:'Green herb sauce',exact:true}).click();
  await page.waitForFunction(()=>document.querySelector('[data-book-status]').textContent==='');
  await page.waitForFunction(()=>document.querySelector('iframe')?.contentDocument.querySelector('h1')?.textContent==='Green herb sauce');
- assert.equal(downloads,0,'A contents jump downloaded the book again');
+ assert.equal(whole,0,'A contents jump downloaded the book again');
  await page.waitForFunction(()=>document.querySelector('#personal-status')?.textContent==='Saved durably.');
  let personal=await page.evaluate(()=>fetch('/reader/personal').then(r=>r.json()));
  const resume=personal.resume.find(item=>item.book_id==='weeknight');
@@ -80,11 +115,11 @@ try {
      const html=await file.async('string');
      zip.file(file.name,html.replace('</body>',`<script>parent.__sourceExecuted=true</script><img src="https://outside.invalid/book-image" onerror="parent.__sourceExecuted=true"/><img data-fixture="image" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aP1sAAAAASUVORK5CYII="/></body>`));
    }
-   return Array.from(await zip.generateAsync({type:'uint8array'}));
+   return Array.from(await zip.generateAsync({type:'uint8array',compression:'DEFLATE'}));
  });
  let escaped=false;
  await page.route('https://outside.invalid/**',route=>{escaped=true;route.abort();});
- await page.route('**/reader/source?*',route=>route.fulfill({body:Buffer.from(altered),contentType:'application/epub+zip'}));
+ await page.route('**/reader/source?*',serve(Buffer.from(altered)));
  await page.reload();
  await page.waitForFunction(()=>document.querySelector('[data-book-status]')?.textContent==='');
  frame=page.frames().find(frame=>frame.parentFrame());
@@ -103,22 +138,28 @@ try {
    for(const [path,title] of [['part1/intro.xhtml','Nested source chapter'],['intro.xhtml','Root source chapter'],['OEBPS/Text/Part 1.xhtml','Encoded source chapter']]){
      zip.file(path,'<html xmlns="http://www.w3.org/1999/xhtml"><head><title>'+title+'</title></head><body><h1 id="start">'+title+'</h1><p>Invented source for path checks.</p></body></html>');
    }
-   return Array.from(await zip.generateAsync({type:'uint8array'}));
+   // Trailing filler keeps the chapters outside the directory tail, so they
+   // are read as separate deflated ranges.
+   const filler=new Uint8Array(1536*1024); for(let i=0;i<filler.length;i+=65536)crypto.getRandomValues(filler.subarray(i,i+65536));
+   zip.file('OEBPS/filler.bin',filler,{compression:'STORE'});
+   return Array.from(await zip.generateAsync({type:'uint8array',compression:'DEFLATE'}));
  });
- let requestedDocument='intro.xhtml';
- await page.route('**/reader/source?*',route=>route.fulfill({body:Buffer.from(pathArchive),contentType:'application/epub+zip'}));
- await page.route('**/reader/book-info?*',async route=>{
-   const response=await route.fetch();const data=await response.json();
+ let requestedDocument='intro.xhtml', wholeArchive=false;
+ await page.route('**/reader/source?*',route=>serve(Buffer.from(pathArchive),{ranges:!wholeArchive})(route));
+ await routeInfo(data=>{
    data.epub_document=requestedDocument;data.epub_anchor='start';delete data.epub_xpath;delete data.epub_occurrence;
-   await route.fulfill({response,json:data});
+   return data;
  });
- for(const [document,title] of [['intro.xhtml','Root source chapter'],['OEBPS/Text/Part 1.xhtml','Encoded source chapter']]){
-   requestedDocument=document;await page.reload();
+ // Range reading, then the whole-file fallback when ranges are not offered.
+ for(const ranged of [true,false])for(const [document,title] of [['intro.xhtml','Root source chapter'],['OEBPS/Text/Part 1.xhtml','Encoded source chapter']]){
+   requestedDocument=document;wholeArchive=!ranged;served={ranges:0,whole:0};await page.reload();
    await page.waitForFunction(()=>document.querySelector('[data-book-status]')?.textContent==='');
    const currentFrame=page.frames().find(frame=>frame.parentFrame());
    assert.equal(await currentFrame.locator('h1').textContent(),title);
+   if(ranged)assert.ok(served.ranges>=2 && served.whole===0,'Range-read EPUB fell back to the whole archive: '+JSON.stringify(served));
+   else assert.equal(served.whole,1,'Whole-archive fallback did not run');
  }
- await page.unroute('**/reader/source?*');await page.unroute('**/reader/book-info?*');
+ await page.unroute('**/reader/source?*');await unrouteInfo();
  // Exercise the production display handoff, including repeated occurrences and
  // href aliases that EPUB.js itself maps to the same lookup key.
  const edgeArchive=await page.evaluate(async()=>{
@@ -138,15 +179,13 @@ try {
    const opf=await zip.file('book.opf').async('string');
    zip.file('book.opf',opf.replace('</manifest>','<item id="dup" href="dup.xhtml" media-type="application/xhtml+xml"/></manifest>').replace('</spine>','<itemref idref="dup"/></spine>'));
    for(const [path,body] of Object.entries(documents))zip.file(path,'<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Destination check</title></head><body>'+body+'</body></html>');
-   return Array.from(await zip.generateAsync({type:'uint8array'}));
+   return Array.from(await zip.generateAsync({type:'uint8array',compression:'DEFLATE'}));
  });
  let edgeDestination;
- await page.route('**/reader/source?*',route=>route.fulfill({body:Buffer.from(edgeArchive),contentType:'application/epub+zip'}));
- await page.route('**/reader/book-info?*',async route=>{
-   const response=await route.fetch();const data=await response.json();
+ await page.route('**/reader/source?*',serve(Buffer.from(edgeArchive)));
+ await routeInfo(data=>{
    delete data.epub_document;delete data.epub_anchor;delete data.epub_xpath;delete data.epub_occurrence;
-   Object.assign(data,edgeDestination);
-   await route.fulfill({response,json:data});
+   return Object.assign(data,edgeDestination);
  });
  for(const anchor of ['start','']){
    edgeDestination={epub_document:'same.xhtml',epub_occurrence:0,epub_anchor:anchor};
@@ -182,7 +221,7 @@ try {
    await page.waitForFunction(()=>document.querySelector('[data-book-status]')?.textContent!=='Opening original book…');
    assert.match(await page.locator('[data-book-status]').textContent(),/could not be opened/,'Duplicate EPUB anchor was reported as a successful target');
  }
- await page.unroute('**/reader/source?*');await page.unroute('**/reader/book-info?*');
+ await page.unroute('**/reader/source?*');await unrouteInfo();
  await page.getByRole('link',{name:'Books',exact:true}).click();
  await page.getByRole('link',{name:'The Soup Notebook',exact:false}).first().click();
  await page.waitForFunction(()=>document.querySelector('[data-book-status]')?.textContent==='');
@@ -225,6 +264,30 @@ try {
  await page.locator('#section-results a[href^="/reader/book-view?"]').first().click();
  await page.waitForFunction(()=>document.querySelector('.book-view') && document.querySelector('[data-book-status]').textContent==='');
  await page.getByRole('button',{name:/Return to search results/}).click();
+ // An invented multi-page PDF larger than the opening ranges: pdf.js must read
+ // the remaining pages through exact ranges, without the whole file.
+ const pages=4, filler='% '+'0123456789abcdef'.repeat(25000)+'\n';
+ const objects=['<</Type/Catalog/Pages 2 0 R>>','<</Type/Pages/Kids['+Array.from({length:pages},(_,i)=>(3+2*i)+' 0 R').join(' ')+']/Count '+pages+'>>'];
+ for(let i=0;i<pages;i++){
+   const stream=filler+'0 0 1 rg 20 20 '+(40+40*i)+' 100 re f\n';
+   objects.push('<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 300]/Contents '+(4+2*i)+' 0 R>>','<</Length '+stream.length+'>>stream\n'+stream+'endstream');
+ }
+ let pdfText='%PDF-1.4\n'; const offsets=[];
+ objects.forEach((object,i)=>{offsets.push(pdfText.length);pdfText+=(i+1)+' 0 obj\n'+object+'\nendobj\n';});
+ const xref=pdfText.length;
+ pdfText+='xref\n0 '+(objects.length+1)+'\n0000000000 65535 f \n'+offsets.map(n=>String(n).padStart(10,'0')+' 00000 n \n').join('')+'trailer\n<</Size '+(objects.length+1)+'/Root 1 0 R>>\nstartxref\n'+xref+'\n%%EOF\n';
+ const largePdf=Buffer.from(pdfText,'latin1');
+ served={ranges:0,whole:0};
+ await page.route('**/reader/source?*',serve(largePdf));
+ await page.goto('http://localhost:8766/reader/catalog');
+ await page.getByRole('link',{name:'The Soup Notebook',exact:false}).first().click();
+ await page.waitForFunction(()=>document.querySelector('[data-book-status]')?.textContent==='');
+ assert.equal(await page.locator('[data-book-total]').textContent(),'of '+pages);
+ await page.locator('[data-book-page]').fill(String(pages));await page.locator('[data-book-page]').dispatchEvent('change');
+ await page.waitForFunction(n=>document.querySelector('.pdfViewer .page[data-page-number="'+n+'"] canvas')?.width>0,pages);
+ assert.equal(await page.locator('[data-book-status]').textContent(),'');
+ assert.ok(served.ranges>=3 && served.whole===0,'Large PDF was not read by ranges: '+JSON.stringify(served));
+ await page.unroute('**/reader/source?*');
  assert.deepEqual(errors,[]);
  console.log('PASS: original EPUB with publisher CSS, sandbox, source jumps without reloading, original PDF rendering/paging/page jumps, text fallback, search-and-return, hostile-book script/network isolation, desktop/390px/320px.');
 }finally{await browser.close();}

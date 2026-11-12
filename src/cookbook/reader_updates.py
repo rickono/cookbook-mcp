@@ -54,7 +54,7 @@ def source_location(library, location, *, _validated=None):
         if k
         not in {"cursor", "offset", "related_offset", "contents_offset", "source_key"}
     }
-    data = read(library, loc) if _validated is None else _validated
+    data = read(library, loc, text=False) if _validated is None else _validated
     if data["citation"].get("model_snapshot_id"):
         loc["model_snapshot_id"] = data["citation"]["model_snapshot_id"]
     if "section_id" in loc:
@@ -82,7 +82,7 @@ def resolve_current(library, location, *, _validated=None):
     pinned = _validated
     try:
         if pinned is None:
-            pinned = read(library, location)
+            pinned = read(library, location, text=False)
         pinned_state = pinned["state"]
     except IntegrityError:
         pinned_state = "unavailable"
@@ -130,7 +130,7 @@ def resolve_current(library, location, *, _validated=None):
         data = (
             pinned
             if current == location["publication_id"] and pinned is not None
-            else read(library, candidate)
+            else read(library, candidate, text=False)
         )
         if data["state"] == "withheld":
             return result

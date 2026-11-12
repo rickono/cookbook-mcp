@@ -12,7 +12,9 @@ const total = root.querySelector('[data-book-total]');
 const previous = root.querySelector('[data-book-prev]');
 const next = root.querySelector('[data-book-next-page]');
 let at = root.dataset.bookAt;
-let dead = false, rendition, book, pdf, loading, viewer, resize, display;
+let dead = false, rendition, book, pdf, loading, viewer, resize, display, archive;
+// Aborts source ranges still in flight when the reader is left.
+const sources = new AbortController();
 const active = () => !dead && root.isConnected;
 const expire = () => {
   document.dispatchEvent(new Event('reader-expired'));
@@ -22,16 +24,18 @@ const expire = () => {
 const stop = () => {
   if (dead) return;
   dead = true;
+  sources.abort();
   resize?.disconnect();
   viewer?.setDocument(null);
-  book?.destroy(); loading?.destroy();
-  rendition=book=pdf=loading=viewer=display=undefined;
+  book?.destroy(); loading?.destroy(); archive?.destroy();
+  rendition=book=pdf=loading=viewer=display=archive=undefined;
   root.replaceChildren();
 };
 document.addEventListener('reader-expired', stop);
 document.addEventListener('reader-unmounted', stop);
-async function response(path) {
-  const result = await fetch(path, {cache:'no-store',signal:AbortSignal.timeout(30000)});
+async function response(path, {headers, signal} = {}) {
+  const timeout = AbortSignal.timeout(30000);
+  const result = await fetch(path, {cache:'no-store', headers, signal: signal && AbortSignal.any ? AbortSignal.any([timeout, signal]) : signal || timeout});
   if (result.status === 401) {
     expire();
     throw Error('expired');
@@ -39,10 +43,38 @@ async function response(path) {
   if (!result.ok) throw Error('unavailable');
   return result;
 }
+// Ordered classic scripts: both download at once, then run in insertion order.
 const dependency = src => new Promise((resolve,reject) => {
-  const script = document.createElement('script'); script.src=src;
+  const script = document.createElement('script'); script.src=src; script.async=false;
   script.onload=resolve; script.onerror=reject; document.head.append(script);
 });
+// Viewers measure an absolutely positioned stage. When search adopts this view,
+// book.css arrives with it and does not apply until its @import loads; a parsed
+// link.sheet is not enough. Wait (bounded) for the stage layout itself.
+const styled = async stage => {
+  for (let i = 0; i < 250 && getComputedStyle(stage).position !== 'absolute'; i++)
+    await new Promise(resolve => setTimeout(resolve, 20));
+};
+// One exact byte range of the original; anything but that span is refused.
+async function fetchRange(path, header) {
+  const result = await response(path, {headers:{Range:header}, signal:sources.signal});
+  const match = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(result.headers.get('Content-Range') || '');
+  if (result.status !== 206 || !match) {
+    result.body?.cancel().catch(() => {});
+    throw Error('unavailable');
+  }
+  const [start, end, size] = match.slice(1).map(Number);
+  const bytes = new Uint8Array(await result.arrayBuffer());
+  if (!(start <= end && end < size) || bytes.length !== end - start + 1) throw Error('unavailable');
+  return {bytes, start, end, total:size};
+}
+// The page carries the opening's book-info; later navigation fetches it.
+function inlineInformation() {
+  const element = root.querySelector('script[data-book-info]');
+  if (!element) return undefined;
+  element.remove();
+  try { return JSON.parse(element.textContent); } catch { return undefined; }
+}
 async function contents(data, append=false) {
   if (!active()) return;
   const menu = root.querySelector('.book-contents nav');
@@ -68,10 +100,11 @@ async function contents(data, append=false) {
 }
 (async () => {
   try {
-    const data = await (await response('/reader/book-info?' + new URLSearchParams({at}))).json();
+    const data = inlineInformation() || await (await response('/reader/book-info?' + new URLSearchParams({at}))).json();
     if (!active()) return;
     contents(data);
     const source='/reader/source?' + new URLSearchParams({at});
+    const range = header => fetchRange(source, header);
     root.querySelector('.book-contents nav').addEventListener('click', async event => {
       const link=event.target.closest('a[href]');
       if (!link || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || !display) return;
@@ -101,15 +134,44 @@ async function contents(data, append=false) {
       } catch {if(active()) status.textContent='This source location could not be opened. Choose another location or use Text view.';}
     });
     if (data.format === 'PDF') {
+      // The header and the trailer/xref are needed first; fetch both while
+      // pdf.js loads, then hand pdf.js exact ranges as it asks for them.
+      const CHUNK = 524288, head = range('bytes=0-' + (CHUNK - 1)), tail = range('bytes=-' + CHUNK);
+      head.catch(() => {}); tail.catch(() => {});
       const pdfjs = await import('/reader/vendor/pdfjs-dist/build/pdf.mjs');
       const {EventBus, PDFLinkService, PDFViewer} = await import('/reader/vendor/pdfjs-dist/web/pdf_viewer.mjs');
+      const container=root.querySelector('.pdf-stage');
+      await styled(container);
       if (!active()) return;
       pdfjs.GlobalWorkerOptions.workerSrc='/reader/vendor/pdfjs-dist/build/pdf.worker.mjs';
-      const container=root.querySelector('.pdf-stage'); container.hidden=false;
+      container.hidden=false;
       const events = new EventBus(), links = new PDFLinkService({eventBus:events});
       viewer = new PDFViewer({container,viewer:container.firstElementChild,eventBus:events,linkService:links,enableScripting:false});
       links.setViewer(viewer);
-      loading=pdfjs.getDocument({url:source,withCredentials:true,disableStream:true,disableAutoFetch:true,isEvalSupported:false,useWasm:false,cMapUrl:'/reader/vendor/pdfjs-dist/cmaps/',cMapPacked:true,standardFontDataUrl:'/reader/vendor/pdfjs-dist/standard_fonts/'});
+      const options={rangeChunkSize:CHUNK,disableStream:true,disableAutoFetch:true,isEvalSupported:false,useWasm:false,cMapUrl:'/reader/vendor/pdfjs-dist/cmaps/',cMapPacked:true,standardFontDataUrl:'/reader/vendor/pdfjs-dist/standard_fonts/'};
+      let first;
+      try {first=await head;} catch (error) {if(error?.message==='expired' || !active()) throw error;}
+      if (!active()) return;
+      if (first) {
+        const last=await tail.then(last => last.total===first.total && last.end===last.total-1 ? last : undefined, error => {if(error?.message==='expired') throw error;});
+        const transport=new pdfjs.PDFDataRangeTransport(first.total, first.bytes, first.end===first.total-1);
+        transport.requestDataRange=async (begin, end) => {
+          try {
+            let bytes;
+            if (last && begin>=last.start) bytes=last.bytes.subarray(begin-last.start, end-last.start);
+            else {
+              const part=await range(`bytes=${begin}-${end-1}`);
+              if (part.start!==begin || part.end!==end-1 || part.total!==first.total) throw Error('unavailable');
+              bytes=part.bytes;
+            }
+            if (active()) transport.onDataRange(begin, bytes);
+          } catch (error) {
+            if (active() && error?.message!=='expired') status.textContent='Part of this PDF could not be loaded. Retry this page, choose another page, or use Text view.';
+          }
+        };
+        transport.abort=() => sources.abort();
+        loading=pdfjs.getDocument({...options, range:transport});
+      } else loading=pdfjs.getDocument({...options, url:source, withCredentials:true});
       pdf=await loading.promise;
       if (!active()) {pdf.destroy(); return;}
       if (data.physical_page > pdf.numPages) throw Error('source page unavailable');
@@ -128,23 +190,54 @@ async function contents(data, append=false) {
       let lastWidth=container.clientWidth;
       resize=new ResizeObserver(()=>{if(active() && container.clientWidth!==lastWidth){lastWidth=container.clientWidth;viewer.currentScaleValue='page-width';}}); resize.observe(container);
     } else if (data.format === 'EPUB') {
-      const {displayEpubDestination}=await import('/reader/epub.js');
-      if (!window.JSZip) await dependency('/reader/vendor/jszip/dist/jszip.min.js');
-      if (!window.ePub) await dependency('/reader/vendor/epubjs/dist/epub.min.js');
-      const bytes=await (await response(source)).arrayBuffer();
-      if (!active()) return;
-      book=window.ePub(bytes);
-      await book.ready;
-      if (!active()) return;
-      const container=root.querySelector('.epub-stage'); container.hidden=false;
-      rendition=book.renderTo(container,{width:'100%',height:'100%',spread:'none',allowScriptedContent:false,allowPopups:false});
-      rendition.hooks.content.register(content => {
-        for (const link of content.document.querySelectorAll('a[href]')) {
-          if (/^(?:https?:|\/\/|mailto:|javascript:)/i.test(link.getAttribute('href'))) link.removeAttribute('href');
-        }
-      });
-      display=destination => displayEpubDestination(book,rendition,destination,location.origin);
-      await display(data);
+      const scripts=Promise.all([
+        window.JSZip || dependency('/reader/vendor/jszip/dist/jszip.min.js'),
+        window.ePub || dependency('/reader/vendor/epubjs/dist/epub.min.js'),
+      ]);
+      scripts.catch(() => {});
+      const epub=await import('/reader/epub.js');
+      const container=root.querySelector('.epub-stage');
+      const stage=styled(container);
+      const show=async opened => {
+        book=opened;
+        await stage;
+        if (!active()) return;
+        container.hidden=false;
+        rendition=book.renderTo(container,{width:'100%',height:'100%',spread:'none',allowScriptedContent:false,allowPopups:false});
+        rendition.hooks.content.register(content => {
+          for (const link of content.document.querySelectorAll('a[href]')) {
+            if (/^(?:https?:|\/\/|mailto:|javascript:)/i.test(link.getAttribute('href'))) link.removeAttribute('href');
+          }
+        });
+        display=destination => epub.displayEpubDestination(book,rendition,destination,location.origin);
+        await display(data);
+      };
+      // Read the ZIP directory and only the members the first page needs. If
+      // that fails before the page is shown, read the whole original instead.
+      let opened;
+      try {
+        const index=await epub.readZipIndex(range);
+        archive=new epub.RangeArchive(index);
+        archive.prefetch(epub.openingMembers(index, data.epub_document));
+        await scripts;
+        if (!active()) return;
+        opened=await epub.openRangeEpub(window.ePub, archive);
+        if (!active()) {opened.destroy(); return;}
+        await show(opened);
+      } catch (error) {
+        if (!active() || error?.message==='expired' || (opened && !archive?.error)) throw error;
+        try {book?.destroy();} catch {}
+        archive?.destroy();
+        book=rendition=display=archive=undefined;
+        container.replaceChildren();
+        await scripts;
+        const bytes=await (await response(source)).arrayBuffer();
+        if (!active()) return;
+        book=window.ePub(bytes);
+        await book.ready;
+        if (!active()) return;
+        await show(book);
+      }
       if (!active()) return;
       status.textContent='';
       pageInput.closest('label').hidden=true;

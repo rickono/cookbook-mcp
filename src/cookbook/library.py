@@ -51,6 +51,7 @@ class Library:
         self.runtime = runtime
         self.cache_bytes = cache_bytes
         self.asset_lock = threading.Lock()
+        self._verified = OrderedDict()
         self.render_lock = threading.Lock()
         self.search_engine = search_engine
         if not 0 <= raster_cache_bytes <= RASTER_BYTES:
@@ -672,9 +673,13 @@ class Library:
         cache = self.runtime.root / "cache"
         cache.mkdir(exist_ok=True, mode=0o700)
         p = cache / e.sha256
-        if p.exists() and digest_file(p) == (e.sha256, e.size):
+        if self._still_verified(p, e) or (
+            p.exists() and digest_file(p) == (e.sha256, e.size)
+        ):
             p.touch()
+            self._remember_verified(p, e)
             return p
+        self._verified.pop(e.sha256, None)
         p.unlink(missing_ok=True)
         files = sorted(
             (f for f in cache.iterdir() if f.is_file()), key=lambda f: f.stat().st_mtime
@@ -684,6 +689,7 @@ class Library:
             if size + e.size <= self.cache_bytes:
                 break
             size -= f.stat().st_size
+            self._verified.pop(f.name, None)
             f.unlink()
         with tempfile.NamedTemporaryFile(dir=cache, delete=False) as f:
             tmp = Path(f.name)
@@ -692,7 +698,29 @@ class Library:
             tmp.replace(p)
         finally:
             tmp.unlink(missing_ok=True)
+        self._remember_verified(p, e)
         return p
+
+    # Callers hold asset_lock. A verified cache file is re-hashed only after its
+    # device, inode, size, or nanosecond modification/change time differs, as in
+    # docs/manifest-cache.md. This detects local changes, not hostile host mutation.
+    @staticmethod
+    def _fingerprint(path):
+        s = path.stat()
+        return s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns
+
+    def _still_verified(self, path, entry):
+        known = self._verified.get(entry.sha256)
+        try:
+            return known is not None and known == (entry.size, self._fingerprint(path))
+        except OSError:
+            return False
+
+    def _remember_verified(self, path, entry):
+        self._verified[entry.sha256] = (entry.size, self._fingerprint(path))
+        self._verified.move_to_end(entry.sha256)
+        while len(self._verified) > 4096:
+            self._verified.popitem(last=False)
 
     def image_metadata(self, db, pub, book, im):
         context = None

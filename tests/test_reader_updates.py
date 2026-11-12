@@ -390,15 +390,15 @@ def test_same_publication_resolution_reads_once_and_rechecks_next_request(
     original = reader_content.read
     calls = []
 
-    def read(library, location):
+    def read(library, location, **options):
         calls.append(location)
-        return original(library, location)
+        return original(library, location, **options)
 
     monkeypatch.setattr(reader_content, "read", read)
     assert resolve_current(published[4], loc)["state"] == "available"
     assert len(calls) == 1
 
-    def unavailable(library, location):
+    def unavailable(library, location, **options):
         raise IntegrityError("withdrawn or unavailable")
 
     monkeypatch.setattr(reader_content, "read", unavailable)

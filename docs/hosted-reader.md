@@ -139,6 +139,9 @@ constraints. These diagnostics do not establish the cause of earlier live 503s.
 Protected responses and OAuth redirects use private no-store, no-referrer, restrictive
 CSP, frame denial and nosniff headers. Catalog markup is escaped; no source scripts,
 external resources, browser storage, service worker or offline cache is used.
+Only public reader code (first-party scripts/styles and the bundled viewer engines)
+may enter the browser HTTP cache, with an ETag and `no-cache` revalidation; it
+carries no book, account or session data.
 The generic session script checks on focus, pageshow and at most every minute;
 a 401 clears the view and navigates to sign-in. Logout clears the current view and
 requests cache/storage clearing; other live tabs clear on their next check.

@@ -145,6 +145,36 @@ def test_reader_rejects_foreign_book_target_and_continuation(structured):
         model.read(book, "../../private")
 
 
+def test_locate_matches_read_identity_without_projecting_text(structured):
+    import base64
+
+    _, manifest, _, book, root = structured
+    model = BookModel(root / "whole-books.sqlite", manifest.publication_id)
+    targets = model.describe(book)["reading_order"]
+    for target in targets:
+        cursor = None
+        for _ in range(3):
+            response = model.read(book, target["id"], cursor, node_budget=2)
+            located = model.locate(book, target["id"], cursor)
+            assert "nodes" not in located
+            assert located["citation"] == response["citation"]
+            assert located["entity"] == response["entity"]
+            assert located["citations"] == response["citations"][:1]
+            cursor = response["next_cursor"]
+    first = model.read(book, targets[0]["id"], node_budget=1)
+    with pytest.raises(IntegrityError, match="continuation"):
+        model.locate(book, targets[1]["id"], first["next_cursor"])
+    position = json.loads(base64.urlsafe_b64decode(first["next_cursor"]))
+    position["preorder"] = 10**9
+    forged = base64.urlsafe_b64encode(json.dumps(position).encode()).decode()
+    with pytest.raises(IntegrityError, match="continuation"):
+        model.locate(book, targets[0]["id"], forged)
+    with pytest.raises(IntegrityError):
+        model.locate(uuid.uuid4().hex, targets[0]["id"])
+    with pytest.raises(IntegrityError):
+        model.locate(book, "../../private")
+
+
 def test_publication_activation_requires_complete_model_and_index_preparation(
     structured, tmp_path
 ):
