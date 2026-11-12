@@ -135,9 +135,9 @@ PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs node scripts/verify_original_rea
 The check covers original EPUB text and publisher CSS, the iframe sandbox,
 range-only EPUB opening and contents jumps (with the whole-archive fallback
 when ranges are refused or a first-page image range fails, and the report when
-a later section's image range fails, including after a newer jump), range-only reading of a multi-page PDF
-larger than the opening ranges (and the message when one of its ranges fails),
-embedded image decoding,
+a later section's image range fails, including after a newer jump),
+range-only reading of a multi-page PDF larger than the opening ranges (and the
+message when one of its ranges fails), embedded image decoding,
 hostile-book script/network isolation, PDF rendering and page controls, PDF
 contents jumps, text fallback, search return, and desktop/390px/320px layouts.
 `verify_reader_flow.mjs` still checks the alternate text reader.
