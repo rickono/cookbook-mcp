@@ -11,16 +11,29 @@ try {
  page.on('request',r=>{if(new URL(r.url()).pathname==='/reader/source'){downloads++;if(!r.headers().range)whole++;}});
  // Serve an invented original like /reader/source: 206 for a Range, else 200.
  // `whole` counts client requests for the complete file (no Range header).
- let served={ranges:0,whole:0};
+ // Several closed ranges are answered as multipart/byteranges, as the server does.
+ // `bytes` counts the original's bytes sent.
+ let served={ranges:0,whole:0,bytes:0};
  const serve=(bytes,{ranges=true}={})=>route=>{
-   const header=route.request().headers().range;
-   if(!header)served.whole++;
-   const match=ranges && /^bytes=(\d*)-(\d*)$/.exec(header||'');
-   if(!match)return route.fulfill({body:bytes,contentType:'application/octet-stream'});
-   const size=bytes.length;
+   const header=route.request().headers().range, size=bytes.length;
+   if(!header){served.whole++;served.bytes+=size;}
+   const several=ranges && /^bytes=\d+-\d+(,\d+-\d+)+$/.test(header||'');
+   const match=ranges && !several && /^bytes=(\d*)-(\d*)$/.exec(header||'');
+   if(!match && !several)return route.fulfill({body:bytes,contentType:'application/octet-stream'});
+   served.ranges++;
+   if(several){
+     const boundary='3d6b6a416f9b5', body=[];
+     for(const spec of header.slice(6).split(',')){
+       const [start,end]=spec.split('-').map(Number), last=Math.min(end,size-1);
+       body.push(Buffer.from(`\r\n--${boundary}\r\nContent-Type: application/pdf\r\nContent-Range: bytes ${start}-${last}/${size}\r\n\r\n`),bytes.subarray(start,last+1));
+       served.bytes+=last-start+1;
+     }
+     body.push(Buffer.from(`\r\n--${boundary}--\r\n`));
+     return route.fulfill({status:206,body:Buffer.concat(body),contentType:'multipart/byteranges; boundary='+boundary,headers:{'Accept-Ranges':'bytes'}});
+   }
    const start=match[1]?Number(match[1]):Math.max(0,size-Number(match[2]));
    const end=match[1]?Math.min(match[2]?Number(match[2]):size-1,size-1):size-1;
-   served.ranges++;
+   served.bytes+=end-start+1;
    return route.fulfill({status:206,body:bytes.subarray(start,end+1),contentType:'application/octet-stream',headers:{'Content-Range':`bytes ${start}-${end}/${size}`,'Accept-Ranges':'bytes'}});
  };
  await page.goto('http://localhost:8766/reader/login');
@@ -335,7 +348,7 @@ try {
  const xref=pdfText.length;
  pdfText+='xref\n0 '+(objects.length+1)+'\n0000000000 65535 f \n'+offsets.map(n=>String(n).padStart(10,'0')+' 00000 n \n').join('')+'trailer\n<</Size '+(objects.length+1)+'/Root 1 0 R>>\nstartxref\n'+xref+'\n%%EOF\n';
  const largePdf=Buffer.from(pdfText,'latin1');
- served={ranges:0,whole:0};
+ served={ranges:0,whole:0,bytes:0};
  await page.route('**/reader/source?*',serve(largePdf));
  await page.goto('http://localhost:8766/reader/catalog');
  await page.getByRole('link',{name:'The Soup Notebook',exact:false}).first().click();
@@ -345,6 +358,29 @@ try {
  await page.waitForFunction(n=>document.querySelector('.pdfViewer .page[data-page-number="'+n+'"] canvas')?.width>0,pages);
  assert.equal(await page.locator('[data-book-status]').textContent(),'');
  assert.ok(served.ranges>=3 && served.whole===0,'Large PDF was not read by ranges: '+JSON.stringify(served));
+ await page.unroute('**/reader/source?*');
+ // An invented flat page tree whose page dictionaries sit between large
+ // streams: pdf.js asks for every page dictionary at once while opening. Those
+ // requests must travel together and read little more than the dictionaries,
+ // not one request per page or most of the file.
+ const flatPages=150, flatObjects=['<</Type/Catalog/Pages 2 0 R>>','<</Type/Pages/Kids['+Array.from({length:flatPages},(_,i)=>(3+2*i)+' 0 R').join(' ')+']/Count '+flatPages+'>>'];
+ for(let i=0;i<flatPages;i++){
+   const stream='% '+'fedcba9876543210'.repeat(4096)+'\n0 0 1 rg 20 20 '+(10+i)+' 100 re f\n';
+   flatObjects.push('<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 300]/Contents '+(4+2*i)+' 0 R>>','<</Length '+stream.length+'>>stream\n'+stream+'endstream');
+ }
+ let flatText='%PDF-1.4\n'; const flatOffsets=[];
+ flatObjects.forEach((object,i)=>{flatOffsets[i]=flatText.length;flatText+=(i+1)+' 0 obj\n'+object+'\nendobj\n';});
+ const flatXref=flatText.length;
+ flatText+='xref\n0 '+(flatObjects.length+1)+'\n0000000000 65535 f \n'+flatOffsets.map(n=>String(n).padStart(10,'0')+' 00000 n \n').join('')+'trailer\n<</Size '+(flatObjects.length+1)+'/Root 1 0 R>>\nstartxref\n'+flatXref+'\n%%EOF\n';
+ const flatPdf=Buffer.from(flatText,'latin1');
+ served={ranges:0,whole:0,bytes:0};
+ await page.route('**/reader/source?*',serve(flatPdf));
+ await page.goto('http://localhost:8766/reader/catalog');
+ await page.getByRole('link',{name:'The Soup Notebook',exact:false}).first().click();
+ await page.waitForFunction(()=>document.querySelector('[data-book-status]')?.textContent==='');
+ assert.equal(await page.locator('[data-book-total]').textContent(),'of '+flatPages);
+ await page.waitForFunction(()=>document.querySelector('.pdfViewer .page[data-page-number="1"] canvas')?.width>0);
+ assert.ok(served.ranges<=6 && served.whole===0 && served.bytes<flatPdf.length/2,'Flat page tree opening was not batched: '+JSON.stringify({...served,size:flatPdf.length}));
  await page.unroute('**/reader/source?*');
  // pdf.js never asks for a failed range again, so a refused range must end the
  // wait with a message: for a later page, or for the opening itself.

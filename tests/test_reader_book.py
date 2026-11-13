@@ -87,6 +87,73 @@ def test_originals_are_default_and_source_delivery_supports_authenticated_ranges
         assert client.get("/reader/book-view", params={"at": at}).status_code == 401
 
 
+def multipart(response):
+    """The (Content-Range, bytes) parts of a multipart/byteranges body."""
+    kind, boundary = response.headers["content-type"].split("; boundary=")
+    assert kind == "multipart/byteranges"
+    body = response.content
+    assert body.endswith(f"\r\n--{boundary}--\r\n".encode())
+    parts = []
+    for chunk in body.split(f"\r\n--{boundary}".encode())[1:-1]:
+        head, data = chunk.split(b"\r\n\r\n", 1)
+        fields = dict(line.split(": ", 1) for line in head.decode().split("\r\n")[1:])
+        assert fields["Content-Type"] == "application/pdf"
+        parts.append((fields["Content-Range"], data))
+    return parts
+
+
+def test_source_delivery_reads_ascending_ranges_as_one_multipart_response(tmp_path):
+    with TestClient(preview.app(tmp_path), base_url="http://localhost:8766") as client:
+        catalog = client.get("/reader/login")
+        page = entry(client, catalog, "The Soup Notebook")
+        at = page.xpath("//section[@data-book-at]/@data-book-at")[0]
+        full = client.get("/reader/source", params={"at": at}).content
+        size = len(full)
+        assert size > 200
+
+        def get(header, method="GET"):
+            return client.request(
+                method, "/reader/source", params={"at": at}, headers={"Range": header}
+            )
+
+        # The end of the last range is clipped to the file, as for one range.
+        header = f"bytes=0-4,10-19,{size - 5}-{size + 100}"
+        ranged = get(header)
+        assert ranged.status_code == 206 and "content-range" not in ranged.headers
+        assert ranged.headers["cache-control"] == "private, no-store"
+        assert int(ranged.headers["content-length"]) == len(ranged.content)
+        assert multipart(ranged) == [
+            (f"bytes 0-4/{size}", full[:5]),
+            (f"bytes 10-19/{size}", full[10:20]),
+            (f"bytes {size - 5}-{size - 1}/{size}", full[-5:]),
+        ]
+        head = get(header, "HEAD")
+        assert head.status_code == 206 and not head.content
+        assert head.headers["content-length"] == ranged.headers["content-length"]
+        assert head.headers["content-type"].startswith("multipart/byteranges; ")
+        many = get("bytes=" + ",".join(f"{i}-{i}" for i in range(128)))
+        assert multipart(many) == [
+            (f"bytes {i}-{i}/{size}", full[i : i + 1]) for i in range(128)
+        ]
+        # Several ranges must be closed, ascending and disjoint, so a response
+        # never carries more than the file.
+        for refused in [
+            "bytes=" + ",".join(f"{i}-{i}" for i in range(129)),
+            "bytes=10-19,0-4",
+            "bytes=0-10,10-19",
+            "bytes=0-4,-5",
+            "bytes=0-4,10-",
+            f"bytes=0-4,{size}-{size + 5}",
+            "bytes=0-4,,10-19",
+            "bytes=0-4,  10-19",
+            "items=0-4,10-19",
+            "bytes=0-4," + "0" * 4096 + "1-2",
+        ]:
+            response = get(refused)
+            assert response.status_code == 416, refused
+            assert response.headers["content-range"] == f"bytes */{size}"
+
+
 def test_public_vendor_assets_are_bounded_to_the_packaged_directory(tmp_path):
     with TestClient(preview.app(tmp_path), base_url="http://localhost:8766") as client:
         for name in [
