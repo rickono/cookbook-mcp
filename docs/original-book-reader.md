@@ -57,7 +57,10 @@ supplies the file. A cached original is re-hashed only after its device, inode,
 size or nanosecond modification/change time differs from the last verified
 state, following the manifest-cache rule; this detects local changes, not
 hostile host mutation. Delivery supports single byte ranges, suffix ranges and
-HEAD requests for both formats. Invalid ranges return 416. An open file
+HEAD requests for both formats. A request for several ranges is answered as one
+`multipart/byteranges` response when it names at most 128 closed, ascending,
+non-overlapping ranges in a header of at most 4096 characters. Any other or
+invalid range returns 416. An open file
 descriptor keeps a stream valid if another cache operation removes its
 directory entry.
 
@@ -79,11 +82,17 @@ Opening reads only what the first page needs:
   `Cache-Control: no-cache`, so repeat opens revalidate with 304 responses. The
   view preloads its engine while the page parses. Book pages, book information
   and source bytes stay `private, no-store`.
-- PDF requests the first and last 512 KiB concurrently, then gives pdf.js exact
-  ranges for the remaining objects. If the first range is refused, pdf.js loads
-  the file itself, as before. A later range that fails from a network error,
-  timeout or server error is tried twice more. If it still fails, the opening
-  reports an unavailable book, or a later page asks the reader to reopen it.
+- PDF requests the first and last 512 KiB concurrently, then reads the objects
+  pdf.js asks for in 4 KiB units. Requests that arrive together travel as one
+  multi-range request. A PDF with a flat page tree makes pdf.js ask for every
+  page dictionary at once; sent one by one, those requests each took a session
+  check in turn and read most of the file. A lone request reads up to 512 KiB
+  ahead; a burst of scattered requests shares about 2 MiB. Each response must
+  carry exactly the requested ranges. If the first range is refused, pdf.js
+  loads the file itself, as before. A later range that fails from a network
+  error, timeout or server error is tried twice more. If it still fails, the
+  opening reports an unavailable book, or a later page asks the reader to
+  reopen it.
 - EPUB reads the ZIP central directory from the last 256 KiB, then fetches only
   the members it displays. Nearby members are coalesced into one range. Members
   are checked against their CRC-32 and the budgets below before use. If ranges
@@ -137,15 +146,17 @@ range-only EPUB opening and contents jumps (with the whole-archive fallback
 when ranges are refused or a first-page image range fails, and the report when
 a later section's image range fails, including after a newer jump),
 range-only reading of a multi-page PDF larger than the opening ranges (and the
-message when one of its ranges fails), embedded image decoding,
+message when one of its ranges fails), a flat-page-tree PDF opened in a few
+batched requests and well under half its bytes, embedded image decoding,
 hostile-book script/network isolation, PDF rendering and page controls, PDF
 contents jumps, text fallback, search return, and desktop/390px/320px layouts.
 `verify_reader_flow.mjs` still checks the alternate text reader.
 
 `tests/test_reader_book.py` covers authenticated source bytes, HEAD/ranges,
-source mismatches, expiry, vendor-directory confinement, asset revalidation
+multi-range delivery and its refusals, source mismatches, expiry, vendor-directory confinement, asset revalidation
 and the escaped inline opening information. `tests/reader_epub.test.mjs` covers
-the ZIP index, exact ranges, CRC and budget refusals. The existing
+the ZIP index, exact ranges, CRC and budget refusals. `tests/reader_pdf.test.mjs`
+covers PDF range batching and multi-range response checks. The existing
 reader search, originals, session, personal-state and text tests remain
 applicable. These checks establish local Chromium behavior using invented
 books. They do not establish Safari/device coverage, compatibility with every

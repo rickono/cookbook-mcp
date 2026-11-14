@@ -65,12 +65,11 @@ const styled = async stage => {
   for (let i = 0; i < 250 && getComputedStyle(stage).position !== 'absolute'; i++)
     await new Promise(resolve => setTimeout(resolve, 20));
 };
-// One exact byte range of the original; anything but that span is refused.
 // pdf.js never asks for a failed range again, so network errors, timeouts and
 // server errors are retried twice before the range fails.
-async function fetchRange(path, header) {
+async function retrying(once) {
   for (let attempt = 1; ; attempt++) {
-    try { return await rangeOnce(path, header); }
+    try { return await once(); }
     catch (error) {
       const transient = error?.transient || error instanceof TypeError || error?.name === 'TimeoutError';
       if (attempt === 3 || !transient || sources.signal.aborted) throw error;
@@ -78,6 +77,8 @@ async function fetchRange(path, header) {
     }
   }
 }
+// One exact byte range of the original; anything but that span is refused.
+const fetchRange = (path, header) => retrying(() => rangeOnce(path, header));
 async function rangeOnce(path, header) {
   const result = await response(path, {headers:{Range:header}, signal:sources.signal});
   const match = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(result.headers.get('Content-Range') || '');
@@ -157,11 +158,12 @@ async function contents(data, append=false) {
     });
     if (data.format === 'PDF') {
       // The header and the trailer/xref are needed first; fetch both while
-      // pdf.js loads, then hand pdf.js exact ranges as it asks for them.
+      // pdf.js loads, then hand pdf.js the ranges it asks for, batched.
       const CHUNK = 524288, head = range('bytes=0-' + (CHUNK - 1)), tail = range('bytes=-' + CHUNK);
       head.catch(() => {}); tail.catch(() => {});
       const pdfjs = await import('/reader/vendor/pdfjs-dist/build/pdf.mjs');
       const {EventBus, PDFLinkService, PDFViewer} = await import('/reader/vendor/pdfjs-dist/web/pdf_viewer.mjs');
+      const ranges = await import('/reader/pdf.js');
       const container=root.querySelector('.pdf-stage');
       await styled(container);
       if (!active()) return;
@@ -170,7 +172,7 @@ async function contents(data, append=false) {
       const events = new EventBus(), links = new PDFLinkService({eventBus:events});
       viewer = new PDFViewer({container,viewer:container.firstElementChild,eventBus:events,linkService:links,enableScripting:false});
       links.setViewer(viewer);
-      const options={rangeChunkSize:CHUNK,disableStream:true,disableAutoFetch:true,isEvalSupported:false,useWasm:false,cMapUrl:'/reader/vendor/pdfjs-dist/cmaps/',cMapPacked:true,standardFontDataUrl:'/reader/vendor/pdfjs-dist/standard_fonts/'};
+      const options={disableStream:true,disableAutoFetch:true,isEvalSupported:false,useWasm:false,cMapUrl:'/reader/vendor/pdfjs-dist/cmaps/',cMapPacked:true,standardFontDataUrl:'/reader/vendor/pdfjs-dist/standard_fonts/'};
       let first, rangeFailed;
       try {first=await head;} catch (error) {if(error?.message==='expired' || !active()) throw error;}
       if (!active()) return;
@@ -180,25 +182,23 @@ async function contents(data, append=false) {
         // A failed range never arrives, so it must end the opening here.
         let failRange;
         rangeFailed=new Promise((_, reject) => {failRange=reject;}); rangeFailed.catch(() => {});
-        transport.requestDataRange=async (begin, end) => {
-          try {
-            let bytes;
-            if (last && begin>=last.start) bytes=last.bytes.subarray(begin-last.start, end-last.start);
-            else {
-              const part=await range(`bytes=${begin}-${end-1}`);
-              if (part.start!==begin || part.end!==end-1 || part.total!==first.total) throw Error('unavailable');
-              bytes=part.bytes;
-            }
-            if (active()) transport.onDataRange(begin, bytes);
-          } catch (error) {
-            if (!active() || error?.message==='expired') return;
-            failRange(error);
-            status.textContent='Part of this PDF could not be loaded. Reopen this book or use Text view.';
-          }
+        const fail = error => {
+          if (!active() || error?.message==='expired') return;
+          failRange(error);
+          status.textContent='Part of this PDF could not be loaded. Reopen this book or use Text view.';
+        };
+        const batch=ranges.rangeBatcher({
+          total:first.total, fail,
+          fetchSpans:spans => retrying(async () => ranges.spanBytes(await response(source, {headers:{Range:ranges.rangeHeader(spans)}, signal:sources.signal}), spans, first.total)),
+          deliver:(begin, bytes) => {if (active()) transport.onDataRange(begin, bytes);},
+        });
+        transport.requestDataRange=(begin, end) => {
+          if (!last || begin<last.start) return batch(begin, end);
+          try {if (active()) transport.onDataRange(begin, last.bytes.subarray(begin-last.start, end-last.start));} catch (error) {fail(error);}
         };
         transport.abort=() => sources.abort();
-        loading=pdfjs.getDocument({...options, range:transport});
-      } else loading=pdfjs.getDocument({...options, url:source, withCredentials:true});
+        loading=pdfjs.getDocument({...options, rangeChunkSize:ranges.CHUNK, range:transport});
+      } else loading=pdfjs.getDocument({...options, rangeChunkSize:CHUNK, url:source, withCredentials:true});
       // On a failed range the stalled task is left for stop(): destroying pdf.js
       // mid-load raises an unhandled termination error in its worker.
       pdf=await (rangeFailed ? Promise.race([loading.promise, rangeFailed]) : loading.promise);

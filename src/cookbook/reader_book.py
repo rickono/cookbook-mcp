@@ -3,6 +3,7 @@
 import asyncio
 import json
 import re
+import secrets
 import zipfile
 from html import escape
 from urllib.parse import urlencode
@@ -70,60 +71,104 @@ async def source(request, library):
         handle, size, fmt = await asyncio.to_thread(source_file, library, loc)
     except (IntegrityError, zipfile.BadZipFile, KeyError):
         return JSONResponse({"error": "original_unavailable"}, status_code=404)
-    start, end = 0, size - 1
     ranged = request.headers.get("range")
-    if ranged:
-        match = re.fullmatch(r"bytes=(\d*)-(\d*)", ranged)
-        if len(ranged) > 128 or not match or not any(match.groups()):
-            handle.close()
-            return Response(
-                status_code=416, headers={"Content-Range": f"bytes */{size}"}
+    spans = byte_ranges(ranged, size) if ranged else [(0, size - 1)]
+    if spans is None:
+        handle.close()
+        return Response(status_code=416, headers={"Content-Range": f"bytes */{size}"})
+    media = "application/pdf" if fmt == "PDF" else "application/epub+zip"
+    headers = {"Accept-Ranges": "bytes", "Content-Disposition": "inline"}
+    if len(spans) == 1:
+        ((start, end),) = spans
+        parts = [(b"", start, end)]
+        closing = b""
+        if ranged:
+            headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+    else:
+        boundary = secrets.token_hex(16)
+        parts = [
+            (
+                f"\r\n--{boundary}\r\nContent-Type: {media}\r\n"
+                f"Content-Range: bytes {start}-{end}/{size}\r\n\r\n".encode(),
+                start,
+                end,
             )
-        left, right = match.groups()
-        if left:
-            start, end = int(left), min(int(right) if right else end, end)
-        else:
-            start = max(0, size - int(right))
-        if not 0 <= start <= end < size:
-            handle.close()
-            return Response(
-                status_code=416, headers={"Content-Range": f"bytes */{size}"}
-            )
-    headers = {
-        "Accept-Ranges": "bytes",
-        "Content-Length": str(end - start + 1),
-        "Content-Disposition": "inline",
-    }
-    if ranged:
-        headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+            for start, end in spans
+        ]
+        closing = f"\r\n--{boundary}--\r\n".encode()
+        media = f"multipart/byteranges; boundary={boundary}"
+    headers["Content-Length"] = str(
+        sum(len(head) + end - start + 1 for head, start, end in parts) + len(closing)
+    )
     if request.method == "HEAD":
         handle.close()
         return Response(
-            status_code=206 if ranged else 200,
-            headers=headers,
-            media_type="application/pdf" if fmt == "PDF" else "application/epub+zip",
+            status_code=206 if ranged else 200, headers=headers, media_type=media
         )
 
     def chunks():
         try:
-            handle.seek(start)
-            remaining = end - start + 1
-            while remaining:
-                chunk = handle.read(min(65536, remaining))
-                if not chunk:
-                    break
-                remaining -= len(chunk)
-                yield chunk
+            for head, start, end in parts:
+                if head:
+                    yield head
+                handle.seek(start)
+                remaining = end - start + 1
+                while remaining:
+                    chunk = handle.read(min(65536, remaining))
+                    if not chunk:
+                        return
+                    remaining -= len(chunk)
+                    yield chunk
+            if closing:
+                yield closing
         finally:
             handle.close()
 
     return StreamingResponse(
         chunks(),
-        media_type="application/pdf" if fmt == "PDF" else "application/epub+zip",
+        media_type=media,
         status_code=206 if ranged else 200,
         headers=headers,
         background=BackgroundTask(handle.close),
     )
+
+
+# One request may carry the scattered objects pdf.js asks for together.
+MAX_RANGES = 128
+
+
+def byte_ranges(header, size):
+    """Inclusive spans for a Range header, or None when it must be refused.
+
+    A single range may be a suffix or open-ended. Several ranges must be closed,
+    ascending and disjoint, which RFC 9110 lets a server require, so a response
+    never carries more than the file.
+    """
+    if len(header) > 4096 or not header.startswith("bytes="):
+        return None
+    specs = header.removeprefix("bytes=").split(",")
+    if len(specs) == 1:
+        match = re.fullmatch(r"(\d{0,19})-(\d{0,19})", specs[0])
+        if not match or not any(match.groups()):
+            return None
+        left, right = match.groups()
+        if left:
+            start, end = int(left), min(int(right) if right else size - 1, size - 1)
+        else:
+            start, end = max(0, size - int(right)), size - 1
+        return [(start, end)] if 0 <= start <= end < size else None
+    if len(specs) > MAX_RANGES:
+        return None
+    spans = []
+    for spec in specs:
+        match = re.fullmatch(r" ?(\d{1,19})-(\d{1,19})", spec)
+        if not match:
+            return None
+        start, end = int(match[1]), min(int(match[2]), size - 1)
+        if not start <= end or (spans and start <= spans[-1][1]):
+            return None
+        spans.append((start, end))
+    return spans
 
 
 def information(library, loc):
@@ -183,7 +228,8 @@ def information(library, loc):
 # opening overlap with the first source ranges instead of waiting for book.js.
 PRELOAD = {
     "PDF": '<link rel="modulepreload" href="/reader/vendor/pdfjs-dist/build/pdf.mjs">'
-    '<link rel="modulepreload" href="/reader/vendor/pdfjs-dist/web/pdf_viewer.mjs">',
+    '<link rel="modulepreload" href="/reader/vendor/pdfjs-dist/web/pdf_viewer.mjs">'
+    '<link rel="modulepreload" href="/reader/pdf.js">',
     "EPUB": '<link rel="modulepreload" href="/reader/epub.js">'
     '<link rel="preload" as="script" href="/reader/vendor/jszip/dist/jszip.min.js">'
     '<link rel="preload" as="script" href="/reader/vendor/epubjs/dist/epub.min.js">',

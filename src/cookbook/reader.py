@@ -49,6 +49,7 @@ ASSETS = {
     "/reader/presentation.css": ("reader_presentation.css", "text/css"),
     "/reader/presentation.js": ("reader_presentation.js", "text/javascript"),
     "/reader/epub.js": ("reader_epub.mjs", "text/javascript"),
+    "/reader/pdf.js": ("reader_pdf.mjs", "text/javascript"),
     "/reader/book.js": ("reader_book.js", "text/javascript"),
     "/reader/book.css": ("reader_book.css", "text/css"),
     "/reader/style.css": ("reader_style.css", "text/css"),
